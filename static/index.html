@@ -1,0 +1,286 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jarvis Console</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f14;
+      --panel: #0f1622;
+      --panel-border: #1f2a3a;
+      --text: #e6edf3;
+      --muted: #9aa4b2;
+      --accent: #4f8cff;
+      --accent-strong: #2f6cf6;
+      --ok: #2dd4bf;
+      --danger: #f87171;
+      --shadow: 0 18px 40px rgba(4, 8, 16, 0.35);
+    }
+    body {
+      font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      margin: 0;
+      background: radial-gradient(1200px 600px at 15% -10%, rgba(79, 140, 255, 0.12), transparent 60%), var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 24px 20px 30px; }
+    h1 { font-size: 22px; margin: 8px 0 18px; letter-spacing: 0.04em; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(13, 20, 35, 0.7);
+      border: 1px solid var(--panel-border);
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .card {
+      background: linear-gradient(180deg, rgba(17, 24, 39, 0.94), rgba(13, 18, 30, 0.96));
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      padding: 16px;
+      margin: 14px 0;
+      box-shadow: var(--shadow);
+    }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    button {
+      border: 1px solid transparent;
+      border-radius: 999px;
+      padding: 11px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+    }
+    button:active { transform: translateY(1px); }
+    #talk { background: var(--accent); color: white; box-shadow: 0 8px 18px rgba(79, 140, 255, 0.24); }
+    #talk.rec { background: var(--danger); box-shadow: 0 8px 18px rgba(248, 113, 113, 0.22); }
+    #send { background: var(--ok); color: #052b2f; }
+    #clear { background: transparent; color: var(--text); border: 1px solid var(--panel-border); }
+    textarea {
+      width: 100%;
+      background: rgba(9, 14, 24, 0.7);
+      color: var(--text);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 12px;
+      transition: border-color 0.12s ease, box-shadow 0.12s ease;
+      min-height: 100px;
+      resize: vertical;
+    }
+    textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.2);
+    }
+    .muted { color: var(--muted); font-size: 13px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; white-space: pre-wrap; }
+    #reply {
+      background: linear-gradient(135deg, rgba(79, 140, 255, 0.15), rgba(13, 20, 35, 0.9));
+      border: 1px solid rgba(79, 140, 255, 0.3);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .links { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+    .linkBtn {
+      border-radius: 999px;
+      padding: 8px 12px;
+      border: 1px solid var(--panel-border);
+      background: rgba(9, 14, 24, 0.7);
+      color: var(--text);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Jarvis Console <span class="pill" id="jarvis-status">IDLE</span></h1>
+
+    <div class="card">
+      <div class="row">
+        <button id="talk">🎙️ Talk</button>
+        <button id="send">Send</button>
+        <button id="clear">Clear</button>
+        <span class="muted">Push-to-talk voice or type a command.</span>
+      </div>
+      <p class="muted" style="margin:10px 0 6px;">Transcript / input</p>
+      <textarea id="text" placeholder="Sprich oder tippe hier..."></textarea>
+      <div class="links">
+        <a class="linkBtn" href="/static/orb-v2.html">Orb</a>
+        <a class="linkBtn" href="/static/static-v4-tts.html">Chat</a>
+      </div>
+    </div>
+
+    <div class="card">
+      <p class="muted" style="margin:0 0 6px;">Jarvis reply</p>
+      <div class="mono" id="reply">—</div>
+    </div>
+
+    <div class="card">
+      <p class="muted" style="margin:0 0 6px;">Debug</p>
+      <div class="mono" id="debug">—</div>
+    </div>
+  </div>
+
+<script>
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  const statusEl = document.getElementById("jarvis-status");
+  const talkBtn = document.getElementById("talk");
+  const sendBtn = document.getElementById("send");
+  const clearBtn = document.getElementById("clear");
+  const textEl = document.getElementById("text");
+  const replyEl = document.getElementById("reply");
+  const debugEl = document.getElementById("debug");
+  const ttsAudio = new Audio();
+
+  let recognition = null;
+  let recognitionActive = false;
+  let finalTranscript = "";
+  function setJarvisState(newState){
+    const next = (newState || "IDLE").toUpperCase();
+    if(statusEl) statusEl.textContent = next;
+    if(document.body) document.body.dataset.jarvisState = next.toLowerCase();
+  }
+
+  async function postJSON(url, body){
+    const r = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const txt = await r.text();
+    let data = {};
+    try { data = txt ? JSON.parse(txt) : {}; } catch {}
+    if(!r.ok){
+      throw new Error(data.detail || txt || `${url} -> ${r.status}`);
+    }
+    return data;
+  }
+
+  async function speak(text){
+    const t = (text || "").trim();
+    if(!t) return;
+
+    try{
+      setJarvisState("SPEAKING");
+      try { ttsAudio.pause(); } catch {}
+      ttsAudio.currentTime = 0;
+      const r = await fetch("/tts", {
+        method:"POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ text: t })
+      });
+      if(!r.ok){
+        const errTxt = await r.text();
+        throw new Error(errTxt || ("TTS HTTP " + r.status));
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      ttsAudio.src = url;
+      await ttsAudio.play().catch(()=>{});
+      await new Promise((resolve)=>{
+        ttsAudio.onended = resolve;
+        ttsAudio.onerror = resolve;
+      });
+    } catch(e){
+      console.warn("TTS error:", e);
+    }
+  }
+
+  async function sendText(text){
+    const t = (text || "").trim();
+    if(!t) return;
+    setJarvisState("THINKING");
+    try{
+      const chat = await postJSON("/api/jarvis", { text: t });
+      replyEl.textContent = chat.reply || "—";
+      debugEl.textContent = chat.data ? JSON.stringify(chat.data, null, 2) : "—";
+      await speak(chat.reply || "");
+      setJarvisState("IDLE");
+    } catch (err){
+      setJarvisState("IDLE");
+      replyEl.textContent = "—";
+      debugEl.textContent = String(err);
+    }
+  }
+
+  function ensureRecognition(){
+    if(recognition) return recognition;
+    if(!SpeechRecognition){
+      throw new Error("Speech recognition not supported.");
+    }
+    recognition = new SpeechRecognition();
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onstart = ()=>{
+      finalTranscript = "";
+      recognitionActive = true;
+      setJarvisState("LISTENING");
+    };
+    recognition.onresult = (event)=>{
+      for(let i = event.resultIndex; i < event.results.length; i++){
+        const res = event.results[i];
+        if(res.isFinal){
+          const text = (res[0]?.transcript || "").trim();
+          if(text){
+            finalTranscript = text;
+            setJarvisState("TRANSCRIBING");
+            textEl.value = text;
+            sendText(text).catch((err)=>{
+              console.warn("Chat error:", err);
+              setJarvisState("IDLE");
+            });
+          }
+        }
+      }
+    };
+    recognition.onerror = (event)=>{
+      console.warn("STT error:", event);
+      recognitionActive = false;
+      setJarvisState("IDLE");
+    };
+    recognition.onend = ()=>{
+      recognitionActive = false;
+      if(!finalTranscript){
+        setJarvisState("IDLE");
+      }
+      talkBtn.classList.remove("rec");
+    };
+    return recognition;
+  }
+
+  talkBtn.addEventListener("click", async (e)=>{
+    e.preventDefault();
+    try{
+      const recog = ensureRecognition();
+      if(!recognitionActive){
+        finalTranscript = "";
+        talkBtn.classList.add("rec");
+        recog.start();
+      } else {
+        setJarvisState("TRANSCRIBING");
+        recog.stop();
+      }
+    } catch (err){
+      setJarvisState("IDLE");
+      debugEl.textContent = "Mic error: " + err;
+    }
+  });
+
+  sendBtn.addEventListener("click", () => sendText(textEl.value));
+  clearBtn.addEventListener("click", () => {
+    textEl.value = "";
+    replyEl.textContent = "—";
+    debugEl.textContent = "—";
+    setJarvisState("IDLE");
+  });
+
+  setJarvisState("IDLE");
+</script>
+</body>
+</html>

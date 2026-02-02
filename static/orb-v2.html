@@ -305,7 +305,7 @@
 
   <div class="hud">
     <div class="orbWrap" id="orbWrap">
-      <div class="recBadge"><span class="dot" id="recDot"></span><span id="state">idle</span></div>
+      <div class="recBadge"><span class="dot" id="recDot"></span><span id="jarvis-status">idle</span></div>
 
       <div class="grid"></div>
       <div class="ring r1"></div>
@@ -363,7 +363,7 @@
   const orbWrap = document.getElementById("orbWrap");
   const orbBtn = document.getElementById("orbBtn");
   const recDot = document.getElementById("recDot");
-  const stateEl = document.getElementById("state");
+  const statusEl = document.getElementById("jarvis-status");
   const hintEl = document.getElementById("hint");
 
   const transcriptBox = document.getElementById("transcriptBox");
@@ -380,9 +380,10 @@
   const unlockNowBtn = document.getElementById("unlockNow");
   const unlockHint = document.getElementById("unlockHint");
 
-  let mediaRecorder = null;
-  let chunks = [];
-  let stream = null;
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition = null;
+  let recognitionActive = false;
+  let finalTranscript = "";
   const ttsAudio = new Audio();
   let pendingTranscript = null;
 
@@ -461,26 +462,15 @@
   });
 
 
-  function setState(s){
-    stateEl.textContent = s;
-    const rec = (s === "recording");
-    recDot.classList.toggle("on", rec);
-    orbWrap.classList.toggle("rec", rec);
-    hintEl.textContent = rec ? "tap orb to stop" : "tap/click orb to talk";
-  }
-
-  async function postAudio(url, blob){
-    const fd = new FormData();
-    fd.append("file", blob, "audio.webm");
-    const r = await fetch(url, { method: "POST", body: fd });
-    const txt = await r.text();
-    let data = {};
-    try { data = txt ? JSON.parse(txt) : {}; } catch {}
-    if(!r.ok){
-      const detail = data.detail || txt || (r.status + "");
-      throw new Error(detail);
-    }
-    return data;
+  function setJarvisState(newState){
+    const next = (newState || "IDLE").toUpperCase();
+    const display = next.toLowerCase();
+    if(statusEl) statusEl.textContent = display;
+    if(document.body) document.body.dataset.jarvisState = display;
+    const listening = (next === "LISTENING");
+    recDot.classList.toggle("on", listening);
+    orbWrap.classList.toggle("rec", listening);
+    hintEl.textContent = listening ? "tap orb to stop" : "tap/click orb to talk";
   }
 
   async function postJSON(url, body, useAuth=true){
@@ -504,12 +494,25 @@
   function showBox(el, show=true){ el.style.display = show ? "block" : "none"; }
 
   async function sendChat(transcript){
-    setState("chatting");
-    const chat = await postJSON("/chat", { text: transcript }, true);
-    replyEl.textContent = chat.reply || "—";
-    showBox(replyBox, true);
-    await speak(chat.reply || "");
-    setState("idle");
+    try{
+      setJarvisState("THINKING");
+      const chat = await postJSON("/api/jarvis", { text: transcript }, true);
+      replyEl.textContent = chat.reply || "—";
+      showBox(replyBox, true);
+      await speak(chat.reply || "");
+      setJarvisState("IDLE");
+    } catch(err){
+      if(err.status === 401){
+        openUnlockModal(transcript);
+        setJarvisState("IDLE");
+        return;
+      }
+      setJarvisState("IDLE");
+      debugEl.textContent = String(err);
+      replyEl.textContent = "Understood. STT failed.";
+      showBox(replyBox, true);
+      showBox(debugBox, true);
+    }
   }
 
   async function speak(text){
@@ -517,6 +520,7 @@
     if(!t) return;
 
     try{
+      setJarvisState("SPEAKING");
       try { ttsAudio.pause(); } catch {}
       ttsAudio.currentTime = 0;
 
@@ -535,97 +539,80 @@
       const url = URL.createObjectURL(blob);
       ttsAudio.src = url;
       await ttsAudio.play().catch(()=>{});
+      await new Promise((resolve)=>{
+        ttsAudio.onended = resolve;
+        ttsAudio.onerror = resolve;
+      });
     } catch(e){
       console.warn("TTS error:", e);
     }
   }
 
-  function finalizeRecording(){
-    if(mediaRecorder && mediaRecorder.state === "recording"){
-      try { mediaRecorder.requestData(); } catch {}
-      mediaRecorder.stop();
+  function ensureRecognition(){
+    if(recognition) return recognition;
+    if(!SpeechRecognition){
+      throw new Error("Speech recognition not supported.");
     }
-  }
-
-  async function ensureMic(){
-    if(stream) return;
-    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-
-    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
-
-    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
-
-    mediaRecorder.ondataavailable = (e)=>{ if(e.data.size) chunks.push(e.data); };
-
-    mediaRecorder.onstop = async ()=>{
-      try{
-        setState("transcribing");
-        const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
-        chunks = [];
-
-        showBox(debugBox, false);
-
-        // STT
-        const stt = await postAudio("/stt", blob);
-        const transcript = (stt.text || "").trim();
-
-        if(!transcript){
-          setState("idle");
-          return;
+    recognition = new SpeechRecognition();
+    recognition.interimResults = true;
+    recognition.continuous = false;
+    recognition.onstart = ()=>{
+      finalTranscript = "";
+      recognitionActive = true;
+      setJarvisState("LISTENING");
+    };
+    recognition.onresult = (event)=>{
+      for(let i = event.resultIndex; i < event.results.length; i++){
+        const res = event.results[i];
+        if(res.isFinal){
+          const text = (res[0]?.transcript || "").trim();
+          if(text){
+            finalTranscript = text;
+            setJarvisState("TRANSCRIBING");
+            transcriptEl.textContent = text;
+            showBox(transcriptBox, true);
+            setJarvisState("THINKING");
+            sendChat(text).catch((err)=>{
+              console.warn("Chat error:", err);
+              setJarvisState("IDLE");
+            });
+          }
         }
-
-        transcriptEl.textContent = transcript;
-        showBox(transcriptBox, true);
-
-        // Chat
-        await sendChat(transcript);
-      } catch(err){
-        if(err.status === 401){
-          openUnlockModal(transcriptEl.textContent);
-          setState("idle");
-          return;
-        }
-        setState("error");
-        debugEl.textContent = String(err);
-        replyEl.textContent = "Understood. STT failed.";
-        showBox(replyBox, true);
-        showBox(debugBox, true);
-      } finally {
-        setState("idle");
       }
     };
-  }
-
-  async function startRecording(){
-    await ensureMic();
-    chunks = [];
-    setState("recording");
-    mediaRecorder.start();
-  }
-
-  function stopRecording(){
-    finalizeRecording();
+    recognition.onerror = (event)=>{
+      console.warn("STT error:", event);
+      recognitionActive = false;
+      setJarvisState("IDLE");
+    };
+    recognition.onend = ()=>{
+      recognitionActive = false;
+      if(!finalTranscript){
+        setJarvisState("IDLE");
+      }
+    };
+    return recognition;
   }
 
   // Tap/click orb toggles record
   orbBtn.addEventListener("click", async ()=>{
     try{
-      if(!mediaRecorder || mediaRecorder.state !== "recording"){
-        await startRecording();
+      const recog = ensureRecognition();
+      if(!recognitionActive){
+        finalTranscript = "";
+        recog.start();
       } else {
-        stopRecording();
+        recog.stop();
       }
     } catch(err){
-      setState("error");
+      setJarvisState("IDLE");
       debugEl.textContent = "Mic error: " + err;
       showBox(debugBox, true);
     }
   });
 
   // Initial
-  setState("idle");
+  setJarvisState("IDLE");
 </script>
 </body>
 </html>
