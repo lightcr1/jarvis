@@ -1,0 +1,412 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>J.A.R.V.I.S.</title>
+  <style>
+    :root{
+      --bg:#070b11;
+      --panel:#0c1322;
+      --border:#1d2a44;
+      --text:#e6edf3;
+      --muted:#8aa3c7;
+      --blue:#2563eb;
+      --good:#22c55e;
+      --bad:#ef4444;
+      --bubbleUser:#0b1220;
+      --bubbleJarvis:#0d1a33;
+      --shadow: 0 18px 60px rgba(0,0,0,.55);
+      --r: 18px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background:
+        radial-gradient(900px 600px at 50% -10%, rgba(37,99,235,.22), transparent 60%),
+        radial-gradient(900px 600px at 20% 0%, rgba(34,197,94,.14), transparent 60%),
+        var(--bg);
+      color:var(--text);
+      height:100vh;
+      overflow:hidden;
+    }
+
+    /* Layout */
+    .app{
+      height:100vh;
+      display:flex;
+      flex-direction:column;
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    header{
+      padding: 18px 18px 10px;
+      display:flex;
+      justify-content:center;
+      position:relative;
+    }
+
+    .title{
+      font-weight: 900;
+      letter-spacing: .18em;
+      font-size: 38px;
+      margin:0;
+      text-align:center;
+      user-select:none;
+    }
+    .title span{opacity:.9}
+    .topRight{
+      position:absolute;
+      right:18px;
+      top:18px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+    .chip{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:8px 12px; border-radius:999px;
+      border:1px solid var(--border);
+      background: rgba(12,19,34,.65);
+      color:var(--muted);
+      font-size:12px;
+      user-select:none;
+    }
+    .dot{width:8px;height:8px;border-radius:999px;background:var(--muted);}
+    .dot.blue{background:var(--blue)}
+    .btnSmall{
+      border:1px solid var(--border);
+      background: rgba(12,19,34,.65);
+      color:var(--text);
+      border-radius:999px;
+      padding:8px 12px;
+      font-weight:800;
+      cursor:pointer;
+    }
+    .btnSmall:hover{filter:brightness(1.08)}
+
+    main{
+      flex:1;
+      padding: 0 18px 12px;
+      overflow:hidden;
+    }
+
+    .chatPanel{
+      height:100%;
+      background: linear-gradient(180deg, rgba(12,19,34,.78), rgba(10,16,32,.82));
+      border:1px solid var(--border);
+      border-radius: var(--r);
+      box-shadow: var(--shadow);
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+    }
+
+    .messages{
+      flex:1;
+      overflow:auto;
+      padding: 14px;
+      scroll-behavior:smooth;
+    }
+    .row{
+      display:flex;
+      margin: 10px 0;
+    }
+    .row.user{justify-content:flex-end;}
+    .row.jarvis{justify-content:flex-start;}
+
+    .bubble{
+      max-width: min(760px, 92%);
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(29,42,68,.9);
+      background: rgba(5,9,18,.45);
+      line-height:1.35;
+      white-space:pre-wrap;
+      word-wrap:break-word;
+    }
+    .row.user .bubble{
+      background: rgba(11,18,32,.78);
+    }
+    .row.jarvis .bubble{
+      background: rgba(13,26,51,.72);
+    }
+    .meta{
+      margin-top:6px;
+      font-size:12px;
+      color:var(--muted);
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:flex-end;
+    }
+    .meta.left{justify-content:flex-start;}
+    .pill{
+      display:inline-block;
+      padding: 3px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background: rgba(12,19,34,.6);
+      color:var(--muted);
+      font-size:12px;
+    }
+
+    /* Composer */
+    .composer{
+      border-top:1px solid var(--border);
+      padding: 12px;
+      display:flex;
+      gap:10px;
+      align-items:flex-end;
+      background: rgba(0,0,0,.18);
+    }
+    textarea{
+      flex:1;
+      min-height: 52px;
+      max-height: 160px;
+      resize:none;
+      border:1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 12px;
+      background: rgba(5,9,18,.55);
+      color: var(--text);
+      outline:none;
+      font-size:14px;
+      line-height:1.3;
+    }
+    .actions{
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+    .btn{
+      border:0;
+      border-radius:999px;
+      padding: 12px 14px;
+      font-weight:900;
+      cursor:pointer;
+      user-select:none;
+    }
+    #talk{background: var(--blue); color:#fff;}
+    #talk.rec{background: var(--bad);}
+    #send{background: var(--good); color:#06250f;}
+    #clear{background: #2a395a; color: var(--text);}
+
+    .hint{
+      padding: 0 14px 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    /* Mobile safe */
+    @media (max-width:520px){
+      .title{font-size:30px}
+      .topRight{top:14px; right:14px}
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1 class="title"><span>J.A.R.V.I.S.</span></h1>
+
+      <div class="topRight">
+        <span class="chip" title="Status">
+          <span class="dot blue" id="statusDot"></span>
+          <span id="statusText">idle</span>
+        </span>
+        <button class="btnSmall" id="orbBtn" title="Orb Mode">ORB</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="chatPanel">
+        <div class="messages" id="messages"></div>
+
+        <div class="hint">Tipps: <span class="pill">uptime</span> <span class="pill">status jarvis</span> <span class="pill">logs jarvis</span> <span class="pill">restart nginx</span></div>
+
+        <div class="composer">
+          <textarea id="input" placeholder="Type a message… (Enter = send, Shift+Enter = newline)"></textarea>
+          <div class="actions">
+            <button class="btn" id="talk">🎙️</button>
+            <button class="btn" id="send">Send</button>
+            <button class="btn" id="clear">Clear</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+<script>
+  const messagesEl = document.getElementById("messages");
+  const inputEl = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  const clearBtn = document.getElementById("clear");
+  const talkBtn = document.getElementById("talk");
+  const statusText = document.getElementById("statusText");
+  const orbBtn = document.getElementById("orbBtn");
+
+  let mediaRecorder = null;
+  let chunks = [];
+
+  function setStatus(s){
+    statusText.textContent = s;
+  }
+
+  function addMessage(role, text){
+    const row = document.createElement("div");
+    row.className = "row " + (role === "user" ? "user" : "jarvis");
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+
+    // meta line (optional)
+    const meta = document.createElement("div");
+    meta.className = "meta " + (role === "user" ? "" : "left");
+    meta.innerHTML = `<span class="pill">${role === "user" ? "You" : "JARVIS"}</span>`;
+    messagesEl.appendChild(meta);
+
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  async function postJSON(url, body){
+    const r = await fetch(url, {
+      method:"POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    const txt = await r.text();
+    let data = {};
+    try { data = txt ? JSON.parse(txt) : {}; } catch {}
+    if(!r.ok){
+      const detail = data.detail || txt || (r.status + "");
+      throw new Error(detail);
+    }
+    return data;
+  }
+
+  async function postAudio(url, blob){
+    const fd = new FormData();
+    fd.append("file", blob, "audio.webm");
+    const r = await fetch(url, { method:"POST", body: fd });
+    const txt = await r.text();
+    let data = {};
+    try { data = txt ? JSON.parse(txt) : {}; } catch {}
+    if(!r.ok){
+      const detail = data.detail || txt || (r.status + "");
+      throw new Error(detail);
+    }
+    return data;
+  }
+
+  async function sendText(text){
+    const t = (text || "").trim();
+    if(!t) return;
+
+    addMessage("user", t);
+    inputEl.value = "";
+    setStatus("thinking");
+
+    try{
+      const res = await postJSON("/chat", { text: t });
+      addMessage("jarvis", res.reply || "—");
+      setStatus("idle");
+    } catch(err){
+      addMessage("jarvis", "Understood.\nError: " + err.message);
+      setStatus("error");
+    }
+  }
+
+  // Enter = send (Shift+Enter newline)
+  inputEl.addEventListener("keydown", (e)=>{
+    if(e.key === "Enter" && !e.shiftKey){
+      e.preventDefault();
+      sendText(inputEl.value);
+    }
+  });
+
+  sendBtn.addEventListener("click", ()=> sendText(inputEl.value));
+
+  clearBtn.addEventListener("click", ()=>{
+    messagesEl.innerHTML = "";
+    inputEl.value = "";
+    setStatus("idle");
+  });
+
+  orbBtn.addEventListener("click", ()=>{
+    window.location.href = "/static/orb.html";
+  });
+
+  async function ensureMic(){
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+
+    mediaRecorder.ondataavailable = (e)=>{ if(e.data.size) chunks.push(e.data); };
+    mediaRecorder.onstop = async ()=>{
+      try{
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
+        chunks = [];
+        setStatus("transcribing");
+
+        const stt = await postAudio("/stt", blob);
+        const transcript = (stt.text || "").trim();
+        if(transcript){
+          inputEl.value = transcript;
+          await sendText(transcript);
+        } else {
+          setStatus("idle");
+        }
+      } catch(err){
+        addMessage("jarvis", "Understood.\nSTT error: " + err.message);
+        setStatus("error");
+      } finally {
+        talkBtn.classList.remove("rec");
+      }
+    };
+  }
+
+  // Hold-to-talk
+  talkBtn.addEventListener("pointerdown", async (e)=>{
+    e.preventDefault();
+    try{
+      if(!mediaRecorder) await ensureMic();
+      chunks = [];
+      talkBtn.classList.add("rec");
+      setStatus("recording");
+      mediaRecorder.start();
+    } catch(err){
+      addMessage("jarvis", "Understood.\nMic error: " + err.message);
+      setStatus("error");
+    }
+  });
+
+  talkBtn.addEventListener("pointerup", (e)=>{
+    e.preventDefault();
+    if(mediaRecorder && mediaRecorder.state === "recording"){
+      setStatus("stopping");
+      mediaRecorder.stop();
+    }
+  });
+
+  talkBtn.addEventListener("pointercancel", ()=>{
+    if(mediaRecorder && mediaRecorder.state === "recording"){
+      setStatus("stopping");
+      mediaRecorder.stop();
+    }
+  });
+
+  // Welcome line
+  addMessage("jarvis", "Understood.\nSystem online.");
+  setStatus("idle");
+</script>
+</body>
+</html>

@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jarvis Console</title>
+  <style>
+    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 0; background: #0b0f14; color: #e6edf3; }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 18px; }
+    h1 { font-size: 22px; margin: 10px 0 12px; }
+    .card { background: #111827; border: 1px solid #1f2937; border-radius: 14px; padding: 14px; margin: 12px 0; }
+    .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+    button { border: 0; border-radius: 999px; padding: 12px 16px; font-weight: 700; cursor: pointer; }
+    #talk { background: #2563eb; color: white; }
+    #talk.rec { background: #ef4444; }
+    #send { background: #22c55e; color: #06250f; }
+    #clear { background: #334155; color: #e6edf3; }
+    input, textarea { width: 100%; background: #0b1220; color: #e6edf3; border: 1px solid #1f2937; border-radius: 10px; padding: 10px; }
+    textarea { min-height: 90px; resize: vertical; }
+    .muted { color: #9ca3af; font-size: 13px; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; white-space: pre-wrap; }
+    .pill { display:inline-block; padding: 3px 10px; border-radius: 999px; background:#0b1220; border:1px solid #1f2937; color:#9ca3af; font-size:12px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>Jarvis Console <span class="pill" id="status">idle</span></h1>
+    <div class="card">
+      <div class="row">
+        <button id="talk">🎙️ Hold to talk</button>
+        <button id="send">Send</button>
+        <button id="clear">Clear</button>
+        <span class="muted">iPhone: Safari → Share → “Add to Home Screen”</span>
+      </div>
+      <p class="muted" style="margin:10px 0 6px;">Transkript</p>
+      <textarea id="text" placeholder="Sprich oder tippe hier..."></textarea>
+    </div>
+
+    <div class="card">
+      <p class="muted" style="margin:0 0 6px;">Jarvis reply</p>
+      <div class="mono" id="reply">—</div>
+    </div>
+
+    <div class="card">
+      <p class="muted" style="margin:0 0 6px;">Debug</p>
+      <div class="mono" id="debug">—</div>
+    </div>
+  </div>
+
+<script>
+const statusEl = document.getElementById("status");
+const talkBtn  = document.getElementById("talk");
+const sendBtn  = document.getElementById("send");
+const clearBtn = document.getElementById("clear");
+const textEl   = document.getElementById("text");
+const replyEl  = document.getElementById("reply");
+const debugEl  = document.getElementById("debug");
+
+let mediaRecorder = null;
+let chunks = [];
+
+function setStatus(s) { statusEl.textContent = s; }
+
+async function postJSON(url, body) {
+  const r = await fetch(url, {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(body)
+  });
+  if (!r.ok) throw new Error(`${url} -> ${r.status} ${await r.text()}`);
+  return await r.json();
+}
+
+async function postAudio(url, blob) {
+  const fd = new FormData();
+  fd.append("file", blob, "audio.webm");
+  const r = await fetch(url, { method: "POST", body: fd });
+  if (!r.ok) throw new Error(`${url} -> ${r.status} ${await r.text()}`);
+  return await r.json();
+}
+
+async function ensureMic() {
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+  const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+    ? "audio/webm;codecs=opus"
+    : "audio/webm";
+  mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+
+  mediaRecorder.ondataavailable = (e) => { if (e.data.size) chunks.push(e.data); };
+  mediaRecorder.onstop = async () => {
+    try {
+      setStatus("transcribing");
+      const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
+      chunks = [];
+      debugEl.textContent = `Recorded: ${Math.round(blob.size/1024)} KB (${mediaRecorder.mimeType})`;
+
+      const stt = await postAudio("/stt", blob);
+      textEl.value = stt.text || "";
+      setStatus("chatting");
+
+      const chat = await postJSON("/chat", { text: textEl.value });
+      replyEl.textContent = chat.reply || "—";
+      setStatus("idle");
+    } catch (err) {
+      setStatus("error");
+      replyEl.textContent = "—";
+      debugEl.textContent = String(err);
+      talkBtn.classList.remove("rec");
+    }
+  };
+}
+
+talkBtn.addEventListener("pointerdown", async (e) => {
+  e.preventDefault();
+  try {
+    if (!mediaRecorder) await ensureMic();
+    talkBtn.classList.add("rec");
+    setStatus("recording");
+    chunks = [];
+    mediaRecorder.start();
+  } catch (err) {
+    setStatus("error");
+    debugEl.textContent = "Mic error: " + err;
+  }
+});
+
+talkBtn.addEventListener("pointerup", (e) => {
+  e.preventDefault();
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    talkBtn.classList.remove("rec");
+    setStatus("stopping");
+    mediaRecorder.stop();
+  }
+});
+
+talkBtn.addEventListener("pointercancel", () => {
+  if (mediaRecorder && mediaRecorder.state === "recording") {
+    talkBtn.classList.remove("rec");
+    setStatus("stopping");
+    mediaRecorder.stop();
+  }
+});
+
+sendBtn.addEventListener("click", async () => {
+  try {
+    setStatus("chatting");
+    const chat = await postJSON("/chat", { text: textEl.value });
+    replyEl.textContent = chat.reply || "—";
+    setStatus("idle");
+  } catch (err) {
+    setStatus("error");
+    debugEl.textContent = String(err);
+  }
+});
+
+clearBtn.addEventListener("click", () => {
+  textEl.value = "";
+  replyEl.textContent = "—";
+  debugEl.textContent = "—";
+  setStatus("idle");
+});
+</script>
+</body>
+</html>

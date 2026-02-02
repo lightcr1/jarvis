@@ -1,0 +1,687 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>J.A.R.V.I.S.</title>
+  <style>
+    :root{
+      --bg:#070b11;
+      --panel:#0c1322;
+      --border:#1d2a44;
+      --text:#e6edf3;
+      --muted:#8aa3c7;
+      --blue:#2563eb;
+      --good:#22c55e;
+      --bad:#ef4444;
+      --bubbleUser:#0b1220;
+      --bubbleJarvis:#0d1a33;
+      --shadow: 0 18px 60px rgba(0,0,0,.55);
+      --r: 18px;
+      --warn:#f59e0b;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background:
+        radial-gradient(900px 600px at 50% -10%, rgba(37,99,235,.22), transparent 60%),
+        radial-gradient(900px 600px at 20% 0%, rgba(34,197,94,.14), transparent 60%),
+        var(--bg);
+      color:var(--text);
+      height:100vh;
+      overflow:hidden;
+    }
+
+    .app{
+      height:100vh;
+      display:flex;
+      flex-direction:column;
+      max-width: 980px;
+      margin: 0 auto;
+    }
+
+    header{
+      padding: 18px 18px 10px;
+      display:flex;
+      justify-content:center;
+      position:relative;
+    }
+
+    .title{
+      font-weight: 900;
+      letter-spacing: .18em;
+      font-size: 38px;
+      margin:0;
+      text-align:center;
+      user-select:none;
+    }
+    .title span{opacity:.9}
+    .topRight{
+      position:absolute;
+      right:18px;
+      top:18px;
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+    .chip{
+      display:inline-flex; align-items:center; gap:8px;
+      padding:8px 12px; border-radius:999px;
+      border:1px solid var(--border);
+      background: rgba(12,19,34,.65);
+      color:var(--muted);
+      font-size:12px;
+      user-select:none;
+    }
+    .dot{width:8px;height:8px;border-radius:999px;background:var(--muted);}
+    .dot.blue{background:var(--blue)}
+    .dot.good{background:var(--good)}
+    .dot.bad{background:var(--bad)}
+
+    .btnSmall{
+      border:1px solid var(--border);
+      background: rgba(12,19,34,.65);
+      color:var(--text);
+      border-radius:999px;
+      padding:8px 12px;
+      font-weight:800;
+      cursor:pointer;
+    }
+    .btnSmall:hover{filter:brightness(1.08)}
+
+    main{
+      flex:1;
+      padding: 0 18px 12px;
+      overflow:hidden;
+    }
+
+    .chatPanel{
+      height:100%;
+      background: linear-gradient(180deg, rgba(12,19,34,.78), rgba(10,16,32,.82));
+      border:1px solid var(--border);
+      border-radius: var(--r);
+      box-shadow: var(--shadow);
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+    }
+
+    .messages{
+      flex:1;
+      overflow:auto;
+      padding: 14px;
+      scroll-behavior:smooth;
+    }
+    .row{
+      display:flex;
+      margin: 10px 0;
+    }
+    .row.user{justify-content:flex-end;}
+    .row.jarvis{justify-content:flex-start;}
+
+    .bubble{
+      max-width: min(760px, 92%);
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(29,42,68,.9);
+      background: rgba(5,9,18,.45);
+      line-height:1.35;
+      white-space:pre-wrap;
+      word-wrap:break-word;
+    }
+    .row.user .bubble{
+      background: rgba(11,18,32,.78);
+    }
+    .row.jarvis .bubble{
+      background: rgba(13,26,51,.72);
+    }
+    .meta{
+      margin-top:6px;
+      font-size:12px;
+      color:var(--muted);
+      display:flex;
+      gap:10px;
+      align-items:center;
+      justify-content:flex-end;
+    }
+    .meta.left{justify-content:flex-start;}
+    .pill{
+      display:inline-block;
+      padding: 3px 10px;
+      border-radius:999px;
+      border:1px solid var(--border);
+      background: rgba(12,19,34,.6);
+      color:var(--muted);
+      font-size:12px;
+    }
+
+    .composer{
+      border-top:1px solid var(--border);
+      padding: 12px;
+      display:flex;
+      gap:10px;
+      align-items:flex-end;
+      background: rgba(0,0,0,.18);
+    }
+    textarea{
+      flex:1;
+      min-height: 52px;
+      max-height: 160px;
+      resize:none;
+      border:1px solid var(--border);
+      border-radius: 14px;
+      padding: 12px 12px;
+      background: rgba(5,9,18,.55);
+      color: var(--text);
+      outline:none;
+      font-size:14px;
+      line-height:1.3;
+    }
+    .actions{
+      display:flex;
+      gap:10px;
+      align-items:center;
+    }
+    .btn{
+      border:0;
+      border-radius:999px;
+      padding: 12px 14px;
+      font-weight:900;
+      cursor:pointer;
+      user-select:none;
+    }
+    #talk{background: var(--blue); color:#fff;}
+    #talk.rec{background: var(--bad);}
+    #send{background: var(--good); color:#06250f;}
+    #clear{background: #2a395a; color: var(--text);}
+
+    .hint{
+      padding: 0 14px 12px;
+      color: var(--muted);
+      font-size: 12px;
+    }
+
+    /* Modal (clean, only when needed) */
+    #unlockModal{
+      position:fixed; inset:0;
+      display:none;
+      align-items:center; justify-content:center;
+      background: rgba(0,0,0,.62);
+      padding:16px;
+      z-index:50;
+    }
+    #unlockModal .box{
+      width:min(520px, 100%);
+      background: rgba(12,19,34,.95);
+      border:1px solid var(--border);
+      border-radius:18px;
+      padding:16px;
+      box-shadow: var(--shadow);
+    }
+    #unlockModal .head{
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
+      margin-bottom:10px;
+    }
+    #unlockModal .head .t{
+      font-weight:900;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      font-size:13px;
+      color:var(--muted);
+    }
+    #unlockModal .close{
+      border:1px solid var(--border);
+      background: rgba(5,9,18,.55);
+      color:var(--text);
+      border-radius:999px;
+      padding:8px 10px;
+      font-weight:900;
+      cursor:pointer;
+    }
+    #unlockModal .field{
+      border:1px solid var(--border);
+      background: rgba(5,9,18,.55);
+      border-radius:14px;
+      padding:10px;
+      margin-top:10px;
+    }
+    #unlockModal input{
+      width:100%;
+      background:transparent;
+      border:0;
+      outline:none;
+      color:var(--text);
+      font-size:14px;
+      padding:6px;
+    }
+    #unlockModal .rowBtns{
+      display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; align-items:center;
+    }
+    #doUnlock{
+      background: var(--warn);
+      color:#1b1200;
+    }
+    #lockNow{
+      border:1px solid var(--border);
+      background: rgba(5,9,18,.55);
+      color:var(--text);
+      border-radius:999px;
+      padding:12px 14px;
+      font-weight:900;
+      cursor:pointer;
+    }
+    #unlockHint{
+      color:var(--muted);
+      font-size:12px;
+    }
+
+    @media (max-width:520px){
+      .title{font-size:30px}
+      .topRight{top:14px; right:14px}
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1 class="title"><span>J.A.R.V.I.S.</span></h1>
+
+      <div class="topRight">
+        <span class="chip" title="Status">
+          <span class="dot blue" id="statusDot"></span>
+          <span id="statusText">idle</span>
+        </span>
+
+        <!-- Auth chip (tiny, not ugly) -->
+        <span class="chip" title="Write lock state">
+          <span class="dot bad" id="authDot"></span>
+          <span id="authText">LOCKED</span>
+          <span id="authInfo"></span>
+        </span>
+
+        <button class="btnSmall" id="orbBtn" title="Orb Mode">ORB</button>
+      </div>
+    </header>
+
+    <main>
+      <div class="chatPanel">
+        <div class="messages" id="messages"></div>
+
+        <div class="hint">Tipps: <span class="pill">uptime</span> <span class="pill">status jarvis</span> <span class="pill">logs jarvis</span> <span class="pill">restart nginx</span></div>
+
+        <div class="composer">
+          <textarea id="input" placeholder="Type a message… (Enter = send, Shift+Enter = newline)"></textarea>
+          <div class="actions">
+            <button class="btn" id="talk">🎙️</button>
+            <button class="btn" id="send">Send</button>
+            <button class="btn" id="clear">Clear</button>
+          </div>
+        </div>
+      </div>
+    </main>
+  </div>
+
+  <!-- Unlock Modal -->
+  <div id="unlockModal">
+    <div class="box">
+      <div class="head">
+        <div class="t">Access required</div>
+        <button class="close" id="closeUnlock">✕</button>
+      </div>
+      <div style="color:var(--muted);font-size:13px;">
+        Write-Commands (start/stop/restart) sind gesperrt. Entsperre kurzzeitig.
+      </div>
+
+      <div class="field">
+        <input id="passphrase" type="password" placeholder="Passphrase" autocomplete="current-password" />
+      </div>
+
+      <div class="rowBtns">
+        <button class="btn" id="doUnlock">Unlock</button>
+        <button id="lockNow">Lock</button>
+        <span id="unlockHint"></span>
+      </div>
+    </div>
+  </div>
+
+<script>
+  const messagesEl = document.getElementById("messages");
+  const inputEl = document.getElementById("input");
+  const sendBtn = document.getElementById("send");
+  const clearBtn = document.getElementById("clear");
+  const talkBtn = document.getElementById("talk");
+  const statusText = document.getElementById("statusText");
+  const orbBtn = document.getElementById("orbBtn");
+
+  // ✅ TTS: Audio player (global)
+  let ttsAudio = new Audio();
+  ttsAudio.preload = "none";
+
+  // Auth UI
+  const authDot = document.getElementById("authDot");
+  const authText = document.getElementById("authText");
+  const authInfo = document.getElementById("authInfo");
+
+  // Modal
+  const unlockModal = document.getElementById("unlockModal");
+  const closeUnlock = document.getElementById("closeUnlock");
+  const passEl = document.getElementById("passphrase");
+  const doUnlockBtn = document.getElementById("doUnlock");
+  const lockNowBtn = document.getElementById("lockNow");
+  const unlockHint = document.getElementById("unlockHint");
+
+  let mediaRecorder = null;
+  let chunks = [];
+
+  // Token storage (session)
+  const TOKEN_KEY = "jarvis_token";
+  const TOKEN_EXP = "jarvis_token_exp_ms";
+
+  function setStatus(s){ statusText.textContent = s; }
+
+  function getToken(){
+    const t = sessionStorage.getItem(TOKEN_KEY);
+    const exp = Number(sessionStorage.getItem(TOKEN_EXP) || "0");
+    if(!t) return null;
+    if(exp && Date.now() > exp){
+      sessionStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(TOKEN_EXP);
+      return null;
+    }
+    return t;
+  }
+  function setToken(token, expiresInSec){
+    sessionStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.setItem(TOKEN_EXP, String(Date.now() + expiresInSec*1000));
+    updateAuthUI();
+  }
+  function clearToken(){
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_EXP);
+    updateAuthUI();
+  }
+  function updateAuthUI(){
+    const t = getToken();
+    if(t){
+      authDot.classList.remove("bad"); authDot.classList.add("good");
+      authText.textContent = "UNLOCKED";
+      const exp = Number(sessionStorage.getItem(TOKEN_EXP) || "0");
+      const mins = Math.max(0, Math.round((exp - Date.now())/60000));
+      authInfo.textContent = mins ? `~${mins}m` : "";
+    } else {
+      authDot.classList.remove("good"); authDot.classList.add("bad");
+      authText.textContent = "LOCKED";
+      authInfo.textContent = "";
+    }
+  }
+  function authHeaders(){
+    const h = {"Content-Type":"application/json"};
+    const t = getToken();
+    if(t) h["Authorization"] = "Bearer " + t;
+    return h;
+  }
+  function isWriteCommand(text){
+    const t = (text||"").trim().toLowerCase();
+    return t.startsWith("restart ") || t.startsWith("start ") || t.startsWith("stop ");
+  }
+
+  function addMessage(role, text){
+    const row = document.createElement("div");
+    row.className = "row " + (role === "user" ? "user" : "jarvis");
+
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+
+    row.appendChild(bubble);
+    messagesEl.appendChild(row);
+
+    const meta = document.createElement("div");
+    meta.className = "meta " + (role === "user" ? "" : "left");
+    meta.innerHTML = `<span class="pill">${role === "user" ? "You" : "JARVIS"}</span>`;
+    messagesEl.appendChild(meta);
+
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+  }
+
+  let pendingWrite = null;
+
+  function openUnlockModal(cmd){
+    pendingWrite = cmd || null;
+    unlockHint.textContent = pendingWrite ? "Unlock → command runs automatically." : "";
+    unlockModal.style.display = "flex";
+    setTimeout(()=>passEl.focus(), 50);
+  }
+  function closeUnlockModal(){
+    unlockModal.style.display = "none";
+    passEl.value = "";
+    unlockHint.textContent = "";
+  }
+
+  closeUnlock.addEventListener("click", closeUnlockModal);
+  unlockModal.addEventListener("click", (e)=>{ if(e.target===unlockModal) closeUnlockModal(); });
+
+  lockNowBtn.addEventListener("click", ()=>{
+    clearToken();
+    addMessage("jarvis", "Understood.\nLocked.");
+    closeUnlockModal();
+  });
+
+  async function postJSON(url, body, useAuth=true){
+    const r = await fetch(url, {
+      method:"POST",
+      headers: useAuth ? authHeaders() : {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    const txt = await r.text();
+    let data = {};
+    try { data = txt ? JSON.parse(txt) : {}; } catch {}
+    if(!r.ok){
+      const detail = data.detail || txt || (r.status + "");
+      const err = new Error(detail);
+      err.status = r.status;
+      throw err;
+    }
+    return data;
+  }
+
+  async function postAudio(url, blob){
+    const fd = new FormData();
+    fd.append("file", blob, "audio.webm");
+    const r = await fetch(url, { method:"POST", body: fd });
+    const txt = await r.text();
+    let data = {};
+    try { data = txt ? JSON.parse(txt) : {}; } catch {}
+    if(!r.ok){
+      const detail = data.detail || txt || (r.status + "");
+      throw new Error(detail);
+    }
+    return data;
+  }
+
+  async function doUnlock(passphrase){
+    const res = await postJSON("/unlock", { passphrase }, false);
+    setToken(res.token, res.expires_in_sec);
+    closeUnlockModal();
+    addMessage("jarvis", "Understood.\nUnlocked.");
+    if(pendingWrite){
+      const cmd = pendingWrite;
+      pendingWrite = null;
+      await sendText(cmd); // resend with auth header now
+    }
+  }
+
+  doUnlockBtn.addEventListener("click", async ()=>{
+    const p = (passEl.value||"").trim();
+    if(!p) return;
+    try{ await doUnlock(p); }
+    catch(e){ addMessage("jarvis", "Understood.\nUnlock failed."); }
+  });
+
+  passEl.addEventListener("keydown", (e)=>{
+    if(e.key==="Enter"){ e.preventDefault(); doUnlockBtn.click(); }
+  });
+
+  // ✅ TTS: fetch /tts and play audio
+  async function speak(text){
+    const t = (text||"").trim();
+    if(!t) return;
+
+    try{
+      // stop previous
+      try { ttsAudio.pause(); } catch {}
+      ttsAudio.currentTime = 0;
+
+      const r = await fetch("/tts", {
+        method:"POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ text: t })
+      });
+
+      if(!r.ok){
+        const errTxt = await r.text();
+        throw new Error(errTxt || ("TTS HTTP " + r.status));
+      }
+
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+
+      ttsAudio.src = url;
+      // play may require user gesture - but after send click / enter it's ok
+      await ttsAudio.play().catch(()=>{});
+    } catch(e){
+      // TTS errors shouldn't break chat
+      addMessage("jarvis", "Understood.\nTTS error: " + (e?.message || e));
+    }
+  }
+
+  async function sendText(text){
+    const t = (text || "").trim();
+    if(!t) return;
+
+    // If Write command and locked -> ask unlock first
+    if(isWriteCommand(t) && !getToken()){
+      openUnlockModal(t);
+      return;
+    }
+
+    addMessage("user", t);
+    inputEl.value = "";
+    setStatus("thinking");
+
+    try{
+      const res = await postJSON("/chat", { text: t }, true);
+      const reply = res.reply || "—";
+      addMessage("jarvis", reply);
+      setStatus("idle");
+
+      // ✅ TTS: speak reply
+      await speak(reply);
+
+    } catch(err){
+      // If token invalid/expired -> force unlock again
+      if(err.status === 401){
+        clearToken();
+        openUnlockModal(t);
+        addMessage("jarvis", "Understood.\nAuthorization required.");
+        setStatus("idle");
+        return;
+      }
+      addMessage("jarvis", "Understood.\nError: " + err.message);
+      setStatus("error");
+    }
+  }
+
+  // Enter = send (Shift+Enter newline)
+  inputEl.addEventListener("keydown", (e)=>{
+    if(e.key === "Enter" && !e.shiftKey){
+      e.preventDefault();
+      sendText(inputEl.value);
+    }
+  });
+
+  sendBtn.addEventListener("click", ()=> sendText(inputEl.value));
+
+  clearBtn.addEventListener("click", ()=>{
+    messagesEl.innerHTML = "";
+    inputEl.value = "";
+    setStatus("idle");
+    // ✅ TTS stop on clear
+    try { ttsAudio.pause(); } catch {}
+    try { ttsAudio.currentTime = 0; } catch {}
+  });
+
+  orbBtn.addEventListener("click", ()=>{
+    window.location.href = "/static/orb.html";
+  });
+
+  async function ensureMic(){
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+
+    mediaRecorder.ondataavailable = (e)=>{ if(e.data.size) chunks.push(e.data); };
+    mediaRecorder.onstop = async ()=>{
+      try{
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
+        chunks = [];
+        setStatus("transcribing");
+
+        const stt = await postAudio("/stt", blob);
+        const transcript = (stt.text || "").trim();
+        if(transcript){
+          inputEl.value = transcript;
+          await sendText(transcript);
+        } else {
+          setStatus("idle");
+        }
+      } catch(err){
+        addMessage("jarvis", "Understood.\nSTT error: " + err.message);
+        setStatus("error");
+      } finally {
+        talkBtn.classList.remove("rec");
+      }
+    };
+  }
+
+  // Hold-to-talk
+  talkBtn.addEventListener("pointerdown", async (e)=>{
+    e.preventDefault();
+    try{
+      if(!mediaRecorder) await ensureMic();
+      chunks = [];
+      talkBtn.classList.add("rec");
+      setStatus("recording");
+      mediaRecorder.start();
+    } catch(err){
+      addMessage("jarvis", "Understood.\nMic error: " + err.message);
+      setStatus("error");
+    }
+  });
+
+  talkBtn.addEventListener("pointerup", (e)=>{
+    e.preventDefault();
+    if(mediaRecorder && mediaRecorder.state === "recording"){
+      setStatus("stopping");
+      mediaRecorder.stop();
+    }
+  });
+
+  talkBtn.addEventListener("pointercancel", ()=>{
+    if(mediaRecorder && mediaRecorder.state === "recording"){
+      setStatus("stopping");
+      mediaRecorder.stop();
+    }
+  });
+
+  // Welcome line
+  addMessage("jarvis", "Understood.\nSystem online.");
+  updateAuthUI();
+  setStatus("idle");
+  setInterval(updateAuthUI, 2000);
+</script>
+</body>
+</html>

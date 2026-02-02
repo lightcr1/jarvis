@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JARVIS • Orb</title>
+  <style>
+    :root{
+      --bg:#05070c;
+      --amber:#fbbf24;   /* warm yellow */
+      --orange:#fb923c;  /* jarvis orange */
+      --deep:#0b1220;
+      --text:#e6edf3;
+      --muted:#9aa8bf;
+      --border: rgba(251,191,36,.22);
+      --shadow: 0 18px 70px rgba(0,0,0,.65);
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      height:100vh;
+      overflow:hidden;
+      background:
+        radial-gradient(900px 600px at 50% 35%, rgba(251,191,36,.16), transparent 55%),
+        radial-gradient(900px 600px at 50% 60%, rgba(251,146,60,.12), transparent 60%),
+        var(--bg);
+      font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      color: var(--text);
+      user-select:none;
+    }
+
+    .title{
+      position:absolute;
+      top: 34px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align:center;
+      letter-spacing:.22em;
+      font-weight:900;
+      font-size: 28px;
+      pointer-events:none;
+    }
+    .subtitle{
+      margin-top:8px;
+      color:var(--muted);
+      font-size: 12px;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+    }
+
+    .hud{
+      position:absolute;
+      inset:0;
+      display:grid;
+      place-items:center;
+    }
+
+    .orbWrap{
+      width:min(560px, 84vw);
+      aspect-ratio:1/1;
+      position:relative;
+      filter: drop-shadow(0 30px 90px rgba(0,0,0,.7));
+    }
+
+    /* Click target */
+    .orbButton{
+      position:absolute;
+      inset:0;
+      border-radius:999px;
+      cursor:pointer;
+      outline:none;
+      border:0;
+      padding:0;
+      background: transparent;
+    }
+    .orbHint{
+      position:absolute;
+      inset:auto 0 -18px 0;
+      text-align:center;
+      font-size:12px;
+      color:var(--muted);
+      letter-spacing:.06em;
+      text-transform:uppercase;
+      opacity:.9;
+      pointer-events:none;
+    }
+
+    .ring{
+      position:absolute; inset:0;
+      border-radius:999px;
+      border: 1px solid rgba(251,191,36,.40);
+      box-shadow: 0 0 50px rgba(251,191,36,.08) inset;
+      animation: spin 18s linear infinite;
+    }
+    .ring.r2{
+      inset: 8%;
+      border-color: rgba(251,146,60,.32);
+      animation-duration: 26s;
+      animation-direction: reverse;
+    }
+    .ring.r3{
+      inset: 16%;
+      border-color: rgba(251,191,36,.22);
+      animation-duration: 34s;
+    }
+
+    .grid{
+      position:absolute; inset: -25%;
+      background:
+        radial-gradient(circle, rgba(251,191,36,.07) 1px, transparent 1px);
+      background-size: 26px 26px;
+      mask-image: radial-gradient(circle at 50% 50%, rgba(0,0,0,.95), transparent 62%);
+      opacity:.55;
+      animation: drift 9s ease-in-out infinite;
+      pointer-events:none;
+    }
+
+    .scan{
+      position:absolute;
+      inset: 0;
+      border-radius:999px;
+      background: conic-gradient(from 0deg, rgba(251,191,36,0), rgba(251,191,36,.25), rgba(251,191,36,0));
+      filter: blur(1px);
+      animation: spin 6s linear infinite;
+      opacity:.72;
+      pointer-events:none;
+    }
+
+    .core{
+      position:absolute; inset: 24%;
+      border-radius:999px;
+      background:
+        radial-gradient(circle at 40% 35%, rgba(251,191,36,.55), rgba(251,146,60,.18) 45%, rgba(0,0,0,0) 70%),
+        radial-gradient(circle at 55% 60%, rgba(251,146,60,.25), rgba(0,0,0,0) 60%),
+        radial-gradient(circle at 50% 50%, rgba(251,191,36,.16), rgba(0,0,0,0) 62%);
+      border:1px solid rgba(251,191,36,.25);
+      box-shadow:
+        0 0 110px rgba(251,191,36,.18),
+        0 0 160px rgba(251,146,60,.12);
+      animation: pulse 2.8s ease-in-out infinite;
+      pointer-events:none;
+    }
+
+    /* Recording state */
+    .rec .ring, .rec .ring.r2, .rec .ring.r3 { filter: brightness(1.12); }
+    .rec .scan { opacity:.92; }
+    .rec .core {
+      box-shadow:
+        0 0 140px rgba(251,191,36,.28),
+        0 0 220px rgba(251,146,60,.18);
+      animation-duration: 1.2s;
+    }
+    .recBadge{
+      position:absolute;
+      top: 14px;
+      left: 14px;
+      display:inline-flex;
+      align-items:center;
+      gap:8px;
+      padding:8px 12px;
+      border-radius:999px;
+      border:1px solid rgba(251,191,36,.22);
+      background: rgba(11,18,32,.55);
+      color: var(--muted);
+      font-size: 12px;
+      opacity:.95;
+    }
+    .dot{width:9px;height:9px;border-radius:999px;background:var(--muted);}
+    .dot.on{background:#ef4444;}
+
+    /* HUD output */
+    .hudOut{
+      position:absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 24px;
+      width: min(900px, calc(100vw - 28px));
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      pointer-events:none;
+    }
+    .bubble{
+      pointer-events:none;
+      border:1px solid rgba(251,191,36,.22);
+      background: rgba(11,18,32,.55);
+      border-radius: 16px;
+      padding: 12px 14px;
+      color: var(--text);
+      box-shadow: var(--shadow);
+      white-space: pre-wrap;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 13px;
+      line-height: 1.4;
+    }
+    .bubble .k{color:var(--muted); font-size:12px; letter-spacing:.08em; text-transform:uppercase; display:block; margin-bottom:6px;}
+    .rowBtns{
+      position:absolute;
+      bottom: 22px;
+      right: 22px;
+      display:flex;
+      gap:10px;
+    }
+    .btn{
+      border:1px solid rgba(251,191,36,.22);
+      background: rgba(11,18,32,.55);
+      color: var(--text);
+      padding: 10px 14px;
+      border-radius:999px;
+      font-weight:800;
+      cursor:pointer;
+    }
+    .btn:hover{filter:brightness(1.12)}
+
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes pulse{
+      0%,100%{transform:scale(1); opacity:.95}
+      50%{transform:scale(1.03); opacity:1}
+    }
+    @keyframes drift{
+      0%,100%{transform:translate(0,0)}
+      50%{transform:translate(8px,-10px)}
+    }
+  </style>
+</head>
+<body>
+  <div class="title">
+    J.A.R.V.I.S.
+    <div class="subtitle">Neural Core • Click Orb to Speak</div>
+  </div>
+
+  <div class="hud">
+    <div class="orbWrap" id="orbWrap">
+      <div class="recBadge"><span class="dot" id="recDot"></span><span id="state">idle</span></div>
+
+      <div class="grid"></div>
+      <div class="ring r1"></div>
+      <div class="ring r2"></div>
+      <div class="ring r3"></div>
+      <div class="scan"></div>
+      <div class="core"></div>
+
+      <button class="orbButton" id="orbBtn" aria-label="Speak to Jarvis"></button>
+      <div class="orbHint" id="hint">tap/click orb to talk</div>
+    </div>
+  </div>
+
+  <div class="hudOut">
+    <div class="bubble" id="transcriptBox" style="display:none;">
+      <span class="k">transcript</span>
+      <span id="transcript">—</span>
+    </div>
+    <div class="bubble" id="replyBox" style="display:none;">
+      <span class="k">jarvis</span>
+      <span id="reply">—</span>
+    </div>
+    <div class="bubble" id="debugBox" style="display:none;">
+      <span class="k">debug</span>
+      <span id="debug">—</span>
+    </div>
+  </div>
+
+  <div class="rowBtns">
+    <button class="btn" onclick="location.href='/static/index.html'">Back to Chat</button>
+  </div>
+
+<script>
+  const orbWrap = document.getElementById("orbWrap");
+  const orbBtn = document.getElementById("orbBtn");
+  const recDot = document.getElementById("recDot");
+  const stateEl = document.getElementById("state");
+  const hintEl = document.getElementById("hint");
+
+  const transcriptBox = document.getElementById("transcriptBox");
+  const replyBox = document.getElementById("replyBox");
+  const debugBox = document.getElementById("debugBox");
+  const transcriptEl = document.getElementById("transcript");
+  const replyEl = document.getElementById("reply");
+  const debugEl = document.getElementById("debug");
+
+  let mediaRecorder = null;
+  let chunks = [];
+  let stream = null;
+
+  function setState(s){
+    stateEl.textContent = s;
+    const rec = (s === "recording");
+    recDot.classList.toggle("on", rec);
+    orbWrap.classList.toggle("rec", rec);
+    hintEl.textContent = rec ? "tap orb to stop" : "tap/click orb to talk";
+  }
+
+  async function postAudio(url, blob){
+    const fd = new FormData();
+    fd.append("file", blob, "audio.webm");
+    const r = await fetch(url, { method: "POST", body: fd });
+    const txt = await r.text();
+    let data = {};
+    try { data = txt ? JSON.parse(txt) : {}; } catch {}
+    if(!r.ok){
+      const detail = data.detail || txt || (r.status + "");
+      throw new Error(detail);
+    }
+    return data;
+  }
+
+  async function postJSON(url, body){
+    const r = await fetch(url, {
+      method:"POST",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify(body)
+    });
+    const txt = await r.text();
+    let data = {};
+    try { data = txt ? JSON.parse(txt) : {}; } catch {}
+    if(!r.ok){
+      const detail = data.detail || txt || (r.status + "");
+      throw new Error(detail);
+    }
+    return data;
+  }
+
+  function showBox(el, show=true){ el.style.display = show ? "block" : "none"; }
+
+  async function ensureMic(){
+    if(stream) return;
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+
+    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
+      ? "audio/webm;codecs=opus"
+      : "audio/webm";
+
+    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
+
+    mediaRecorder.ondataavailable = (e)=>{ if(e.data.size) chunks.push(e.data); };
+
+    mediaRecorder.onstop = async ()=>{
+      try{
+        setState("transcribing");
+        const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
+        chunks = [];
+
+        showBox(debugBox, false);
+
+        // STT
+        const stt = await postAudio("/stt", blob);
+        const transcript = (stt.text || "").trim();
+
+        if(!transcript){
+          setState("idle");
+          return;
+        }
+
+        transcriptEl.textContent = transcript;
+        showBox(transcriptBox, true);
+
+        // Chat
+        setState("chatting");
+        const chat = await postJSON("/chat", { text: transcript });
+        replyEl.textContent = chat.reply || "—";
+        showBox(replyBox, true);
+
+        setState("idle");
+      } catch(err){
+        setState("error");
+        debugEl.textContent = String(err);
+        showBox(debugBox, true);
+      }
+    };
+  }
+
+  async function startRecording(){
+    await ensureMic();
+    chunks = [];
+    setState("recording");
+    mediaRecorder.start();
+  }
+
+  function stopRecording(){
+    if(mediaRecorder && mediaRecorder.state === "recording"){
+      mediaRecorder.stop();
+    }
+  }
+
+  // Tap/click orb toggles record
+  orbBtn.addEventListener("click", async ()=>{
+    try{
+      if(!mediaRecorder || mediaRecorder.state !== "recording"){
+        await startRecording();
+      } else {
+        stopRecording();
+      }
+    } catch(err){
+      setState("error");
+      debugEl.textContent = "Mic error: " + err;
+      showBox(debugBox, true);
+    }
+  });
+
+  // Initial
+  setState("idle");
+</script>
+</body>
+</html>
