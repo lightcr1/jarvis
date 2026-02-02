@@ -201,6 +201,12 @@
       color: var(--muted);
       font-size: 12px;
     }
+    .recordHint{
+      margin-top:6px;
+      font-size:12px;
+      color: var(--muted);
+      text-align:center;
+    }
 
     /* Modal (clean, only when needed) */
     #unlockModal{
@@ -318,6 +324,7 @@
             <button class="btn" id="clear">Clear</button>
           </div>
         </div>
+        <div class="recordHint" id="recordHint">🎙️ Aufnahme starten → sprechen → erneut drücken zum Transkribieren</div>
       </div>
     </main>
   </div>
@@ -353,17 +360,7 @@
   const talkBtn = document.getElementById("talk");
   const statusText = document.getElementById("statusText");
   const orbBtn = document.getElementById("orbBtn");
-
-  // ✅ TTS: Audio player (global)
-  let ttsAudio = new Audio();
-  ttsAudio.preload = "none";
-  ttsAudio.addEventListener("play", ()=> setStatus("speaking"));
-  ttsAudio.addEventListener("ended", ()=> setStatus("idle"));
-  ttsAudio.addEventListener("pause", ()=>{
-    if(statusText.textContent === "speaking"){
-      setStatus("idle");
-    }
-  });
+  const recordHint = document.getElementById("recordHint");
 
   // Auth UI
   const authDot = document.getElementById("authDot");
@@ -530,40 +527,6 @@
     if(e.key==="Enter"){ e.preventDefault(); doUnlockBtn.click(); }
   });
 
-  // ✅ TTS: fetch /tts and play audio
-  async function speak(text){
-    const t = (text||"").trim();
-    if(!t) return;
-
-    try{
-      // stop previous
-      try { ttsAudio.pause(); } catch {}
-      ttsAudio.currentTime = 0;
-
-      const r = await fetch("/tts", {
-        method:"POST",
-        headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ text: t })
-      });
-
-      if(!r.ok){
-        const errTxt = await r.text();
-        throw new Error(errTxt || ("TTS HTTP " + r.status));
-      }
-
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-
-      ttsAudio.src = url;
-      // play may require user gesture - but after send click / enter it's ok
-      await ttsAudio.play().catch(()=>{});
-    } catch(e){
-      // TTS errors shouldn't break chat
-      addMessage("jarvis", "Understood.\nTTS error: " + (e?.message || e));
-      setStatus("idle");
-    }
-  }
-
   async function sendText(text){
     const t = (text || "").trim();
     if(!t) return;
@@ -583,10 +546,6 @@
       const reply = res.reply || "—";
       addMessage("jarvis", reply);
       setStatus("idle");
-
-      // ✅ TTS: speak reply
-      await speak(reply);
-
     } catch(err){
       // If token invalid/expired -> force unlock again
       if(err.status === 401){
@@ -615,9 +574,6 @@
     messagesEl.innerHTML = "";
     inputEl.value = "";
     setStatus("idle");
-    // ✅ TTS stop on clear
-    try { ttsAudio.pause(); } catch {}
-    try { ttsAudio.currentTime = 0; } catch {}
   });
 
   orbBtn.addEventListener("click", ()=>{
@@ -658,37 +614,36 @@
         setStatus("idle");
       } finally {
         talkBtn.classList.remove("rec");
+        updateRecordHint(false);
       }
     };
   }
 
-  // Hold-to-talk
-  talkBtn.addEventListener("pointerdown", async (e)=>{
+  function updateRecordHint(recording){
+    recordHint.textContent = recording
+      ? "Aufnahme läuft… erneut drücken zum Stoppen & Transkribieren"
+      : "🎙️ Aufnahme starten → sprechen → erneut drücken zum Transkribieren";
+  }
+
+  // Click-to-toggle recording
+  talkBtn.addEventListener("click", async (e)=>{
     e.preventDefault();
     try{
       if(!mediaRecorder) await ensureMic();
-      chunks = [];
-      talkBtn.classList.add("rec");
-      setStatus("recording");
-      mediaRecorder.start();
+      if(mediaRecorder.state !== "recording"){
+        chunks = [];
+        talkBtn.classList.add("rec");
+        setStatus("recording");
+        updateRecordHint(true);
+        mediaRecorder.start();
+      } else {
+        setStatus("stopping");
+        updateRecordHint(false);
+        finalizeRecording();
+      }
     } catch(err){
       addMessage("jarvis", "Understood.\nMic error: " + err.message);
       setStatus("error");
-    }
-  });
-
-  talkBtn.addEventListener("pointerup", (e)=>{
-    e.preventDefault();
-    if(mediaRecorder && mediaRecorder.state === "recording"){
-      setStatus("stopping");
-      finalizeRecording();
-    }
-  });
-
-  talkBtn.addEventListener("pointercancel", ()=>{
-    if(mediaRecorder && mediaRecorder.state === "recording"){
-      setStatus("stopping");
-      finalizeRecording();
     }
   });
 
@@ -696,6 +651,7 @@
   addMessage("jarvis", "Understood.\nSystem online.");
   updateAuthUI();
   setStatus("idle");
+  updateRecordHint(false);
   setInterval(updateAuthUI, 2000);
 </script>
 </body>
