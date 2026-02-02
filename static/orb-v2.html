@@ -84,6 +84,13 @@
       opacity:.9;
       pointer-events:none;
     }
+    .orbHint.sub{
+      inset:auto 0 -38px 0;
+      font-size:11px;
+      opacity:.75;
+      letter-spacing:.04em;
+      text-transform:none;
+    }
 
     .ring{
       position:absolute; inset:0;
@@ -211,6 +218,9 @@
       cursor:pointer;
     }
     .btn:hover{filter:brightness(1.12)}
+    .orbButton:disabled{
+      cursor:not-allowed;
+    }
 
     @keyframes spin{to{transform:rotate(360deg)}}
     @keyframes pulse{
@@ -241,7 +251,8 @@
       <div class="core"></div>
 
       <button class="orbButton" id="orbBtn" aria-label="Speak to Jarvis"></button>
-      <div class="orbHint" id="hint">tap/click orb to talk</div>
+      <div class="orbHint" id="hint">Bereit • tippe auf den Orb</div>
+      <div class="orbHint sub" id="subHint">Drücke erneut zum Senden/Transkribieren</div>
     </div>
   </div>
 
@@ -270,6 +281,7 @@
   const recDot = document.getElementById("recDot");
   const stateEl = document.getElementById("state");
   const hintEl = document.getElementById("hint");
+  const subHintEl = document.getElementById("subHint");
 
   const transcriptBox = document.getElementById("transcriptBox");
   const replyBox = document.getElementById("replyBox");
@@ -286,9 +298,21 @@
   function setState(s){
     stateEl.textContent = s;
     const rec = (s === "recording");
+    const processing = (s === "processing");
     recDot.classList.toggle("on", rec);
     orbWrap.classList.toggle("rec", rec);
-    hintEl.textContent = rec ? "tap orb to stop" : "tap/click orb to talk";
+    orbBtn.disabled = processing;
+
+    if(rec){
+      hintEl.textContent = "Sprich jetzt …";
+      subHintEl.textContent = "Drücke erneut zum Senden/Transkribieren";
+    } else if(processing){
+      hintEl.textContent = "Transkribiere …";
+      subHintEl.textContent = "Bitte warten";
+    } else {
+      hintEl.textContent = "Bereit • tippe auf den Orb";
+      subHintEl.textContent = "Drücke erneut zum Senden/Transkribieren";
+    }
   }
 
   async function postAudio(url, blob){
@@ -372,7 +396,7 @@
 
     mediaRecorder.onstop = async ()=>{
       try{
-        setState("transcribing");
+        setState("processing");
         const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
         chunks = [];
 
@@ -391,7 +415,6 @@
         showBox(transcriptBox, true);
 
         // Chat
-        setState("chatting");
         const chat = await postJSON("/chat", { text: transcript });
         replyEl.textContent = chat.reply || "—";
         showBox(replyBox, true);
