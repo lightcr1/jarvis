@@ -306,32 +306,6 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
 
 
 # ---------------------------
-# TTS (local piper)
-# ---------------------------
-@app.post("/tts")
-def tts(payload: ChatIn):
-    provider = get_tts_provider()
-    if provider != "local":
-        raise HTTPException(400, "TTS provider not supported")
-
-    text = (payload.text or "").strip()
-    if not text:
-        raise HTTPException(400, "No text")
-
-    voice = os.getenv("PIPER_VOICE_MODEL") or ""
-    if not voice:
-        raise HTTPException(500, "PIPER_VOICE_MODEL not set")
-
-    out_wav = f"/tmp/jarvis_tts_{uuid.uuid4().hex}.wav"
-    cmd = ["piper", "--model", voice, "--output_file", out_wav]
-    try:
-        subprocess.run(cmd, input=text.encode("utf-8"), check=True)
-        return FileResponse(out_wav, media_type="audio/wav", filename="jarvis.wav")
-    except Exception as e:
-        raise HTTPException(502, f"TTS error: {type(e).__name__}: {e}")
-
-
-# ---------------------------
 # STT (local faster-whisper OR Gemini)
 # ---------------------------
 @app.post("/stt")
@@ -411,6 +385,10 @@ async def stt(file: UploadFile = File(...)):
 
 @app.post("/tts")
 def tts(payload: TTSIn):
+    provider = get_tts_provider()
+    if provider != "local":
+        raise HTTPException(400, "TTS provider not supported")
+
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(400, "Missing text")
