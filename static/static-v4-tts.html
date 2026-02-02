@@ -356,6 +356,7 @@
 
   // ✅ TTS: Audio player (global)
   let ttsAudio = new Audio();
+  const ttsContext = "index";
   ttsAudio.preload = "none";
   ttsAudio.addEventListener("play", ()=> setStatus("speaking"));
   ttsAudio.addEventListener("ended", ()=> setStatus("idle"));
@@ -534,6 +535,10 @@
   async function speak(text){
     const t = (text||"").trim();
     if(!t) return;
+    if(ttsContext === "index"){
+      console.warn("TTS called in index context; skipping.");
+      return;
+    }
 
     try{
       // stop previous
@@ -543,7 +548,7 @@
       const r = await fetch("/tts", {
         method:"POST",
         headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ text: t })
+        body: JSON.stringify({ text: t, context: ttsContext })
       });
 
       if(!r.ok){

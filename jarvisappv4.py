@@ -60,6 +60,7 @@ class UnlockIn(BaseModel):
 
 class TTSIn(BaseModel):
     text: str
+    context: str | None = None
 
 
 class UnlockOut(BaseModel):
@@ -174,11 +175,37 @@ def run_cmd(cmd: list[str], timeout: int = 8) -> str:
     return (p.stdout or "").strip()
 
 
+def resolve_tts_model_path() -> str:
+    candidates = [
+        os.getenv("PIPER_MODEL"),
+        os.getenv("PIPER_VOICE_MODEL"),
+        os.getenv("TTS_MODEL"),
+        os.getenv("VOICE_MODEL"),
+        os.getenv("MODEL_PATH"),
+    ]
+    for candidate in [c for c in candidates if c]:
+        if os.path.exists(candidate):
+            return candidate
+        logger.error("Configured TTS model path does not exist: %s", candidate)
+
+    default_model = "/opt/piper-voices/en_US-amy-medium.onnx"
+    if os.path.exists(default_model):
+        logger.info("Using default TTS model path: %s", default_model)
+        return default_model
+
+    raise HTTPException(500, "No valid TTS model path found")
+
+
+def resolve_piper_bin() -> str:
+    piper_bin = os.getenv("PIPER_BIN") or shutil.which("piper") or "/usr/local/bin/piper"
+    if os.path.exists(piper_bin):
+        return piper_bin
+    raise HTTPException(500, f"Piper binary not found at {piper_bin}")
+
+
 def synthesize_tts(text: str) -> bytes:
-    piper_bin = os.getenv("PIPER_BIN") or "/usr/local/bin/piper"
-    model = os.getenv("PIPER_MODEL") or os.getenv("PIPER_VOICE_MODEL") or ""
-    if not model:
-        raise HTTPException(500, "PIPER_MODEL not set")
+    piper_bin = resolve_piper_bin()
+    model = resolve_tts_model_path()
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         out_wav = tmp.name
@@ -597,6 +624,11 @@ def tts(payload: TTSIn):
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(400, "Missing text")
+
+    context = (payload.context or "").strip().lower()
+    if context == "index":
+        logger.warning("TTS called in index context; skipping.")
+        return Response(status_code=204)
 
     audio = synthesize_tts(text)
     return Response(content=audio, media_type="audio/wav")

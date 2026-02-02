@@ -282,6 +282,7 @@
   let chunks = [];
   let stream = null;
   const ttsAudio = new Audio();
+  const ttsContext = "orb";
 
   function setState(s){
     stateEl.textContent = s;
@@ -334,7 +335,7 @@
       const r = await fetch("/tts", {
         method:"POST",
         headers: {"Content-Type":"application/json"},
-        body: JSON.stringify({ text: t })
+        body: JSON.stringify({ text: t, context: ttsContext })
       });
 
       if(!r.ok){
