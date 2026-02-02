@@ -38,6 +38,15 @@ _whisper: WhisperModel | None = None
 _tokens: dict[str, float] = {}  # token -> expires_epoch
 
 
+def safe_remove(path: str, label: str = "temp file") -> None:
+    if not path or not os.path.exists(path):
+        return
+    try:
+        os.remove(path)
+    except Exception as e:
+        print(f"Failed to remove {label} at {path}: {e}")
+
+
 # ---------------------------
 # Models
 # ---------------------------
@@ -370,6 +379,10 @@ async def stt(file: UploadFile = File(...)):
             return {"text": text_out}
         except Exception as e:
             raise HTTPException(502, f"Local STT error: {type(e).__name__}: {e}")
+        finally:
+            safe_remove(tmp_in_path, label="STT input")
+            if tmp_wav != tmp_in_path:
+                safe_remove(tmp_wav, label="STT wav")
 
     # --- GEMINI STT ---
     if stt_provider == "gemini":
@@ -406,6 +419,10 @@ async def stt(file: UploadFile = File(...)):
                     headers={"Retry-After": "40"},
                 )
             raise HTTPException(502, f"Upstream STT error: {type(e).__name__}: {e}")
+        finally:
+            safe_remove(tmp_in_path, label="STT input")
+            if tmp_wav != tmp_in_path:
+                safe_remove(tmp_wav, label="STT wav")
 
     raise HTTPException(400, f"Unknown STT provider: {stt_provider}")
 
@@ -440,7 +457,4 @@ def tts(payload: TTSIn):
     except Exception as e:
         raise HTTPException(502, f"TTS error: {type(e).__name__}: {e}")
     finally:
-        try:
-            os.remove(out_wav)
-        except Exception:
-            pass
+        safe_remove(out_wav, label="TTS wav")
