@@ -1,15 +1,19 @@
-import os
 import base64
-import time
-import secrets
-import subprocess
+from datetime import datetime
+import logging
+import os
+import platform
 import re
+import secrets
+import shutil
+import subprocess
+import tempfile
+import time
 import uuid
-from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 
 from openai import OpenAI
@@ -17,9 +21,9 @@ from google import genai
 
 # Local STT
 from faster_whisper import WhisperModel
-from fastapi.responses import Response
 
 app = FastAPI(title="Jarvis Backend")
+logger = logging.getLogger("jarvis.audio")
 
 # Static Website
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -47,13 +51,16 @@ class ChatIn(BaseModel):
 
 class ChatOut(BaseModel):
     reply: str
+    data: dict | None = None
 
 
 class UnlockIn(BaseModel):
     passphrase: str
 
+
 class TTSIn(BaseModel):
     text: str
+
 
 class UnlockOut(BaseModel):
     token: str
@@ -74,10 +81,6 @@ def get_provider() -> str:
 
 def get_stt_provider() -> str:
     return (os.getenv("STT_PROVIDER") or "local").lower().strip()  # local|gemini
-
-
-def get_tts_provider() -> str:
-    return (os.getenv("TTS_PROVIDER") or "local").lower().strip()  # local
 
 
 def get_openai() -> OpenAI:
@@ -171,6 +174,73 @@ def run_cmd(cmd: list[str], timeout: int = 8) -> str:
     return (p.stdout or "").strip()
 
 
+def synthesize_tts(text: str) -> bytes:
+    piper_bin = os.getenv("PIPER_BIN") or "/usr/local/bin/piper"
+    model = os.getenv("PIPER_MODEL") or os.getenv("PIPER_VOICE_MODEL") or ""
+    if not model:
+        raise HTTPException(500, "PIPER_MODEL not set")
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        out_wav = tmp.name
+
+    try:
+        subprocess.run(
+            [piper_bin, "--model", model, "--output_file", out_wav],
+            input=text,
+            text=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+            timeout=20,
+        )
+        with open(out_wav, "rb") as f:
+            return f.read()
+    except subprocess.CalledProcessError as e:
+        logger.exception("TTS process failed")
+        raise HTTPException(502, f"TTS error: {e.stderr}") from e
+    except FileNotFoundError as e:
+        logger.exception("TTS binary not found")
+        raise HTTPException(500, "TTS binary not found") from e
+    except Exception as e:
+        logger.exception("TTS failed")
+        raise HTTPException(502, f"TTS error: {type(e).__name__}: {e}") from e
+    finally:
+        try:
+            os.remove(out_wav)
+        except Exception:
+            pass
+
+
+def transcribe_local(audio_path: str) -> str:
+    model = get_whisper()
+    segments, _ = model.transcribe(audio_path, beam_size=1)
+    return " ".join([seg.text.strip() for seg in segments]).strip()
+
+
+def transcribe_gemini(audio_bytes: bytes, content_type: str | None) -> str:
+    client = get_gemini()
+    model_name = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+    audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+    resp = client.models.generate_content(
+        model=model_name,
+        contents=[
+            {
+                "role": "user",
+                "parts": [
+                    {"text": "Transcribe this audio to text. Return only the transcript."},
+                    {
+                        "inline_data": {
+                            "mime_type": content_type or "audio/wav",
+                            "data": audio_b64,
+                        }
+                    },
+                ],
+            }
+        ],
+    )
+    return (getattr(resp, "text", "") or "").strip()
+
+
 def valid_service_name(name: str) -> bool:
     return bool(re.fullmatch(r"[a-zA-Z0-9_.@-]+", name))
 
@@ -187,47 +257,200 @@ def is_write_command(text: str) -> bool:
     return t.startswith(("restart ", "start ", "stop "))
 
 
-def try_skill(text: str) -> str | None:
+def format_bytes(size: float) -> str:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
+
+
+def tail_lines(text: str, max_lines: int = 6) -> str:
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    return "\n".join(lines[-max_lines:]) if lines else ""
+
+
+def parse_meminfo() -> dict[str, int] | None:
+    try:
+        info = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            for line in f:
+                key, value = line.split(":", 1)
+                parts = value.strip().split()
+                if not parts:
+                    continue
+                info[key] = int(parts[0]) * 1024
+        return info
+    except Exception:
+        return None
+
+
+def parse_ping(output: str) -> dict[str, str]:
+    data: dict[str, str] = {}
+    loss_match = re.search(r"(\d+)%\s+packet loss", output)
+    if loss_match:
+        data["packet_loss"] = f"{loss_match.group(1)}%"
+    rtt_match = re.search(r"rtt .* = ([0-9.]+)/([0-9.]+)/([0-9.]+)/([0-9.]+)", output)
+    if rtt_match:
+        data["rtt_min_ms"] = rtt_match.group(1)
+        data["rtt_avg_ms"] = rtt_match.group(2)
+        data["rtt_max_ms"] = rtt_match.group(3)
+        data["rtt_mdev_ms"] = rtt_match.group(4)
+    return data
+
+
+def try_skill(text: str) -> dict[str, object] | None:
     t = text.strip().lower()
 
     # READ
     if t in {"health", "status", "ping jarvis"}:
-        return "On it. Backend is healthy."
+        return {"reply": "On it. Backend is healthy.", "data": {"ok": True}}
 
     if t in {"uptime", "server uptime"}:
-        out = run_cmd(["/usr/bin/uptime"])
-        return f"On it. {out}"
+        out = run_cmd(["/usr/bin/uptime", "-p"])
+        return {"reply": f"On it. {out}", "data": {"raw": out}}
 
     if t in {"disk", "df"}:
-        out = run_cmd(["/bin/df", "-h"])
-        return f"On it.\n{out}"
+        usage = shutil.disk_usage("/")
+        used_pct = usage.used / usage.total * 100 if usage.total else 0
+        reply = (
+            f"On it. Disk /: {used_pct:.0f}% used "
+            f"({format_bytes(usage.used)}/{format_bytes(usage.total)})."
+        )
+        data = {
+            "path": "/",
+            "total_bytes": usage.total,
+            "used_bytes": usage.used,
+            "free_bytes": usage.free,
+        }
+        return {"reply": reply, "data": data}
 
     if t in {"memory", "ram"}:
+        info = parse_meminfo()
+        if info and "MemTotal" in info and "MemAvailable" in info:
+            total = info["MemTotal"]
+            avail = info["MemAvailable"]
+            used = total - avail
+            used_pct = used / total * 100 if total else 0
+            reply = (
+                f"On it. Memory: {format_bytes(avail)} free / "
+                f"{format_bytes(total)} total ({used_pct:.0f}% used)."
+            )
+            data = {"total_bytes": total, "available_bytes": avail, "used_bytes": used}
+            return {"reply": reply, "data": data}
         out = run_cmd(["/usr/bin/free", "-h"])
-        return f"On it.\n{out}"
+        return {"reply": "On it. Memory details ready.", "data": {"raw": out}}
 
     if t in {"docker", "docker ps"}:
-        out = run_cmd(["/usr/bin/sudo", "/usr/bin/docker", "ps"], timeout=12)
-        return f"On it.\n{out}"
+        out = run_cmd(
+            ["/usr/bin/sudo", "/usr/bin/docker", "ps", "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"],
+            timeout=12,
+        )
+        rows = []
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                rows.append({"name": parts[0], "status": parts[1], "image": parts[2]})
+        if not rows:
+            reply = "On it. No containers running."
+        else:
+            summary = ", ".join([f"{row['name']} ({row['status']})" for row in rows[:3]])
+            reply = f"On it. {len(rows)} container(s) running."
+            if summary:
+                reply = f"{reply} {summary}"
+        return {"reply": reply, "data": {"containers": rows}}
 
     if t.startswith("status "):
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
-        out = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "status", service, "--no-pager"], timeout=12)
-        return f"On it.\n{out}"
+        active = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "is-active", service], timeout=8)
+        enabled = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "is-enabled", service], timeout=8)
+        out = run_cmd(
+            ["/usr/bin/sudo", "/bin/systemctl", "status", service, "--no-pager", "-n", "10"],
+            timeout=12,
+        )
+        reply = f"On it. {service} is {active} ({enabled})."
+        return {"reply": reply, "data": {"service": service, "active": active, "enabled": enabled, "raw": out}}
 
     if t.startswith("logs "):
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
-        out = run_cmd(["/usr/bin/sudo", "/bin/journalctl", "-u", service, "-n", "60", "--no-pager"], timeout=12)
-        return f"On it.\n{out}"
+        out = run_cmd(
+            ["/usr/bin/sudo", "/bin/journalctl", "-u", service, "-n", "60", "--no-pager"],
+            timeout=12,
+        )
+        snippet = tail_lines(out, max_lines=6)
+        reply = f"On it. Latest {service} logs (last 6 lines):\n{snippet or '(no log lines)'}"
+        return {"reply": reply, "data": {"service": service, "raw": out}}
 
     if t.startswith("ping "):
         host = t.split(" ", 1)[1].strip()
         if not re.fullmatch(r"[a-zA-Z0-9.\-]+", host):
             raise HTTPException(400, "Invalid host")
         out = run_cmd(["/usr/bin/sudo", "/bin/ping", "-c", "2", host], timeout=8)
-        return f"On it.\n{out}"
+        metrics = parse_ping(out)
+        loss = metrics.get("packet_loss", "unknown loss")
+        avg = metrics.get("rtt_avg_ms")
+        reply = f"On it. Ping {host}: {loss}"
+        if avg:
+            reply = f"{reply}, avg {avg} ms."
+        return {"reply": reply, "data": {"host": host, "raw": out, **metrics}}
+
+    if t in {"system status", "system_status", "system health"}:
+        usage = shutil.disk_usage("/")
+        meminfo = parse_meminfo() or {}
+        total = meminfo.get("MemTotal", 0)
+        avail = meminfo.get("MemAvailable", 0)
+        used_pct = (total - avail) / total * 100 if total else 0
+        load1, load5, load15 = os.getloadavg()
+        cores = os.cpu_count() or 0
+        reply = (
+            "On it. "
+            f"Load {load1:.2f} ({cores} cores), "
+            f"Memory {used_pct:.0f}% used, "
+            f"Disk / {usage.used / usage.total * 100:.0f}% used."
+        )
+        data = {
+            "load": {"1m": load1, "5m": load5, "15m": load15},
+            "cpu_cores": cores,
+            "memory": {"total_bytes": total, "available_bytes": avail},
+            "disk": {
+                "path": "/",
+                "total_bytes": usage.total,
+                "used_bytes": usage.used,
+                "free_bytes": usage.free,
+            },
+            "platform": platform.platform(),
+        }
+        return {"reply": reply, "data": data}
+
+    if t in {"time", "date", "time and date", "what time is it"}:
+        now = datetime.now().astimezone()
+        reply = f"On it. {now.strftime('%Y-%m-%d %H:%M:%S %Z')}."
+        return {"reply": reply, "data": {"iso": now.isoformat()}}
+
+    if t in {"hostname", "host info", "host"}:
+        hostname = platform.node()
+        reply = f"On it. Hostname: {hostname}."
+        return {"reply": reply, "data": {"hostname": hostname}}
+
+    if t in {"help", "skills", "skills overview", "what can you do"}:
+        overview = [
+            "health/status/ping jarvis",
+            "uptime",
+            "disk",
+            "memory",
+            "docker",
+            "status <service>",
+            "logs <service>",
+            "ping <host>",
+            "restart|start|stop <service>",
+            "system status",
+            "time and date",
+            "hostname",
+        ]
+        reply = "On it. Available skills: " + ", ".join(overview) + "."
+        return {"reply": reply, "data": {"skills": overview}}
 
     # WRITE
     if t.startswith("restart "):
@@ -235,21 +458,21 @@ def try_skill(text: str) -> str | None:
         ensure_service_allowed(service)
         run_cmd(["/usr/bin/sudo", "/bin/systemctl", "restart", service], timeout=15)
         st = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "is-active", service], timeout=8)
-        return f"On it. '{service}' restarted. is-active: {st}"
+        return {"reply": f"On it. {service} restarted ({st}).", "data": {"service": service, "active": st}}
 
     if t.startswith("start "):
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
         run_cmd(["/usr/bin/sudo", "/bin/systemctl", "start", service], timeout=15)
         st = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "is-active", service], timeout=8)
-        return f"On it. '{service}' started. is-active: {st}"
+        return {"reply": f"On it. {service} started ({st}).", "data": {"service": service, "active": st}}
 
     if t.startswith("stop "):
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
         run_cmd(["/usr/bin/sudo", "/bin/systemctl", "stop", service], timeout=15)
         st = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "is-active", service], timeout=8)
-        return f"On it. '{service}' stopped. is-active: {st}"
+        return {"reply": f"On it. {service} stopped ({st}).", "data": {"service": service, "active": st}}
 
     return None
 
@@ -268,7 +491,7 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
 
     skill_reply = try_skill(text)
     if skill_reply is not None:
-        return {"reply": skill_reply}
+        return skill_reply
 
     provider = get_provider()
 
@@ -306,32 +529,6 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
 
 
 # ---------------------------
-# TTS (local piper)
-# ---------------------------
-@app.post("/tts")
-def tts(payload: ChatIn):
-    provider = get_tts_provider()
-    if provider != "local":
-        raise HTTPException(400, "TTS provider not supported")
-
-    text = (payload.text or "").strip()
-    if not text:
-        raise HTTPException(400, "No text")
-
-    voice = os.getenv("PIPER_VOICE_MODEL") or ""
-    if not voice:
-        raise HTTPException(500, "PIPER_VOICE_MODEL not set")
-
-    out_wav = f"/tmp/jarvis_tts_{uuid.uuid4().hex}.wav"
-    cmd = ["piper", "--model", voice, "--output_file", out_wav]
-    try:
-        subprocess.run(cmd, input=text.encode("utf-8"), check=True)
-        return FileResponse(out_wav, media_type="audio/wav", filename="jarvis.wav")
-    except Exception as e:
-        raise HTTPException(502, f"TTS error: {type(e).__name__}: {e}")
-
-
-# ---------------------------
 # STT (local faster-whisper OR Gemini)
 # ---------------------------
 @app.post("/stt")
@@ -342,105 +539,64 @@ async def stt(file: UploadFile = File(...)):
     if not audio_bytes:
         raise HTTPException(400, "Empty audio")
 
-    # Save to temp
     tmp_in = f"/tmp/jarvis_in_{uuid.uuid4().hex}"
-    tmp_in_path = tmp_in
-    with open(tmp_in_path, "wb") as f:
-        f.write(audio_bytes)
-
-    # Convert to wav (whisper likes 16k mono, but ffmpeg will handle)
     tmp_wav = f"/tmp/jarvis_in_{uuid.uuid4().hex}.wav"
+    tmp_wav_path = tmp_wav
     try:
-        subprocess.run(
-            ["ffmpeg", "-y", "-i", tmp_in_path, "-ac", "1", "-ar", "16000", tmp_wav],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            check=True,
-        )
-    except Exception:
-        # if ffmpeg fails, still try with original file (gemini might accept)
-        tmp_wav = tmp_in_path
+        with open(tmp_in, "wb") as f:
+            f.write(audio_bytes)
 
-    # --- LOCAL STT ---
-    if stt_provider == "local":
         try:
-            model = get_whisper()
-            segments, info = model.transcribe(tmp_wav, beam_size=1)
-            text_out = " ".join([seg.text.strip() for seg in segments]).strip()
-            return {"text": text_out}
-        except Exception as e:
-            raise HTTPException(502, f"Local STT error: {type(e).__name__}: {e}")
-
-    # --- GEMINI STT ---
-    if stt_provider == "gemini":
-        client = get_gemini()
-        model_name = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
-
-        audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
-        try:
-            resp = client.models.generate_content(
-                model=model_name,
-                contents=[
-                    {
-                        "role": "user",
-                        "parts": [
-                            {"text": "Transcribe this audio to text. Return only the transcript."},
-                            {
-                                "inline_data": {
-                                    "mime_type": file.content_type or "audio/wav",
-                                    "data": audio_b64,
-                                }
-                            },
-                        ],
-                    }
-                ],
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", tmp_in, "-ac", "1", "-ar", "16000", tmp_wav],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=True,
             )
-            text_out = (getattr(resp, "text", "") or "").strip()
-            return {"text": text_out}
-        except Exception as e:
-            msg = str(e)
-            if "RESOURCE_EXHAUSTED" in msg or "429" in msg:
-                return JSONResponse(
-                    status_code=429,
-                    content={"detail": "STT rate-limited (Gemini free tier). Wait ~40s and try again."},
-                    headers={"Retry-After": "40"},
-                )
-            raise HTTPException(502, f"Upstream STT error: {type(e).__name__}: {e}")
+        except Exception:
+            tmp_wav_path = tmp_in
+
+        if stt_provider == "local":
+            try:
+                text_out = transcribe_local(tmp_wav_path)
+                return {"text": text_out}
+            except Exception as e:
+                logger.exception("Local STT failed")
+                raise HTTPException(502, f"Local STT error: {type(e).__name__}: {e}") from e
+
+        if stt_provider == "gemini":
+            try:
+                text_out = transcribe_gemini(audio_bytes, file.content_type)
+                return {"text": text_out}
+            except Exception as e:
+                msg = str(e)
+                if "RESOURCE_EXHAUSTED" in msg or "429" in msg:
+                    return JSONResponse(
+                        status_code=429,
+                        content={"detail": "STT rate-limited (Gemini free tier). Wait ~40s and try again."},
+                        headers={"Retry-After": "40"},
+                    )
+                logger.exception("Upstream STT failed")
+                raise HTTPException(502, f"Upstream STT error: {type(e).__name__}: {e}") from e
+    finally:
+        for path in {tmp_in, tmp_wav}:
+            try:
+                if path and os.path.exists(path):
+                    os.remove(path)
+            except Exception:
+                pass
 
     raise HTTPException(400, f"Unknown STT provider: {stt_provider}")
 
+
+# ---------------------------
+# TTS (local piper)
+# ---------------------------
 @app.post("/tts")
 def tts(payload: TTSIn):
     text = (payload.text or "").strip()
     if not text:
         raise HTTPException(400, "Missing text")
 
-    piper_bin = os.getenv("PIPER_BIN") or "/usr/local/bin/piper"
-    model = os.getenv("PIPER_MODEL") or "/etc/jarvis/piper/de_DE-thorsten-medium.onnx"
-    out_wav = f"/tmp/jarvis_tts_{int(time.time()*1000)}.wav"
-
-    try:
-        subprocess.run(
-            [piper_bin, "--model", model, "--output_file", out_wav],
-            input=text,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-            timeout=20,
-        )
-
-        with open(out_wav, "rb") as f:
-            audio = f.read()
-
-        return Response(content=audio, media_type="audio/wav")
-
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(502, f"TTS error: {e.stderr}")
-    except Exception as e:
-        raise HTTPException(502, f"TTS error: {type(e).__name__}: {e}")
-    finally:
-        try:
-            os.remove(out_wav)
-        except Exception:
-            pass
+    audio = synthesize_tts(text)
+    return Response(content=audio, media_type="audio/wav")

@@ -343,6 +343,13 @@
     window.location.href = "/static/orb.html";
   });
 
+  function finalizeRecording(){
+    if(mediaRecorder && mediaRecorder.state === "recording"){
+      try { mediaRecorder.requestData(); } catch {}
+      mediaRecorder.stop();
+    }
+  }
+
   async function ensureMic(){
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
     const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
@@ -367,7 +374,7 @@
         }
       } catch(err){
         addMessage("jarvis", "Understood.\nSTT error: " + err.message);
-        setStatus("error");
+        setStatus("idle");
       } finally {
         talkBtn.classList.remove("rec");
       }
@@ -393,14 +400,14 @@
     e.preventDefault();
     if(mediaRecorder && mediaRecorder.state === "recording"){
       setStatus("stopping");
-      mediaRecorder.stop();
+      finalizeRecording();
     }
   });
 
   talkBtn.addEventListener("pointercancel", ()=>{
     if(mediaRecorder && mediaRecorder.state === "recording"){
       setStatus("stopping");
-      mediaRecorder.stop();
+      finalizeRecording();
     }
   });
 

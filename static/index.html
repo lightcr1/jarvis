@@ -5,21 +5,101 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Jarvis Console</title>
   <style>
-    body { font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; margin: 0; background: #0b0f14; color: #e6edf3; }
-    .wrap { max-width: 720px; margin: 0 auto; padding: 18px; }
-    h1 { font-size: 22px; margin: 10px 0 12px; }
-    .card { background: #111827; border: 1px solid #1f2937; border-radius: 14px; padding: 14px; margin: 12px 0; }
+    :root {
+      color-scheme: dark;
+      --bg: #0b0f14;
+      --panel: #0f1622;
+      --panel-border: #1f2a3a;
+      --panel-highlight: rgba(255, 255, 255, 0.04);
+      --text: #e6edf3;
+      --muted: #9aa4b2;
+      --accent: #4f8cff;
+      --accent-strong: #2f6cf6;
+      --ok: #2dd4bf;
+      --danger: #f87171;
+      --shadow: 0 18px 40px rgba(4, 8, 16, 0.35);
+    }
+    body {
+      font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      margin: 0;
+      background: radial-gradient(1200px 600px at 15% -10%, rgba(79, 140, 255, 0.12), transparent 60%), var(--bg);
+      color: var(--text);
+    }
+    .wrap { max-width: 720px; margin: 0 auto; padding: 24px 20px 30px; }
+    h1 { font-size: 22px; margin: 8px 0 18px; letter-spacing: 0.04em; }
+    .card {
+      background: linear-gradient(180deg, rgba(17, 24, 39, 0.94), rgba(13, 18, 30, 0.96));
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      padding: 16px;
+      margin: 14px 0;
+      box-shadow: var(--shadow);
+    }
     .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-    button { border: 0; border-radius: 999px; padding: 12px 16px; font-weight: 700; cursor: pointer; }
-    #talk { background: #2563eb; color: white; }
-    #talk.rec { background: #ef4444; }
-    #send { background: #22c55e; color: #06250f; }
-    #clear { background: #334155; color: #e6edf3; }
-    input, textarea { width: 100%; background: #0b1220; color: #e6edf3; border: 1px solid #1f2937; border-radius: 10px; padding: 10px; }
-    textarea { min-height: 90px; resize: vertical; }
-    .muted { color: #9ca3af; font-size: 13px; }
+    button {
+      border: 1px solid transparent;
+      border-radius: 999px;
+      padding: 11px 16px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+    }
+    button:active { transform: translateY(1px); }
+    #talk { background: var(--accent); color: white; box-shadow: 0 8px 18px rgba(79, 140, 255, 0.24); }
+    #talk.rec { background: var(--danger); box-shadow: 0 8px 18px rgba(248, 113, 113, 0.22); }
+    #send { background: var(--ok); color: #052b2f; }
+    #clear { background: transparent; color: var(--text); border: 1px solid var(--panel-border); }
+    input, textarea {
+      width: 100%;
+      background: rgba(9, 14, 24, 0.7);
+      color: var(--text);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 12px;
+      transition: border-color 0.12s ease, box-shadow 0.12s ease;
+    }
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--accent);
+      box-shadow: 0 0 0 3px rgba(79, 140, 255, 0.2);
+    }
+    textarea { min-height: 100px; resize: vertical; }
+    .muted { color: var(--muted); font-size: 13px; }
     .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; white-space: pre-wrap; }
-    .pill { display:inline-block; padding: 3px 10px; border-radius: 999px; background:#0b1220; border:1px solid #1f2937; color:#9ca3af; font-size:12px; }
+    .pill {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(13, 20, 35, 0.7);
+      border: 1px solid var(--panel-border);
+      color: var(--muted);
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    #reply {
+      background: linear-gradient(135deg, rgba(79, 140, 255, 0.15), rgba(13, 20, 35, 0.9));
+      border: 1px solid rgba(79, 140, 255, 0.3);
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .statusRow { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+    .statusBadge {
+      padding: 4px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--panel-border);
+      color: var(--muted);
+      font-size: 12px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      background: rgba(9, 14, 24, 0.65);
+    }
+    .statusBadge.active {
+      color: var(--text);
+      border-color: rgba(79, 140, 255, 0.4);
+      background: rgba(79, 140, 255, 0.12);
+      box-shadow: 0 6px 18px rgba(79, 140, 255, 0.18);
+    }
   </style>
 </head>
 <body>
@@ -31,6 +111,13 @@
         <button id="send">Send</button>
         <button id="clear">Clear</button>
         <span class="muted">iPhone: Safari → Share → “Add to Home Screen”</span>
+      </div>
+      <div class="statusRow" id="statusRow">
+        <span class="statusBadge" data-status="idle">Idle</span>
+        <span class="statusBadge" data-status="listening">Listening</span>
+        <span class="statusBadge" data-status="transcribing">Transcribing</span>
+        <span class="statusBadge" data-status="thinking">Thinking</span>
+        <span class="statusBadge" data-status="speaking">Speaking</span>
       </div>
       <p class="muted" style="margin:10px 0 6px;">Transkript</p>
       <textarea id="text" placeholder="Sprich oder tippe hier..."></textarea>
@@ -49,23 +136,31 @@
 
 <script>
 const statusEl = document.getElementById("status");
-const talkBtn  = document.getElementById("talk");
-const sendBtn  = document.getElementById("send");
+const talkBtn = document.getElementById("talk");
+const sendBtn = document.getElementById("send");
 const clearBtn = document.getElementById("clear");
-const textEl   = document.getElementById("text");
-const replyEl  = document.getElementById("reply");
-const debugEl  = document.getElementById("debug");
+const textEl = document.getElementById("text");
+const replyEl = document.getElementById("reply");
+const debugEl = document.getElementById("debug");
+const statusRow = document.getElementById("statusRow");
 
 let mediaRecorder = null;
 let chunks = [];
 
-function setStatus(s) { statusEl.textContent = s; }
+function setStatus(s) {
+  statusEl.textContent = s;
+  if (statusRow) {
+    statusRow.querySelectorAll(".statusBadge").forEach((badge) => {
+      badge.classList.toggle("active", badge.dataset.status === s);
+    });
+  }
+}
 
 async function postJSON(url, body) {
   const r = await fetch(url, {
     method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify(body)
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
   if (!r.ok) throw new Error(`${url} -> ${r.status} ${await r.text()}`);
   return await r.json();
@@ -96,10 +191,11 @@ async function ensureMic() {
 
       const stt = await postAudio("/stt", blob);
       textEl.value = stt.text || "";
-      setStatus("chatting");
+      setStatus("thinking");
 
       const chat = await postJSON("/chat", { text: textEl.value });
       replyEl.textContent = chat.reply || "—";
+      debugEl.textContent = chat.data ? JSON.stringify(chat.data, null, 2) : "—";
       setStatus("idle");
     } catch (err) {
       setStatus("error");
@@ -115,7 +211,7 @@ talkBtn.addEventListener("pointerdown", async (e) => {
   try {
     if (!mediaRecorder) await ensureMic();
     talkBtn.classList.add("rec");
-    setStatus("recording");
+    setStatus("listening");
     chunks = [];
     mediaRecorder.start();
   } catch (err) {
@@ -128,7 +224,7 @@ talkBtn.addEventListener("pointerup", (e) => {
   e.preventDefault();
   if (mediaRecorder && mediaRecorder.state === "recording") {
     talkBtn.classList.remove("rec");
-    setStatus("stopping");
+    setStatus("transcribing");
     mediaRecorder.stop();
   }
 });
@@ -136,16 +232,17 @@ talkBtn.addEventListener("pointerup", (e) => {
 talkBtn.addEventListener("pointercancel", () => {
   if (mediaRecorder && mediaRecorder.state === "recording") {
     talkBtn.classList.remove("rec");
-    setStatus("stopping");
+    setStatus("transcribing");
     mediaRecorder.stop();
   }
 });
 
 sendBtn.addEventListener("click", async () => {
   try {
-    setStatus("chatting");
+    setStatus("thinking");
     const chat = await postJSON("/chat", { text: textEl.value });
     replyEl.textContent = chat.reply || "—";
+    debugEl.textContent = chat.data ? JSON.stringify(chat.data, null, 2) : "—";
     setStatus("idle");
   } catch (err) {
     setStatus("error");

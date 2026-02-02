@@ -281,6 +281,7 @@
   let mediaRecorder = null;
   let chunks = [];
   let stream = null;
+  const ttsAudio = new Audio();
 
   function setState(s){
     stateEl.textContent = s;
@@ -322,6 +323,41 @@
 
   function showBox(el, show=true){ el.style.display = show ? "block" : "none"; }
 
+  async function speak(text){
+    const t = (text || "").trim();
+    if(!t) return;
+
+    try{
+      try { ttsAudio.pause(); } catch {}
+      ttsAudio.currentTime = 0;
+
+      const r = await fetch("/tts", {
+        method:"POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ text: t })
+      });
+
+      if(!r.ok){
+        const errTxt = await r.text();
+        throw new Error(errTxt || ("TTS HTTP " + r.status));
+      }
+
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      ttsAudio.src = url;
+      await ttsAudio.play().catch(()=>{});
+    } catch(e){
+      console.warn("TTS error:", e);
+    }
+  }
+
+  function finalizeRecording(){
+    if(mediaRecorder && mediaRecorder.state === "recording"){
+      try { mediaRecorder.requestData(); } catch {}
+      mediaRecorder.stop();
+    }
+  }
+
   async function ensureMic(){
     if(stream) return;
     stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -359,12 +395,17 @@
         const chat = await postJSON("/chat", { text: transcript });
         replyEl.textContent = chat.reply || "—";
         showBox(replyBox, true);
+        await speak(chat.reply || "");
 
         setState("idle");
       } catch(err){
         setState("error");
         debugEl.textContent = String(err);
+        replyEl.textContent = "Understood. STT failed.";
+        showBox(replyBox, true);
         showBox(debugBox, true);
+      } finally {
+        setState("idle");
       }
     };
   }
@@ -377,9 +418,7 @@
   }
 
   function stopRecording(){
-    if(mediaRecorder && mediaRecorder.state === "recording"){
-      mediaRecorder.stop();
-    }
+    finalizeRecording();
   }
 
   // Tap/click orb toggles record

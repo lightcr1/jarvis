@@ -1,11 +1,15 @@
-import os
 import base64
-import time
-import secrets
-import subprocess
+from datetime import datetime
+import logging
+import os
+import platform
 import re
+import secrets
+import shutil
+import subprocess
+import time
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Header
+from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
@@ -15,6 +19,7 @@ from google import genai
 
 
 app = FastAPI(title="Jarvis Backend")
+logger = logging.getLogger("jarvis.audio")
 
 # Static Website
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -40,6 +45,7 @@ class ChatIn(BaseModel):
 
 class ChatOut(BaseModel):
     reply: str
+    data: dict | None = None
 
 
 class UnlockIn(BaseModel):
@@ -145,6 +151,30 @@ def run_cmd(cmd: list[str], timeout: int = 8) -> str:
     return (p.stdout or "").strip()
 
 
+def transcribe_gemini(audio_bytes: bytes, content_type: str | None) -> str:
+    client = get_gemini()
+    model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+    audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+    resp = client.models.generate_content(
+        model=model,
+        contents=[
+            {
+                "role": "user",
+                "parts": [
+                    {"text": "Transcribe this audio to text. Return only the transcript."},
+                    {
+                        "inline_data": {
+                            "mime_type": content_type or "audio/wav",
+                            "data": audio_b64,
+                        }
+                    },
+                ],
+            }
+        ],
+    )
+    return (getattr(resp, "text", "") or "").strip()
+
+
 def valid_service_name(name: str) -> bool:
     return bool(re.fullmatch(r"[a-zA-Z0-9_.@-]+", name))
 
@@ -161,47 +191,200 @@ def is_write_command(text: str) -> bool:
     return t.startswith(("restart ", "start ", "stop "))
 
 
-def try_skill(text: str) -> str | None:
+def format_bytes(size: float) -> str:
+    for unit in ["B", "KB", "MB", "GB", "TB"]:
+        if size < 1024:
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{size:.1f} PB"
+
+
+def tail_lines(text: str, max_lines: int = 6) -> str:
+    lines = [line for line in (text or "").splitlines() if line.strip()]
+    return "\n".join(lines[-max_lines:]) if lines else ""
+
+
+def parse_meminfo() -> dict[str, int] | None:
+    try:
+        info = {}
+        with open("/proc/meminfo", "r", encoding="utf-8") as f:
+            for line in f:
+                key, value = line.split(":", 1)
+                parts = value.strip().split()
+                if not parts:
+                    continue
+                info[key] = int(parts[0]) * 1024
+        return info
+    except Exception:
+        return None
+
+
+def parse_ping(output: str) -> dict[str, str]:
+    data: dict[str, str] = {}
+    loss_match = re.search(r"(\d+)%\s+packet loss", output)
+    if loss_match:
+        data["packet_loss"] = f"{loss_match.group(1)}%"
+    rtt_match = re.search(r"rtt .* = ([0-9.]+)/([0-9.]+)/([0-9.]+)/([0-9.]+)", output)
+    if rtt_match:
+        data["rtt_min_ms"] = rtt_match.group(1)
+        data["rtt_avg_ms"] = rtt_match.group(2)
+        data["rtt_max_ms"] = rtt_match.group(3)
+        data["rtt_mdev_ms"] = rtt_match.group(4)
+    return data
+
+
+def try_skill(text: str) -> dict[str, object] | None:
     t = text.strip().lower()
 
     # --- READ SKILLS ---
     if t in {"health", "status", "ping jarvis"}:
-        return "On it.\nSTATUS\nBackend is healthy.\nRESULT\n/health returns ok.\nNEXT\n"
+        return {"reply": "On it. Backend is healthy.", "data": {"ok": True}}
 
     if t in {"uptime", "server uptime"}:
-        out = run_cmd(["/usr/bin/uptime"])
-        return f"On it.\nSTATUS\nReading uptime.\nRESULT\n{out}\nNEXT\n"
+        out = run_cmd(["/usr/bin/uptime", "-p"])
+        return {"reply": f"On it. {out}", "data": {"raw": out}}
 
     if t in {"disk", "df"}:
-        out = run_cmd(["/bin/df", "-h"])
-        return f"On it.\nSTATUS\nChecking disk usage.\nRESULT\n{out}\nNEXT\n"
+        usage = shutil.disk_usage("/")
+        used_pct = usage.used / usage.total * 100 if usage.total else 0
+        reply = (
+            f"On it. Disk /: {used_pct:.0f}% used "
+            f"({format_bytes(usage.used)}/{format_bytes(usage.total)})."
+        )
+        data = {
+            "path": "/",
+            "total_bytes": usage.total,
+            "used_bytes": usage.used,
+            "free_bytes": usage.free,
+        }
+        return {"reply": reply, "data": data}
 
     if t in {"memory", "ram"}:
+        info = parse_meminfo()
+        if info and "MemTotal" in info and "MemAvailable" in info:
+            total = info["MemTotal"]
+            avail = info["MemAvailable"]
+            used = total - avail
+            used_pct = used / total * 100 if total else 0
+            reply = (
+                f"On it. Memory: {format_bytes(avail)} free / "
+                f"{format_bytes(total)} total ({used_pct:.0f}% used)."
+            )
+            data = {"total_bytes": total, "available_bytes": avail, "used_bytes": used}
+            return {"reply": reply, "data": data}
         out = run_cmd(["/usr/bin/free", "-h"])
-        return f"On it.\nSTATUS\nChecking memory.\nRESULT\n{out}\nNEXT\n"
+        return {"reply": "On it. Memory details ready.", "data": {"raw": out}}
 
     if t in {"docker", "docker ps"}:
-        out = run_cmd(["/usr/bin/sudo", "/usr/bin/docker", "ps"], timeout=12)
-        return f"On it.\nSTATUS\nListing containers.\nRESULT\n{out}\nNEXT\n"
+        out = run_cmd(
+            ["/usr/bin/sudo", "/usr/bin/docker", "ps", "--format", "{{.Names}}\t{{.Status}}\t{{.Image}}"],
+            timeout=12,
+        )
+        rows = []
+        for line in out.splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 3:
+                rows.append({"name": parts[0], "status": parts[1], "image": parts[2]})
+        if not rows:
+            reply = "On it. No containers running."
+        else:
+            summary = ", ".join([f"{row['name']} ({row['status']})" for row in rows[:3]])
+            reply = f"On it. {len(rows)} container(s) running."
+            if summary:
+                reply = f"{reply} {summary}"
+        return {"reply": reply, "data": {"containers": rows}}
 
     if t.startswith("status "):
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
-        out = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "status", service, "--no-pager"], timeout=12)
-        return f"On it.\nSTATUS\nChecking service '{service}'.\nRESULT\n{out}\nNEXT\n"
+        active = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "is-active", service], timeout=8)
+        enabled = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "is-enabled", service], timeout=8)
+        out = run_cmd(
+            ["/usr/bin/sudo", "/bin/systemctl", "status", service, "--no-pager", "-n", "10"],
+            timeout=12,
+        )
+        reply = f"On it. {service} is {active} ({enabled})."
+        return {"reply": reply, "data": {"service": service, "active": active, "enabled": enabled, "raw": out}}
 
     if t.startswith("logs "):
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
-        out = run_cmd(["/usr/bin/sudo", "/bin/journalctl", "-u", service, "-n", "60", "--no-pager"], timeout=12)
-        return f"On it.\nSTATUS\nFetching logs for '{service}'.\nRESULT\n{out}\nNEXT\n"
+        out = run_cmd(
+            ["/usr/bin/sudo", "/bin/journalctl", "-u", service, "-n", "60", "--no-pager"],
+            timeout=12,
+        )
+        snippet = tail_lines(out, max_lines=6)
+        reply = f"On it. Latest {service} logs (last 6 lines):\n{snippet or '(no log lines)'}"
+        return {"reply": reply, "data": {"service": service, "raw": out}}
 
     if t.startswith("ping "):
         host = t.split(" ", 1)[1].strip()
         if not re.fullmatch(r"[a-zA-Z0-9.\-]+", host):
             raise HTTPException(400, "Invalid host")
         out = run_cmd(["/usr/bin/sudo", "/bin/ping", "-c", "2", host], timeout=8)
-        return f"On it.\nSTATUS\nPinging {host}.\nRESULT\n{out}\nNEXT\n"
+        metrics = parse_ping(out)
+        loss = metrics.get("packet_loss", "unknown loss")
+        avg = metrics.get("rtt_avg_ms")
+        reply = f"On it. Ping {host}: {loss}"
+        if avg:
+            reply = f"{reply}, avg {avg} ms."
+        return {"reply": reply, "data": {"host": host, "raw": out, **metrics}}
+
+    if t in {"system status", "system_status", "system health"}:
+        usage = shutil.disk_usage("/")
+        meminfo = parse_meminfo() or {}
+        total = meminfo.get("MemTotal", 0)
+        avail = meminfo.get("MemAvailable", 0)
+        used_pct = (total - avail) / total * 100 if total else 0
+        load1, load5, load15 = os.getloadavg()
+        cores = os.cpu_count() or 0
+        reply = (
+            "On it. "
+            f"Load {load1:.2f} ({cores} cores), "
+            f"Memory {used_pct:.0f}% used, "
+            f"Disk / {usage.used / usage.total * 100:.0f}% used."
+        )
+        data = {
+            "load": {"1m": load1, "5m": load5, "15m": load15},
+            "cpu_cores": cores,
+            "memory": {"total_bytes": total, "available_bytes": avail},
+            "disk": {
+                "path": "/",
+                "total_bytes": usage.total,
+                "used_bytes": usage.used,
+                "free_bytes": usage.free,
+            },
+            "platform": platform.platform(),
+        }
+        return {"reply": reply, "data": data}
+
+    if t in {"time", "date", "time and date", "what time is it"}:
+        now = datetime.now().astimezone()
+        reply = f"On it. {now.strftime('%Y-%m-%d %H:%M:%S %Z')}."
+        return {"reply": reply, "data": {"iso": now.isoformat()}}
+
+    if t in {"hostname", "host info", "host"}:
+        hostname = platform.node()
+        reply = f"On it. Hostname: {hostname}."
+        return {"reply": reply, "data": {"hostname": hostname}}
+
+    if t in {"help", "skills", "skills overview", "what can you do"}:
+        overview = [
+            "health/status/ping jarvis",
+            "uptime",
+            "disk",
+            "memory",
+            "docker",
+            "status <service>",
+            "logs <service>",
+            "ping <host>",
+            "restart|start|stop <service>",
+            "system status",
+            "time and date",
+            "hostname",
+        ]
+        reply = "On it. Available skills: " + ", ".join(overview) + "."
+        return {"reply": reply, "data": {"skills": overview}}
 
     # --- WRITE SKILLS ---
     if t.startswith("restart "):
@@ -209,21 +392,21 @@ def try_skill(text: str) -> str | None:
         ensure_service_allowed(service)
         run_cmd(["/usr/bin/sudo", "/bin/systemctl", "restart", service], timeout=15)
         st = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "is-active", service], timeout=8)
-        return f"On it.\nSTATUS\nRestarting '{service}'.\nRESULT\nis-active: {st}\nNEXT\n"
+        return {"reply": f"On it. {service} restarted ({st}).", "data": {"service": service, "active": st}}
 
     if t.startswith("stop "):
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
         run_cmd(["/usr/bin/sudo", "/bin/systemctl", "stop", service], timeout=15)
         st = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "is-active", service], timeout=8)
-        return f"On it.\nSTATUS\nStopping '{service}'.\nRESULT\nis-active: {st}\nNEXT\n"
+        return {"reply": f"On it. {service} stopped ({st}).", "data": {"service": service, "active": st}}
 
     if t.startswith("start "):
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
         run_cmd(["/usr/bin/sudo", "/bin/systemctl", "start", service], timeout=15)
         st = run_cmd(["/usr/bin/sudo", "/bin/systemctl", "is-active", service], timeout=8)
-        return f"On it.\nSTATUS\nStarting '{service}'.\nRESULT\nis-active: {st}\nNEXT\n"
+        return {"reply": f"On it. {service} started ({st}).", "data": {"service": service, "active": st}}
 
     return None
 
@@ -244,7 +427,7 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
     # 1) Try deterministic skills first (no LLM)
     skill_reply = try_skill(text)
     if skill_reply is not None:
-        return {"reply": skill_reply}
+        return skill_reply
 
     provider = get_provider()
 
@@ -300,7 +483,7 @@ def command(payload: ChatIn, authorization: str | None = Header(default=None)):
     if out is None:
         return {"reply": "Understood. No matching command."}
 
-    return {"reply": out}
+    return out
 
 
 # ---------------------------
@@ -312,31 +495,13 @@ async def stt(file: UploadFile = File(...)):
     if provider != "gemini":
         raise HTTPException(400, "STT currently only supported with Gemini")
 
-    client = get_gemini()
-    model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
-
     audio_bytes = await file.read()
-    audio_b64 = base64.b64encode(audio_bytes).decode("ascii")
+    if not audio_bytes:
+        raise HTTPException(400, "Empty audio")
 
     try:
-        resp = client.models.generate_content(
-            model=model,
-            contents=[
-                {
-                    "role": "user",
-                    "parts": [
-                        {"text": "Transcribe this audio to text. Return only the transcript."},
-                        {
-                            "inline_data": {
-                                "mime_type": file.content_type or "audio/wav",
-                                "data": audio_b64,
-                            }
-                        },
-                    ],
-                }
-            ],
-        )
-        text = (getattr(resp, "text", "") or "").strip()
+        text = transcribe_gemini(audio_bytes, file.content_type)
         return {"text": text}
     except Exception as e:
-        raise HTTPException(502, f"Upstream STT error: {type(e).__name__}: {e}")
+        logger.exception("Upstream STT failed")
+        raise HTTPException(502, f"Upstream STT error: {type(e).__name__}: {e}") from e
