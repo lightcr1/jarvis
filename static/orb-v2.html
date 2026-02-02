@@ -212,6 +212,80 @@
     }
     .btn:hover{filter:brightness(1.12)}
 
+    /* Unlock modal */
+    #unlockModal{
+      position:fixed; inset:0;
+      display:none;
+      align-items:center; justify-content:center;
+      background: rgba(0,0,0,.65);
+      padding:16px;
+      z-index:50;
+    }
+    #unlockModal .box{
+      width:min(520px, 100%);
+      background: rgba(11,18,32,.95);
+      border:1px solid rgba(251,191,36,.22);
+      border-radius:18px;
+      padding:16px;
+      box-shadow: var(--shadow);
+    }
+    #unlockModal .head{
+      display:flex; justify-content:space-between; align-items:center; gap:10px;
+      margin-bottom:10px;
+    }
+    #unlockModal .head .t{
+      font-weight:900;
+      letter-spacing:.08em;
+      text-transform:uppercase;
+      font-size:13px;
+      color:var(--muted);
+    }
+    #unlockModal .close{
+      border:1px solid rgba(251,191,36,.22);
+      background: rgba(11,18,32,.55);
+      color:var(--text);
+      border-radius:999px;
+      padding:8px 10px;
+      font-weight:900;
+      cursor:pointer;
+    }
+    #unlockModal .field{
+      border:1px solid rgba(251,191,36,.22);
+      background: rgba(11,18,32,.55);
+      border-radius:14px;
+      padding:10px;
+      margin-top:10px;
+    }
+    #unlockModal input{
+      width:100%;
+      background:transparent;
+      border:0;
+      outline:none;
+      color:var(--text);
+      font-size:14px;
+      padding:6px;
+    }
+    #unlockModal .rowBtns{
+      display:flex; gap:10px; flex-wrap:wrap; margin-top:12px; align-items:center;
+    }
+    #unlockNow{
+      border:1px solid rgba(251,191,36,.22);
+      background: rgba(11,18,32,.55);
+      color:var(--text);
+      border-radius:999px;
+      padding:10px 14px;
+      font-weight:800;
+      cursor:pointer;
+    }
+    #doUnlock{
+      background: var(--amber);
+      color:#1b1200;
+    }
+    #unlockHint{
+      color:var(--muted);
+      font-size:12px;
+    }
+
     @keyframes spin{to{transform:rotate(360deg)}}
     @keyframes pulse{
       0%,100%{transform:scale(1); opacity:.95}
@@ -264,6 +338,27 @@
     <button class="btn" onclick="location.href='/static/index.html'">Back to Chat</button>
   </div>
 
+  <!-- Unlock Modal -->
+  <div id="unlockModal">
+    <div class="box">
+      <div class="head">
+        <div class="t">Access required</div>
+        <button class="close" id="closeUnlock">✕</button>
+      </div>
+      <div style="color:var(--muted);font-size:13px;">
+        Write-Commands (start/stop/restart) sind gesperrt. Entsperre kurzzeitig.
+      </div>
+      <div class="field">
+        <input id="passphrase" type="password" placeholder="Passphrase" autocomplete="current-password" />
+      </div>
+      <div class="rowBtns">
+        <button class="btn" id="doUnlock">Unlock</button>
+        <button id="unlockNow">Lock</button>
+        <span id="unlockHint"></span>
+      </div>
+    </div>
+  </div>
+
 <script>
   const orbWrap = document.getElementById("orbWrap");
   const orbBtn = document.getElementById("orbBtn");
@@ -278,10 +373,93 @@
   const replyEl = document.getElementById("reply");
   const debugEl = document.getElementById("debug");
 
+  const unlockModal = document.getElementById("unlockModal");
+  const closeUnlock = document.getElementById("closeUnlock");
+  const passEl = document.getElementById("passphrase");
+  const doUnlockBtn = document.getElementById("doUnlock");
+  const unlockNowBtn = document.getElementById("unlockNow");
+  const unlockHint = document.getElementById("unlockHint");
+
   let mediaRecorder = null;
   let chunks = [];
   let stream = null;
   const ttsAudio = new Audio();
+  let pendingTranscript = null;
+
+  const TOKEN_KEY = "jarvis_token";
+  const TOKEN_EXP = "jarvis_token_exp_ms";
+
+  function getToken(){
+    const t = sessionStorage.getItem(TOKEN_KEY);
+    const exp = Number(sessionStorage.getItem(TOKEN_EXP) || "0");
+    if(!t) return null;
+    if(exp && Date.now() > exp){
+      sessionStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(TOKEN_EXP);
+      return null;
+    }
+    return t;
+  }
+  function setToken(token, expiresInSec){
+    sessionStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.setItem(TOKEN_EXP, String(Date.now() + expiresInSec*1000));
+  }
+  function clearToken(){
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_EXP);
+  }
+  function authHeaders(){
+    const h = {"Content-Type":"application/json"};
+    const t = getToken();
+    if(t) h["Authorization"] = "Bearer " + t;
+    return h;
+  }
+
+  function openUnlockModal(transcript){
+    pendingTranscript = transcript || null;
+    unlockHint.textContent = pendingTranscript ? "Unlock → command runs automatically." : "";
+    unlockModal.style.display = "flex";
+    setTimeout(()=>passEl.focus(), 50);
+  }
+  function closeUnlockModal(){
+    unlockModal.style.display = "none";
+    passEl.value = "";
+    unlockHint.textContent = "";
+  }
+
+  closeUnlock.addEventListener("click", closeUnlockModal);
+  unlockModal.addEventListener("click", (e)=>{ if(e.target===unlockModal) closeUnlockModal(); });
+
+  unlockNowBtn.addEventListener("click", ()=>{
+    clearToken();
+    closeUnlockModal();
+  });
+
+  async function doUnlock(passphrase){
+    const res = await postJSON("/unlock", { passphrase }, false);
+    setToken(res.token, res.expires_in_sec);
+    closeUnlockModal();
+    if(pendingTranscript){
+      const t = pendingTranscript;
+      pendingTranscript = null;
+      await sendChat(t);
+    }
+  }
+
+  doUnlockBtn.addEventListener("click", async ()=>{
+    const p = (passEl.value||"").trim();
+    if(!p) return;
+    try{ await doUnlock(p); }
+    catch(e){
+      debugEl.textContent = "Unlock failed.";
+      showBox(debugBox, true);
+    }
+  });
+
+  passEl.addEventListener("keydown", (e)=>{
+    if(e.key==="Enter"){ e.preventDefault(); doUnlockBtn.click(); }
+  });
+
 
   function setState(s){
     stateEl.textContent = s;
@@ -305,10 +483,10 @@
     return data;
   }
 
-  async function postJSON(url, body){
+  async function postJSON(url, body, useAuth=true){
     const r = await fetch(url, {
       method:"POST",
-      headers: {"Content-Type":"application/json"},
+      headers: useAuth ? authHeaders() : {"Content-Type":"application/json"},
       body: JSON.stringify(body)
     });
     const txt = await r.text();
@@ -316,12 +494,23 @@
     try { data = txt ? JSON.parse(txt) : {}; } catch {}
     if(!r.ok){
       const detail = data.detail || txt || (r.status + "");
-      throw new Error(detail);
+      const err = new Error(detail);
+      err.status = r.status;
+      throw err;
     }
     return data;
   }
 
   function showBox(el, show=true){ el.style.display = show ? "block" : "none"; }
+
+  async function sendChat(transcript){
+    setState("chatting");
+    const chat = await postJSON("/chat", { text: transcript }, true);
+    replyEl.textContent = chat.reply || "—";
+    showBox(replyBox, true);
+    await speak(chat.reply || "");
+    setState("idle");
+  }
 
   async function speak(text){
     const t = (text || "").trim();
@@ -391,14 +580,13 @@
         showBox(transcriptBox, true);
 
         // Chat
-        setState("chatting");
-        const chat = await postJSON("/chat", { text: transcript });
-        replyEl.textContent = chat.reply || "—";
-        showBox(replyBox, true);
-        await speak(chat.reply || "");
-
-        setState("idle");
+        await sendChat(transcript);
       } catch(err){
+        if(err.status === 401){
+          openUnlockModal(transcriptEl.textContent);
+          setState("idle");
+          return;
+        }
         setState("error");
         debugEl.textContent = String(err);
         replyEl.textContent = "Understood. STT failed.";
