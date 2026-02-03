@@ -528,6 +528,11 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
         raise HTTPException(502, f"Upstream error: {type(e).__name__}: {e}")
 
 
+@app.post("/api/jarvis", response_model=ChatOut)
+def jarvis_api(payload: ChatIn, authorization: str | None = Header(default=None)):
+    return chat(payload, authorization)
+
+
 # ---------------------------
 # STT (local faster-whisper OR Gemini)
 # ---------------------------
