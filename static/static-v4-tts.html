@@ -296,7 +296,7 @@
       <div class="topRight">
         <span class="chip" title="Status">
           <span class="dot blue" id="statusDot"></span>
-          <span id="statusText">idle</span>
+          <span id="jarvis-status">idle</span>
         </span>
 
         <!-- Auth chip (tiny, not ugly) -->
@@ -358,7 +358,7 @@
   const sendBtn = document.getElementById("send");
   const clearBtn = document.getElementById("clear");
   const talkBtn = document.getElementById("talk");
-  const statusText = document.getElementById("statusText");
+  const statusText = document.getElementById("jarvis-status");
   const orbBtn = document.getElementById("orbBtn");
   const recordHint = document.getElementById("recordHint");
 
@@ -375,14 +375,28 @@
   const lockNowBtn = document.getElementById("lockNow");
   const unlockHint = document.getElementById("unlockHint");
 
-  let mediaRecorder = null;
-  let chunks = [];
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  let recognition = null;
+  let recognitionActive = false;
+  let finalTranscript = "";
+  let sentTranscript = "";
+  let stoppingRecognition = false;
+  const ttsAudio = new Audio();
 
   // Token storage (session)
   const TOKEN_KEY = "jarvis_token";
   const TOKEN_EXP = "jarvis_token_exp_ms";
 
-  function setStatus(s){ statusText.textContent = s; }
+  function setJarvisState(newState){
+    const next = (newState || "IDLE").toUpperCase();
+    const display = next.toLowerCase();
+    if(statusText) statusText.textContent = display;
+    if(document.body) document.body.dataset.jarvisState = display;
+  }
+  function showMicMessage(message){
+    if(!message) return;
+    addMessage("jarvis", message);
+  }
 
   function getToken(){
     const t = sessionStorage.getItem(TOKEN_KEY);
@@ -490,20 +504,6 @@
     return data;
   }
 
-  async function postAudio(url, blob){
-    const fd = new FormData();
-    fd.append("file", blob, "audio.webm");
-    const r = await fetch(url, { method:"POST", body: fd });
-    const txt = await r.text();
-    let data = {};
-    try { data = txt ? JSON.parse(txt) : {}; } catch {}
-    if(!r.ok){
-      const detail = data.detail || txt || (r.status + "");
-      throw new Error(detail);
-    }
-    return data;
-  }
-
   async function doUnlock(passphrase){
     const res = await postJSON("/unlock", { passphrase }, false);
     setToken(res.token, res.expires_in_sec);
@@ -539,24 +539,25 @@
 
     addMessage("user", t);
     inputEl.value = "";
-    setStatus("thinking");
+    setJarvisState("THINKING");
 
     try{
-      const res = await postJSON("/chat", { text: t }, true);
+      const res = await postJSON("/api/jarvis", { text: t }, true);
       const reply = res.reply || "—";
       addMessage("jarvis", reply);
-      setStatus("idle");
+      await speak(reply);
+      setJarvisState("IDLE");
     } catch(err){
       // If token invalid/expired -> force unlock again
       if(err.status === 401){
         clearToken();
         openUnlockModal(t);
         addMessage("jarvis", "Understood.\nAuthorization required.");
-        setStatus("idle");
+        setJarvisState("IDLE");
         return;
       }
       addMessage("jarvis", "Understood.\nError: " + err.message);
-      setStatus("error");
+      setJarvisState("IDLE");
     }
   }
 
@@ -573,50 +574,102 @@
   clearBtn.addEventListener("click", ()=>{
     messagesEl.innerHTML = "";
     inputEl.value = "";
-    setStatus("idle");
+    setJarvisState("IDLE");
   });
 
   orbBtn.addEventListener("click", ()=>{
     window.location.href = "/static/orb.html";
   });
 
-  function finalizeRecording(){
-    if(mediaRecorder && mediaRecorder.state === "recording"){
-      try { mediaRecorder.requestData(); } catch {}
-      mediaRecorder.stop();
+  async function speak(text){
+    const t = (text || "").trim();
+    if(!t) return;
+
+    try{
+      setJarvisState("SPEAKING");
+      try { ttsAudio.pause(); } catch {}
+      ttsAudio.currentTime = 0;
+
+      const r = await fetch("/tts", {
+        method:"POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify({ text: t })
+      });
+
+      if(!r.ok){
+        const errTxt = await r.text();
+        throw new Error(errTxt || ("TTS HTTP " + r.status));
+      }
+
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      ttsAudio.src = url;
+      await ttsAudio.play().catch(()=>{});
+      await new Promise((resolve)=>{
+        ttsAudio.onended = resolve;
+        ttsAudio.onerror = resolve;
+      });
+    } catch(e){
+      console.warn("TTS error:", e);
     }
   }
 
-  async function ensureMic(){
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mime = MediaRecorder.isTypeSupported("audio/webm;codecs=opus")
-      ? "audio/webm;codecs=opus"
-      : "audio/webm";
-    mediaRecorder = new MediaRecorder(stream, { mimeType: mime });
-
-    mediaRecorder.ondataavailable = (e)=>{ if(e.data.size) chunks.push(e.data); };
-    mediaRecorder.onstop = async ()=>{
-      try{
-        const blob = new Blob(chunks, { type: mediaRecorder.mimeType });
-        chunks = [];
-        setStatus("transcribing");
-
-        const stt = await postAudio("/stt", blob);
-        const transcript = (stt.text || "").trim();
-        if(transcript){
-          inputEl.value = transcript;
-          await sendText(transcript);
-        } else {
-          setStatus("idle");
+  function ensureRecognition(){
+    if(recognition) return recognition;
+    if(!SpeechRecognition){
+      showMicMessage("Speech recognition is not available in this browser or context.");
+      setJarvisState("IDLE");
+      return null;
+    }
+    recognition = new SpeechRecognition();
+    recognition.interimResults = true;
+    recognition.continuous = true;
+    recognition.onstart = ()=>{
+      finalTranscript = "";
+      sentTranscript = "";
+      stoppingRecognition = false;
+      recognitionActive = true;
+      setJarvisState("LISTENING");
+    };
+    recognition.onresult = (event)=>{
+      for(let i = event.resultIndex; i < event.results.length; i++){
+        const res = event.results[i];
+        if(res.isFinal){
+          const text = (res[0]?.transcript || "").trim();
+          if(text && text !== sentTranscript){
+            finalTranscript = text;
+            sentTranscript = text;
+            setJarvisState("TRANSCRIBING");
+            inputEl.value = text;
+            sendText(text).catch((err)=>{
+              console.warn("Chat error:", err);
+              setJarvisState("IDLE");
+            });
+            stoppingRecognition = true;
+            recognition.stop();
+          }
         }
-      } catch(err){
-        addMessage("jarvis", "Understood.\nSTT error: " + err.message);
-        setStatus("idle");
-      } finally {
-        talkBtn.classList.remove("rec");
-        updateRecordHint(false);
       }
     };
+    recognition.onerror = (event)=>{
+      console.warn("STT error:", event);
+      recognitionActive = false;
+      stoppingRecognition = false;
+      showMicMessage(`Mic error: ${event.error || "unknown error"}`);
+      setJarvisState("IDLE");
+      talkBtn.classList.remove("rec");
+      updateRecordHint(false);
+    };
+    recognition.onend = ()=>{
+      recognitionActive = false;
+      if(!finalTranscript){
+        setJarvisState("IDLE");
+      }
+      talkBtn.classList.remove("rec");
+      updateRecordHint(false);
+      stoppingRecognition = false;
+    };
+    return recognition;
   }
 
   function updateRecordHint(recording){
@@ -629,28 +682,31 @@
   talkBtn.addEventListener("click", async (e)=>{
     e.preventDefault();
     try{
-      if(!mediaRecorder) await ensureMic();
-      if(mediaRecorder.state !== "recording"){
-        chunks = [];
+      const recog = ensureRecognition();
+      if(!recog) return;
+      if(!recognitionActive){
+        finalTranscript = "";
+        sentTranscript = "";
+        stoppingRecognition = false;
         talkBtn.classList.add("rec");
-        setStatus("recording");
         updateRecordHint(true);
-        mediaRecorder.start();
-      } else {
-        setStatus("stopping");
+        recog.start();
+      } else if(!stoppingRecognition){
+        setJarvisState("TRANSCRIBING");
         updateRecordHint(false);
-        finalizeRecording();
+        stoppingRecognition = true;
+        recog.stop();
       }
     } catch(err){
       addMessage("jarvis", "Understood.\nMic error: " + err.message);
-      setStatus("error");
+      setJarvisState("IDLE");
     }
   });
 
   // Welcome line
   addMessage("jarvis", "Understood.\nSystem online.");
   updateAuthUI();
-  setStatus("idle");
+  setJarvisState("IDLE");
   updateRecordHint(false);
   setInterval(updateAuthUI, 2000);
 </script>
