@@ -537,6 +537,19 @@
       await ttsAudio.play().catch(()=>{});
     } catch(e){
       console.warn("TTS error:", e);
+      fallbackSpeak(t);
+    }
+  }
+
+  function fallbackSpeak(text){
+    if(!("speechSynthesis" in window)) return;
+    try{
+      window.speechSynthesis.cancel();
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "de-DE";
+      window.speechSynthesis.speak(u);
+    } catch(e){
+      console.warn("SpeechSynthesis error:", e);
     }
   }
 

@@ -22,6 +22,8 @@ from google import genai
 # Local STT
 from faster_whisper import WhisperModel
 
+from proxmox_module import build_router, proxmox_lxc_status, proxmox_vm_status
+
 app = FastAPI(title="Jarvis Backend")
 logger = logging.getLogger("jarvis.audio")
 
@@ -141,6 +143,9 @@ def require_token(auth: str | None):
     exp = _tokens.get(token)
     if not exp or time.time() > exp:
         raise HTTPException(401, "Token expired or invalid")
+
+
+app.include_router(build_router(require_token))
 
 
 @app.post("/unlock", response_model=UnlockOut)
@@ -360,6 +365,26 @@ def try_skill(text: str) -> dict[str, object] | None:
                 reply = f"{reply} {summary}"
         return {"reply": reply, "data": {"containers": rows}}
 
+    if t.startswith("pve vm status "):
+        parts = t.split()
+        if len(parts) != 6:
+            raise HTTPException(400, "Usage: pve vm status <host_id> <node> <vmid>")
+        host_id, node, vmid = parts[3], parts[4], parts[5]
+        data = proxmox_vm_status(host_id, node, vmid).get("data", {})
+        status = data.get("status") or "unknown"
+        reply = f"On it. Proxmox VM {vmid} on {node} is {status}."
+        return {"reply": reply, "data": data}
+
+    if t.startswith("pve lxc status "):
+        parts = t.split()
+        if len(parts) != 6:
+            raise HTTPException(400, "Usage: pve lxc status <host_id> <node> <vmid>")
+        host_id, node, vmid = parts[3], parts[4], parts[5]
+        data = proxmox_lxc_status(host_id, node, vmid).get("data", {})
+        status = data.get("status") or "unknown"
+        reply = f"On it. Proxmox LXC {vmid} on {node} is {status}."
+        return {"reply": reply, "data": data}
+
     if t.startswith("status "):
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
@@ -444,6 +469,8 @@ def try_skill(text: str) -> dict[str, object] | None:
             "status <service>",
             "logs <service>",
             "ping <host>",
+            "pve vm status <host_id> <node> <vmid>",
+            "pve lxc status <host_id> <node> <vmid>",
             "restart|start|stop <service>",
             "system status",
             "time and date",
