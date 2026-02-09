@@ -1,0 +1,14 @@
+- name: Build image
+  run: |
+    set -euxo pipefail
+    cd "$GITHUB_WORKSPACE"
+
+    # mkosi workspace MUSS ausserhalb des repos liegen (sonst bricht mkosi ab)
+    export MKOSI_WS="${RUNNER_TEMP:-/tmp}/mkosi-workspace"
+    mkdir -p "$MKOSI_WS"
+
+    # Falls dein build script mkosi direkt aufruft, geben wir workspace via env mit.
+    # (Viele mkosi setups lesen MKOSI_WORKSPACE_DIRECTORY oder nehmen --workspace-directory.)
+    export MKOSI_WORKSPACE_DIRECTORY="$MKOSI_WS"
+
+    ./scripts/build-image.sh
