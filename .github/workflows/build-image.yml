@@ -31,7 +31,10 @@ jobs:
       - name: Build image
         run: |
           set -euxo pipefail
+          cd "$(realpath "$GITHUB_WORKSPACE")"
+          pwd -P
           ./scripts/build-image.sh
+
 
       - name: Find build artifacts
         id: artifacts
