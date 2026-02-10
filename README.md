@@ -25,8 +25,8 @@ curl http://localhost:8000/health
 ## HTML-UI öffnen
 Nach dem Start erreichst du die UI unter:
 - `http://localhost:8000/` (standardmäßig Orb-UI)
-- `http://localhost:8000/static/orb-v2.html`
-- `http://localhost:8000/static/static-v4-tts.html`
+- `http://localhost:8000/static/orb.html`
+- `http://localhost:8000/static/index.html`
 
 ## Troubleshooting
 - **CHDIR / WorkingDirectory Fehler**
@@ -64,7 +64,7 @@ Nach dem Start erreichst du die UI unter:
     ```
 
 ## Orb-UI (Voice)
-Die Orb-Oberfläche (`/static/orb-v2.html`) nutzt STT + TTS:
+Die Orb-Oberfläche (`/static/orb.html`) nutzt STT + TTS:
 - Spracheingabe → `/stt`
 - Antwort → `/chat` → Audioausgabe über `/tts`
 Wenn `/tts` nicht erreichbar ist, nutzt die Orb-UI den Browser-Voice-Fallback (SpeechSynthesis).
@@ -160,3 +160,18 @@ Siehe `trace.md` für R1–R25 Status.
 ```bash
 python -m unittest discover -s tests
 ```
+
+
+## Kiosk-Mode (Boot direkt in WEB-UI)
+Das Image konfiguriert beim ersten Boot automatisch einen lokalen `jarvis`-Benutzer im Kiosk-Betrieb:
+- Auto-Login auf `tty1`
+- Start von X/Openbox
+- Chromium im Kiosk-Vollbild auf `http://localhost:8000/`
+
+Dadurch kann das System auf SSD/USB geflasht und direkt auf einem anderen PC als Appliance genutzt werden (USB-Eingabegeräte wie Tastatur/Maus bleiben nutzbar).
+
+Anpassung über `/etc/jarvis/config.env`:
+- `KIOSK_URL` (default `http://localhost:8000/`)
+- `LOCAL_LLM_ENABLED` (default `0`)
+- `LOCAL_LLM_MODEL_DIR` (default `/var/lib/jarvis/local-ai/models`)
+- `LOCAL_LLM_DEFAULT_MODEL` (default `future-local-model`)

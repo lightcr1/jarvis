@@ -34,7 +34,17 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def root():
-    return FileResponse("static/orb-v2.html")
+    return FileResponse("static/orb.html")
+
+
+@app.get("/static/orb-v2.html")
+def orb_legacy_redirect():
+    return FileResponse("static/orb.html")
+
+
+@app.get("/static/static-v4-tts.html")
+def chat_legacy_redirect():
+    return FileResponse("static/index.html")
 
 
 # --- Clients / State ---
@@ -86,7 +96,26 @@ def get_provider() -> str:
         return "openai"
     if os.getenv("GEMINI_API_KEY"):
         return "gemini"
+    if (os.getenv("LOCAL_LLM_ENABLED") or "").strip() in {"1", "true", "yes", "on"}:
+        return "local"
     return "openai"
+
+
+def get_local_model_dir() -> str:
+    return os.getenv("LOCAL_LLM_MODEL_DIR") or "/var/lib/jarvis/local-ai/models"
+
+
+def local_ai_stub_reply(text: str) -> str:
+    model_dir = get_local_model_dir()
+    model_hint = os.getenv("LOCAL_LLM_DEFAULT_MODEL") or "future-local-model"
+    model_exists = os.path.isdir(model_dir) and any(os.scandir(model_dir))
+
+    if not model_exists:
+        return (
+            "Understood. Local AI prep is active, but no local model is installed yet "
+            f"(expected in {model_dir}, default={model_hint})."
+        )
+    return "On it. Local AI mode is enabled and model files are available."
 
 
 def get_stt_provider() -> str:
@@ -536,6 +565,9 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
     provider = get_provider()
 
     try:
+        if provider == "local":
+            return {"reply": local_ai_stub_reply(text)}
+
         if provider == "gemini":
             client = get_gemini()
             model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
