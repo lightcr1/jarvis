@@ -1,0 +1,497 @@
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime
+import difflib
+import os
+import re
+import time
+from typing import Callable
+
+
+class RiskLevel:
+    READ = "read"
+    WRITE = "write"
+    CRITICAL = "critical"
+
+
+CONFIRM_WRITE = "YES"
+CONFIRM_CRITICAL = "YES, proceed"
+
+
+@dataclass
+class ActionPlan:
+    summary: str
+    steps: list[str]
+    risk: str
+    target: str | None
+    execute: Callable[[], dict]
+
+
+@dataclass
+class Skill:
+    name: str
+    description: str
+    risk: str
+    triggers: list[str]
+    examples: list[str]
+    handler: Callable[["ExecutionContext"], ActionPlan | dict]
+
+
+@dataclass
+class ExecutionContext:
+    text: str
+    token: str | None
+    verbose: bool
+    now: float
+    registry: "SkillRegistry"
+    policy: "SecurityPolicy"
+    metadata: dict = field(default_factory=dict)
+
+
+class SkillRegistry:
+    def __init__(self) -> None:
+        self._skills: list[Skill] = []
+
+    def register(self, skill: Skill) -> None:
+        self._skills.append(skill)
+
+    def skills(self) -> list[Skill]:
+        return list(self._skills)
+
+    def match(self, text: str) -> list[tuple[Skill, float]]:
+        normalized = normalize(text)
+        scored: list[tuple[Skill, float]] = []
+        for skill in self._skills:
+            best = 0.0
+            for trigger in skill.triggers + skill.examples + [skill.name]:
+                score = difflib.SequenceMatcher(None, normalized, normalize(trigger)).ratio()
+                best = max(best, score)
+            if best > 0.45:
+                scored.append((skill, best))
+        scored.sort(key=lambda item: item[1], reverse=True)
+        return scored
+
+
+class SecurityPolicy:
+    def __init__(self) -> None:
+        self.allowed_targets = {
+            t.strip().lower()
+            for t in (os.getenv("ALLOWED_TARGETS") or "").split(",")
+            if t.strip()
+        }
+        self.cooldowns = {
+            "restart": int(os.getenv("COOLDOWN_RESTART_SECONDS") or "60"),
+            "critical": int(os.getenv("COOLDOWN_CRITICAL_SECONDS") or "90"),
+        }
+        self._last_action: dict[str, float] = {}
+
+    def is_target_allowed(self, target: str | None, risk: str) -> bool:
+        if risk == RiskLevel.READ:
+            return True
+        if not target:
+            return False
+        if not self.allowed_targets:
+            return False
+        return target.lower() in self.allowed_targets
+
+    def check_cooldown(self, key: str, cooldown_key: str) -> tuple[bool, int]:
+        now = time.time()
+        cooldown = self.cooldowns.get(cooldown_key, 0)
+        last = self._last_action.get(key, 0)
+        if cooldown and now - last < cooldown:
+            return False, int(cooldown - (now - last))
+        self._last_action[key] = now
+        return True, 0
+
+
+class JarvisEngine:
+    def __init__(self, registry: SkillRegistry, policy: SecurityPolicy) -> None:
+        self.registry = registry
+        self.policy = policy
+        self._pending: dict[str, ActionPlan] = {}
+
+    def process(self, text: str, token: str | None) -> dict:
+        cleaned, verbose = strip_verbose(text)
+        ctx = ExecutionContext(
+            text=cleaned,
+            token=token,
+            verbose=verbose,
+            now=time.time(),
+            registry=self.registry,
+            policy=self.policy,
+        )
+
+        confirm = self._handle_confirm(cleaned, ctx)
+        if confirm:
+            return confirm
+
+        matches = self.registry.match(cleaned)
+        if not matches:
+            return self._fallback(ctx)
+
+        top_score = matches[0][1]
+        contenders = [m for m in matches if top_score - m[1] < 0.08]
+        if len(contenders) > 1 and top_score < 0.86:
+            options = [c[0].name for c in contenders[:3]]
+            return summary_response(
+                "Need clarification.",
+                {
+                    "reason": "ambiguous",
+                    "options": options,
+                    "hint": "Pick one of the options or refine your request.",
+                },
+            )
+
+        skill = matches[0][0]
+        result = skill.handler(ctx)
+        if isinstance(result, ActionPlan):
+            return self._handle_plan(result, ctx)
+        return summarize_output(result, ctx)
+
+    def _handle_confirm(self, text: str, ctx: ExecutionContext) -> dict | None:
+        lowered = text.strip().lower()
+        if lowered in {CONFIRM_WRITE.lower(), CONFIRM_CRITICAL.lower()}:
+            if not ctx.token:
+                return summary_response("Token required.", {"error": "missing_token"})
+            plan = self._pending.pop(ctx.token, None)
+            if not plan:
+                return summary_response("Nothing pending.", {"error": "no_pending_action"})
+            return summarize_output(plan.execute(), ctx)
+        return None
+
+    def _handle_plan(self, plan: ActionPlan, ctx: ExecutionContext) -> dict:
+        if plan.risk in {RiskLevel.WRITE, RiskLevel.CRITICAL} and not ctx.token:
+            return summary_response("Token required.", {"error": "missing_token"})
+
+        if plan.risk in {RiskLevel.WRITE, RiskLevel.CRITICAL}:
+            if not ctx.policy.is_target_allowed(plan.target, plan.risk):
+                return summary_response(
+                    "Target not allowed.",
+                    {"error": "target_not_allowed", "target": plan.target},
+                )
+
+        if plan.risk == RiskLevel.CRITICAL:
+            if ctx.token:
+                self._pending[ctx.token] = plan
+            return summary_response(
+                "Plan ready. Confirmation required.",
+                {
+                    "risk": plan.risk,
+                    "summary": plan.summary,
+                    "steps": plan.steps,
+                    "confirm": CONFIRM_CRITICAL,
+                },
+            )
+
+        if plan.risk == RiskLevel.WRITE:
+            if ctx.token:
+                self._pending[ctx.token] = plan
+            return summary_response(
+                "Confirmation required.",
+                {
+                    "risk": plan.risk,
+                    "summary": plan.summary,
+                    "confirm": CONFIRM_WRITE,
+                },
+            )
+
+        return summarize_output(plan.execute(), ctx)
+
+    def _fallback(self, ctx: ExecutionContext) -> dict:
+        if cloud_configured():
+            return summary_response(
+                "Cloud routing required.",
+                {
+                    "info": "No local skill matched. Cloud LLM can be used via /chat in app server.",
+                    "offline": False,
+                    "route": "cloud",
+                },
+            )
+        return summary_response(
+            "Offline mode: no matching skill.",
+            {
+                "offline": True,
+                "route": "offline",
+                "hint": "Try 'help' or 'skills' for available commands.",
+            },
+        )
+
+
+def normalize(text: str) -> str:
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
+def strip_verbose(text: str) -> tuple[str, bool]:
+    tokens = text.split()
+    verbose = False
+    filtered = []
+    for token in tokens:
+        if token.lower() in {"--verbose", "verbose", "-v"}:
+            verbose = True
+        else:
+            filtered.append(token)
+    return " ".join(filtered), verbose
+
+
+def cloud_configured() -> bool:
+    return bool(os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY"))
+
+
+def summary_response(summary: str, data: dict | None = None) -> dict:
+    return {"summary": summary, "data": data or {}}
+
+
+def summarize_output(payload: dict, ctx: ExecutionContext) -> dict:
+    summary = payload.get("summary") or payload.get("reply") or "Done."
+    data = payload.get("data", {})
+    if ctx.verbose:
+        data = {**data, "details": payload}
+    return {"summary": summary, "data": data}
+
+
+def masked(value: str, keep: int = 4) -> str:
+    if not value:
+        return ""
+    if len(value) <= keep:
+        return "*" * len(value)
+    return f"{value[:keep]}***"
+
+
+def build_registry() -> SkillRegistry:
+    registry = SkillRegistry()
+
+    registry.register(
+        Skill(
+            name="help",
+            description="Kurzinfo und Beispiele",
+            risk=RiskLevel.READ,
+            triggers=["help", "hilfe"],
+            examples=["help", "help status jarvis"],
+            handler=handle_help,
+        )
+    )
+    registry.register(
+        Skill(
+            name="skills",
+            description="Liste alle Skills mit Risk-Level",
+            risk=RiskLevel.READ,
+            triggers=["skills", "skill list"],
+            examples=["skills"],
+            handler=handle_skills,
+        )
+    )
+    registry.register(
+        Skill(
+            name="status jarvis",
+            description="Systemstatus des Assistants",
+            risk=RiskLevel.READ,
+            triggers=["status jarvis", "system status"],
+            examples=["status jarvis"],
+            handler=handle_status,
+        )
+    )
+    registry.register(
+        Skill(
+            name="diagnose jarvis",
+            description="Self-check ohne Änderungen",
+            risk=RiskLevel.READ,
+            triggers=["diagnose jarvis", "health check"],
+            examples=["diagnose jarvis"],
+            handler=handle_diagnose,
+        )
+    )
+    registry.register(
+        Skill(
+            name="config show",
+            description="Zeigt Konfiguration (maskiert)",
+            risk=RiskLevel.READ,
+            triggers=["config show", "show config"],
+            examples=["config show"],
+            handler=handle_config_show,
+        )
+    )
+    registry.register(
+        Skill(
+            name="proxmox health",
+            description="Proxmox-Status (vorbereitet)",
+            risk=RiskLevel.READ,
+            triggers=["proxmox health", "pve health"],
+            examples=["proxmox health"],
+            handler=handle_proxmox_health,
+        )
+    )
+    registry.register(
+        Skill(
+            name="vm ssh exec",
+            description="Remote SSH Befehl (kritisch)",
+            risk=RiskLevel.CRITICAL,
+            triggers=["vm ssh exec", "ssh exec"],
+            examples=["vm ssh exec web01 uptime"],
+            handler=handle_vm_ssh_exec,
+        )
+    )
+    registry.register(
+        Skill(
+            name="service restart",
+            description="Restart eines Services (kritisch)",
+            risk=RiskLevel.CRITICAL,
+            triggers=["service restart", "restart service"],
+            examples=["service restart local nginx"],
+            handler=handle_service_restart,
+        )
+    )
+    registry.register(
+        Skill(
+            name="service status",
+            description="Status eines Services",
+            risk=RiskLevel.READ,
+            triggers=["service status", "status service"],
+            examples=["service status local nginx"],
+            handler=handle_service_status,
+        )
+    )
+    registry.register(
+        Skill(
+            name="net check",
+            description="Ping/DNS Check",
+            risk=RiskLevel.READ,
+            triggers=["net check", "network check"],
+            examples=["net check local google.com"],
+            handler=handle_net_check,
+        )
+    )
+    return registry
+
+
+def handle_help(ctx: ExecutionContext) -> dict:
+    examples = [skill.examples[0] for skill in ctx.registry.skills() if skill.examples]
+    return {
+        "summary": "Top commands ready.",
+        "data": {"examples": examples[:8]},
+    }
+
+
+def handle_skills(ctx: ExecutionContext) -> dict:
+    skills = [
+        {"name": s.name, "risk": s.risk, "description": s.description}
+        for s in ctx.registry.skills()
+    ]
+    return {
+        "summary": f"{len(skills)} skills available.",
+        "data": {"skills": skills},
+    }
+
+
+def handle_status(ctx: ExecutionContext) -> dict:
+    now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    return {
+        "summary": "Jarvis is running.",
+        "data": {"time": now, "offline": not cloud_configured()},
+    }
+
+
+def handle_diagnose(ctx: ExecutionContext) -> dict:
+    checks = {
+        "stt_provider": os.getenv("STT_PROVIDER") or "local",
+        "tts_configured": bool(os.getenv("PIPER_MODEL")),
+        "proxmox_configured": bool(os.getenv("PROXMOX_API_TOKEN")),
+        "cloud_configured": cloud_configured(),
+    }
+    return {
+        "summary": "Diagnostics ready.",
+        "data": {"checks": checks, "next_steps": ["Configure missing items via env or config file."]},
+    }
+
+
+def handle_config_show(ctx: ExecutionContext) -> dict:
+    data = {
+        "LLM_PROVIDER": os.getenv("LLM_PROVIDER") or "openai",
+        "OPENAI_API_KEY": masked(os.getenv("OPENAI_API_KEY") or ""),
+        "GEMINI_API_KEY": masked(os.getenv("GEMINI_API_KEY") or ""),
+        "PROXMOX_BASE_URL": os.getenv("PROXMOX_BASE_URL") or "",
+        "PROXMOX_API_TOKEN": masked(os.getenv("PROXMOX_API_TOKEN") or ""),
+        "ALLOWED_TARGETS": os.getenv("ALLOWED_TARGETS") or "",
+    }
+    return {"summary": "Config snapshot.", "data": data}
+
+
+def handle_proxmox_health(ctx: ExecutionContext) -> dict:
+    if not os.getenv("PROXMOX_API_TOKEN"):
+        return {
+            "summary": "Proxmox not configured.",
+            "data": {"hint": "Set PROXMOX_BASE_URL and PROXMOX_API_TOKEN."},
+        }
+    return {
+        "summary": "Proxmox configured (token present).",
+        "data": {"mode": "ready"},
+    }
+
+
+def handle_vm_ssh_exec(ctx: ExecutionContext) -> ActionPlan:
+    parts = ctx.text.split()
+    target = parts[3] if len(parts) > 3 else None
+    command = " ".join(parts[4:]) if len(parts) > 4 else ""
+
+    plan = ActionPlan(
+        summary=f"Execute remote command on {target}: {command}",
+        steps=[
+            "Validate SSH configuration.",
+            f"Run command on target {target}.",
+            "Collect output and status.",
+        ],
+        risk=RiskLevel.CRITICAL,
+        target=target,
+        execute=lambda: {
+            "summary": "Remote exec not configured.",
+            "data": {"target": target, "command": command, "status": "blocked"},
+        },
+    )
+    return plan
+
+
+def handle_service_restart(ctx: ExecutionContext) -> ActionPlan:
+    parts = ctx.text.split()
+    target = parts[2] if len(parts) > 2 else None
+    service = parts[3] if len(parts) > 3 else None
+    cooldown_key = f"restart:{target}:{service}"
+    allowed, wait = ctx.policy.check_cooldown(cooldown_key, "restart")
+    if not allowed:
+        return ActionPlan(
+            summary=f"Cooldown active ({wait}s).",
+            steps=["Wait for cooldown to expire."],
+            risk=RiskLevel.READ,
+            target=target,
+            execute=lambda: {"summary": f"Cooldown {wait}s remaining.", "data": {"wait": wait}},
+        )
+
+    return ActionPlan(
+        summary=f"Restart service {service} on {target}.",
+        steps=["Validate target allowlist.", "Restart service.", "Verify status."],
+        risk=RiskLevel.CRITICAL,
+        target=target,
+        execute=lambda: {
+            "summary": "Service restart not configured.",
+            "data": {"target": target, "service": service, "status": "blocked"},
+        },
+    )
+
+
+def handle_service_status(ctx: ExecutionContext) -> dict:
+    parts = ctx.text.split()
+    target = parts[2] if len(parts) > 2 else None
+    service = parts[3] if len(parts) > 3 else None
+    return {
+        "summary": f"Service status ready for {service} on {target}.",
+        "data": {"target": target, "service": service, "status": "unknown"},
+    }
+
+
+def handle_net_check(ctx: ExecutionContext) -> dict:
+    parts = ctx.text.split()
+    target = parts[2] if len(parts) > 2 else "local"
+    host = parts[3] if len(parts) > 3 else ""
+    return {
+        "summary": "Network check prepared.",
+        "data": {"target": target, "host": host, "status": "not_executed"},
+    }

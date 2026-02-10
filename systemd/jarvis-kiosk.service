@@ -1,0 +1,20 @@
+[Unit]
+Description=Jarvis Kiosk UI
+After=network-online.target jarvis-backend.service
+Wants=network-online.target jarvis-backend.service
+
+[Service]
+Type=simple
+User=jarvis
+Group=jarvis
+WorkingDirectory=/opt/jarvis
+Environment=DISPLAY=:0
+Environment=HOME=/home/jarvis
+ExecStart=/opt/jarvis/scripts/start_kiosk.sh
+Restart=always
+RestartSec=3
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

@@ -1,48 +1,75 @@
-# jarvis
-Jarvis ist ein Text- und Voice-Assistant mit KI-Funktionen.
+# Jarvis Appliance OS (offline-first)
 
-## Orb-UI (Voice)
-Die Orb-Oberfläche (`/static/orb-v2.html`) nutzt bereits STT + TTS:
-- Spracheingabe → `/stt`
-- Antwort → `/chat` → Audioausgabe über `/tts`
-Wenn `/tts` nicht erreichbar ist, nutzt die Orb-UI automatisch den Browser-Voice-Fallback (SpeechSynthesis).
+Dieses Repo baut ein bootbares Jarvis-Image (USB/SSD), das automatisch startet:
+- `jarvis-backend.service` (FastAPI auf `127.0.0.1:8000`)
+- `jarvis-kiosk.service` (Chromium Kiosk auf `http://127.0.0.1:8000/static/static-v4-tts.html`)
 
-Damit die Sprachausgabe funktioniert, muss TTS korrekt konfiguriert sein:
-- `PIPER_BIN` (Pfad zum piper Binary)
-- `PIPER_MODEL` (Pfad zum Voice-Model)
-
-## Sudo für Status-/Service-Kommandos
-System-Kommandos (z.B. `status jarvis`) werden serverseitig über `sudo` ausgeführt.
-**Passwörter werden nicht im Code gespeichert oder übermittelt.**
-
-Empfehlung: `NOPASSWD`-Regel in der Sudoers-Datei für die benötigten Befehle (z.B. `systemctl`, `docker`, `ping`),
-statt ein Passwort im Frontend/Backend zu hinterlegen.
-
-## Proxmox (Read-only)
-Das Backend bietet eine einfache Read-only-Integration für Proxmox-Hosts.
-Hosts werden per API-Token hinzugefügt und anschließend über Read-only-Endpoints abgefragt.
-
-**Wichtig:** API-Tokens werden lokal in `proxmox_hosts.json` gespeichert (Dateirechte 0600).
-
-Beispiel: Host hinzufügen (requires `Authorization: Bearer <token>` vom `/unlock`-Endpoint):
+## Quick deploy auf laufender Ubuntu-VM
 ```bash
-curl -X POST http://localhost:8000/proxmox/hosts \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer $JARVIS_TOKEN" \
-  -d '{"name":"pve-1","base_url":"https://pve.local:8006","api_token":"USER@REALM!TOKEN=SECRET","verify_tls":true}'
+sudo ./scripts/deploy_local.sh
 ```
 
-Beispiel: Nodes abrufen:
+Das Deployment ist idempotent und installiert/aktualisiert:
+- `/opt/jarvis` (Sync via `rsync -a --delete`)
+- Python venv in `/opt/jarvis/.venv`
+- systemd units (`jarvis-backend`, `jarvis-kiosk`, `jarvis` legacy)
+- Modellordner:
+  - `/opt/jarvis/models/llm`
+  - `/opt/jarvis/models/stt`
+  - `/opt/jarvis/models/tts`
+
+## Bootbares Image bauen (`image.raw`)
 ```bash
-curl http://localhost:8000/proxmox/hosts/<host_id>/nodes
+./scripts/build-image.sh
 ```
 
-Beispiel: VM/LXC Status (Chat-Skill):
-- `pve vm status <host_id> <node> <vmid>`
-- `pve lxc status <host_id> <node> <vmid>`
+Das Build-Script erstellt eine Stage und installiert Python-Dependencies **vorab** in die venv,
+sodass beim Boot **kein pip/apt nötig** ist.
 
-Beispiel: VM/LXC Status (API):
+## USB flashen
+> Achtung: Zielgerät wird überschrieben.
+
 ```bash
-curl http://localhost:8000/proxmox/hosts/<host_id>/nodes/<node>/vms/<vmid>/status
-curl http://localhost:8000/proxmox/hosts/<host_id>/nodes/<node>/containers/<vmid>/status
+sudo dd if=build-output/image.raw of=/dev/sdX bs=4M status=progress oflag=sync
 ```
+
+## First boot Verhalten
+- `first-boot-wizard.service` läuft einmal.
+- Marker: `/var/lib/jarvis/firstboot.done`
+- Ruft `deploy_local.sh` mit `SKIP_PIP_INSTALL=1` auf (keine Runtime-Downloads am Boot).
+- Danach laufen Backend + Kiosk automatisch.
+
+## Offline Modelle (keine Binärmodelle im Git)
+Modelle werden **nicht** ins Repo committed.
+
+Pfade:
+- `/opt/jarvis/models/llm`
+- `/opt/jarvis/models/stt`
+- `/opt/jarvis/models/tts`
+
+Status prüfen:
+```bash
+/opt/jarvis/scripts/check_models.sh
+```
+
+Wenn Modelle fehlen, zeigt die UI ein Warning-Banner und bleibt trotzdem nutzbar.
+Nach dem Kopieren von Modellen:
+```bash
+sudo systemctl restart jarvis-backend.service
+```
+
+## Logs
+```bash
+journalctl -u jarvis-backend -f
+journalctl -u jarvis-kiosk -f
+```
+
+## Troubleshooting
+- `status=203/EXEC`: Prüfe `/opt/jarvis/.venv/bin/uvicorn` und redeploy:
+  ```bash
+  sudo ./scripts/deploy_local.sh
+  ```
+- Kiosk startet nicht: prüfe Chromium/Xorg in Journal:
+  ```bash
+  journalctl -u jarvis-kiosk -n 200 --no-pager
+  ```

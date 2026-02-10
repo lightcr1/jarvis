@@ -1,0 +1,4 @@
+models:
+  llm: /opt/jarvis/models/llm
+  stt: /opt/jarvis/models/stt
+  tts: /opt/jarvis/models/tts

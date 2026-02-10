@@ -1,0 +1,15 @@
+[Unit]
+Description=Jarvis Backend API (legacy unit name)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/jarvis
+EnvironmentFile=-/etc/jarvis/config.env
+ExecStart=/opt/jarvis/.venv/bin/uvicorn jarvisappv4:app --host 127.0.0.1 --port 8000
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

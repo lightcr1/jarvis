@@ -207,6 +207,16 @@
       color: var(--muted);
       text-align:center;
     }
+    .modelWarn{
+      margin: 0 18px 10px;
+      padding: 10px 12px;
+      border:1px solid rgba(245,158,11,.55);
+      border-radius:12px;
+      color:#ffd28a;
+      background: rgba(245,158,11,.12);
+      font-size:13px;
+      display:none;
+    }
 
     /* Modal (clean, only when needed) */
     #unlockModal{
@@ -310,6 +320,8 @@
       </div>
     </header>
 
+    <div id="modelWarn" class="modelWarn"></div>
+
     <main>
       <div class="chatPanel">
         <div class="messages" id="messages"></div>
@@ -361,6 +373,7 @@
   const statusText = document.getElementById("statusText");
   const orbBtn = document.getElementById("orbBtn");
   const recordHint = document.getElementById("recordHint");
+  const modelWarn = document.getElementById("modelWarn");
 
   // Auth UI
   const authDot = document.getElementById("authDot");
@@ -647,12 +660,32 @@
     }
   });
 
+
+  async function refreshModelStatus(){
+    try{
+      const r = await fetch("/models/status");
+      if(!r.ok) return;
+      const data = await r.json();
+      if(data.ready){
+        modelWarn.style.display = "none";
+        return;
+      }
+      modelWarn.style.display = "block";
+      modelWarn.textContent = "⚠️ Models missing. Copy models into /opt/jarvis/models/<llm|stt|tts> and restart jarvis-backend.service.";
+    }catch(_e){
+      modelWarn.style.display = "block";
+      modelWarn.textContent = "⚠️ Could not read model status. Ensure backend is running on http://127.0.0.1:8000.";
+    }
+  }
+
   // Welcome line
   addMessage("jarvis", "Understood.\nSystem online.");
   updateAuthUI();
   setStatus("idle");
   updateRecordHint(false);
+  refreshModelStatus();
   setInterval(updateAuthUI, 2000);
+  setInterval(refreshModelStatus, 15000);
 </script>
 </body>
 </html>
