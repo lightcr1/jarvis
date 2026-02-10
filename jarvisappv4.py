@@ -23,6 +23,7 @@ from google import genai
 from faster_whisper import WhisperModel
 
 from proxmox_module import build_router, proxmox_lxc_status, proxmox_vm_status
+from jarvis_engine import JarvisEngine, build_registry, SecurityPolicy
 
 app = FastAPI(title="Jarvis Backend")
 logger = logging.getLogger("jarvis.audio")
@@ -78,7 +79,14 @@ def health():
 # Provider + Clients
 # ---------------------------
 def get_provider() -> str:
-    return (os.getenv("LLM_PROVIDER") or "openai").lower().strip()
+    configured = (os.getenv("LLM_PROVIDER") or "").lower().strip()
+    if configured:
+        return configured
+    if os.getenv("OPENAI_API_KEY"):
+        return "openai"
+    if os.getenv("GEMINI_API_KEY"):
+        return "gemini"
+    return "openai"
 
 
 def get_stt_provider() -> str:
@@ -146,6 +154,8 @@ def require_token(auth: str | None):
 
 
 app.include_router(build_router(require_token))
+
+engine = JarvisEngine(build_registry(), SecurityPolicy())
 
 
 @app.post("/unlock", response_model=UnlockOut)
@@ -513,12 +523,15 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
     if not text:
         return {"reply": "Say that again."}
 
-    if is_write_command(text):
-        require_token(authorization)
+    token = None
+    if authorization and authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
 
-    skill_reply = try_skill(text)
-    if skill_reply is not None:
-        return skill_reply
+    response = engine.process(text, token)
+    summary = response.get("summary", "")
+    data = response.get("data", {})
+    if data.get("route") != "cloud":
+        return {"reply": summary, "data": data}
 
     provider = get_provider()
 
