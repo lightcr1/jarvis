@@ -28,6 +28,11 @@ COOLDOWN_CRITICAL_SECONDS=90
 EOF
 
 chmod 600 "${CONFIG_FILE}"
+
+if [[ -x "/opt/jarvis/scripts/deploy_local.sh" ]]; then
+  SOURCE_DIR="/opt/jarvis" /opt/jarvis/scripts/deploy_local.sh
+fi
+
 touch "${STATE_FILE}"
 
 echo "Jarvis first-boot config created at ${CONFIG_FILE}."

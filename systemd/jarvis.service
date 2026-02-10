@@ -7,9 +7,9 @@ Wants=network-online.target
 Type=simple
 WorkingDirectory=/opt/jarvis
 EnvironmentFile=/etc/jarvis/config.env
-ExecStart=/usr/bin/python3 -m uvicorn jarvisappv4:app --host 0.0.0.0 --port 8000
+ExecStart=/opt/jarvis/.venv/bin/uvicorn jarvisappv4:app --host 0.0.0.0 --port 8000
 Restart=on-failure
-RestartSec=5
+RestartSec=2
 
 [Install]
 WantedBy=multi-user.target

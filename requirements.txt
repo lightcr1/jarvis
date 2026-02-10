@@ -4,3 +4,4 @@ pydantic
 openai
 google-genai
 faster-whisper
+python-multipart
