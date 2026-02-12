@@ -1,7 +1,9 @@
 import base64
 from datetime import datetime
+import json
 import logging
 import os
+from pathlib import Path
 import platform
 import re
 import secrets
@@ -10,11 +12,14 @@ import subprocess
 import tempfile
 import time
 import uuid
+from urllib import error as urlerror
+from urllib import parse as urlparse
+from urllib import request as urlrequest
 
 from fastapi import FastAPI, File, Header, HTTPException, UploadFile
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from openai import OpenAI
 from google import genai
@@ -60,11 +65,31 @@ _tokens: dict[str, float] = {}  # token -> expires_epoch
 # ---------------------------
 class ChatIn(BaseModel):
     text: str
+    session_id: str | None = None
 
 
 class ChatOut(BaseModel):
     reply: str
     data: dict | None = None
+    session_id: str | None = None
+
+
+class ChatSessionCreateIn(BaseModel):
+    title: str | None = None
+
+
+class ChatMessage(BaseModel):
+    role: str
+    text: str
+    ts: int
+
+
+class ChatSessionOut(BaseModel):
+    id: str
+    title: str
+    updated_at: int
+    created_at: int
+    messages: list[ChatMessage] = Field(default_factory=list)
 
 
 class UnlockIn(BaseModel):
@@ -78,6 +103,178 @@ class TTSIn(BaseModel):
 class UnlockOut(BaseModel):
     token: str
     expires_in_sec: int
+
+
+class ChatHistoryStore:
+    def __init__(self) -> None:
+        configured = os.getenv("JARVIS_CHAT_HISTORY_PATH")
+        self.path = Path(configured) if configured else Path("/var/lib/jarvis/chat_history.json")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.data = self._load()
+
+    def _empty(self) -> dict:
+        return {"sessions": {}}
+
+    def _load(self) -> dict:
+        if not self.path.exists():
+            return self._empty()
+        try:
+            content = json.loads(self.path.read_text(encoding="utf-8"))
+            return {**self._empty(), **content}
+        except (OSError, json.JSONDecodeError):
+            return self._empty()
+
+    def _save(self) -> None:
+        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def create_session(self, title: str | None = None) -> dict:
+        now = int(time.time())
+        session_id = f"chat-{uuid.uuid4().hex[:12]}"
+        item = {
+            "id": session_id,
+            "title": (title or "New chat").strip() or "New chat",
+            "created_at": now,
+            "updated_at": now,
+            "messages": [],
+        }
+        self.data.setdefault("sessions", {})[session_id] = item
+        self._save()
+        return item
+
+    def ensure_session(self, session_id: str | None) -> dict:
+        if session_id and session_id in self.data.get("sessions", {}):
+            return self.data["sessions"][session_id]
+        return self.create_session()
+
+    def append_message(self, session_id: str, role: str, text: str) -> None:
+        session = self.ensure_session(session_id)
+        now = int(time.time())
+        session.setdefault("messages", []).append({"role": role, "text": text, "ts": now})
+        session["updated_at"] = now
+        if role == "user" and session.get("title", "New chat") == "New chat":
+            session["title"] = text[:50] or "New chat"
+        self.data.setdefault("sessions", {})[session["id"]] = session
+        self._save()
+
+    def list_sessions(self) -> list[dict]:
+        sessions = list(self.data.get("sessions", {}).values())
+        sessions.sort(key=lambda s: s.get("updated_at", 0), reverse=True)
+        return [{
+            "id": s.get("id", ""),
+            "title": s.get("title", "New chat"),
+            "updated_at": s.get("updated_at", 0),
+            "created_at": s.get("created_at", 0),
+            "message_count": len(s.get("messages", [])),
+        } for s in sessions]
+
+    def get_session(self, session_id: str) -> dict | None:
+        return self.data.get("sessions", {}).get(session_id)
+
+
+class RagStore:
+    def __init__(self) -> None:
+        configured = os.getenv("JARVIS_RAG_CACHE_PATH")
+        self.path = Path(configured) if configured else Path("/var/lib/jarvis/rag_cache.json")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.data = self._load()
+
+    def _empty(self) -> dict:
+        return {"sources": {"wikijs": [], "github": []}, "updated_at": 0}
+
+    def _load(self) -> dict:
+        if not self.path.exists():
+            return self._empty()
+        try:
+            content = json.loads(self.path.read_text(encoding="utf-8"))
+            return {**self._empty(), **content}
+        except (OSError, json.JSONDecodeError):
+            return self._empty()
+
+    def _save(self) -> None:
+        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _http_json(self, url: str, method: str = "GET", headers: dict | None = None, payload: dict | None = None) -> dict:
+        body = None
+        hdrs = {"Accept": "application/json", **(headers or {})}
+        if payload is not None:
+            body = json.dumps(payload).encode("utf-8")
+            hdrs["Content-Type"] = "application/json"
+        req = urlrequest.Request(url, data=body, headers=hdrs, method=method)
+        with urlrequest.urlopen(req, timeout=20) as resp:
+            raw = resp.read().decode("utf-8")
+            return json.loads(raw or "{}")
+
+    def refresh(self) -> dict:
+        report = {"wikijs": "skipped", "github": "skipped"}
+        sources = {"wikijs": [], "github": []}
+
+        wikijs_url = (os.getenv("WIKIJS_GRAPHQL_URL") or "").strip()
+        wikijs_key = (os.getenv("WIKIJS_API_KEY") or "").strip()
+        wikijs_query = os.getenv("WIKIJS_GRAPHQL_QUERY") or "query { pages { list(orderBy: TITLE) { title path description } } }"
+        if wikijs_url and wikijs_key:
+            try:
+                resp = self._http_json(
+                    wikijs_url,
+                    method="POST",
+                    headers={"Authorization": f"Bearer {wikijs_key}"},
+                    payload={"query": wikijs_query},
+                )
+                raw_items = (((resp.get("data") or {}).get("pages") or {}).get("list") or [])
+                for item in raw_items:
+                    title = (item.get("title") or "").strip()
+                    path = (item.get("path") or "").strip()
+                    desc = (item.get("description") or "").strip()
+                    text = " | ".join(x for x in [title, path, desc] if x)
+                    if text:
+                        sources["wikijs"].append({"title": title or path or "wiki", "text": text, "url": path})
+                report["wikijs"] = f"ok ({len(sources['wikijs'])})"
+            except Exception as e:
+                report["wikijs"] = f"error: {type(e).__name__}"
+
+        gh_repo = (os.getenv("GITHUB_REPO") or "").strip()
+        gh_branch = (os.getenv("GITHUB_BRANCH") or "main").strip()
+        gh_pat = (os.getenv("GITHUB_PAT") or "").strip()
+        if gh_repo:
+            try:
+                headers = {"User-Agent": "jarvis-rag"}
+                if gh_pat:
+                    headers["Authorization"] = f"Bearer {gh_pat}"
+                tree_url = f"https://api.github.com/repos/{gh_repo}/git/trees/{gh_branch}?recursive=1"
+                tree = self._http_json(tree_url, headers=headers)
+                files = [i for i in tree.get("tree", []) if i.get("type") == "blob"][:80]
+                for f in files:
+                    path = f.get("path", "")
+                    if not path or path.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".zip")):
+                        continue
+                    sources["github"].append({"title": path, "text": path, "url": f.get("url", "")})
+                report["github"] = f"ok ({len(sources['github'])})"
+            except Exception as e:
+                report["github"] = f"error: {type(e).__name__}"
+
+        self.data = {"sources": sources, "updated_at": int(time.time()), "report": report}
+        self._save()
+        return report
+
+    def search(self, query: str, limit: int = 5) -> list[dict]:
+        q = (query or "").strip().lower()
+        if not q:
+            return []
+        scored = []
+        for source, items in (self.data.get("sources") or {}).items():
+            for item in items:
+                hay = f"{item.get('title','')} {item.get('text','')}".lower()
+                score = 0
+                for token in q.split():
+                    if token in hay:
+                        score += 1
+                if score:
+                    scored.append((score, {**item, "source": source}))
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [x[1] for x in scored[:limit]]
+
+
+chat_history = ChatHistoryStore()
+rag_store = RagStore()
 
 
 @app.get("/health")
@@ -116,6 +313,28 @@ def local_ai_stub_reply(text: str) -> str:
             f"(expected in {model_dir}, default={model_hint})."
         )
     return "On it. Local AI mode is enabled and model files are available."
+
+
+def build_context_reply(text: str) -> str:
+    t = (text or "").strip().lower()
+    if "web gui" in t or "gui" in t:
+        return (
+            "Understood. Quick check path: service status, recent logs, and network reachability. "
+            "Try 'status nginx', 'logs nginx' and 'ping <host>'."
+        )
+    if "deploy" in t and "branch" in t:
+        return (
+            "On it. Suggested deploy flow: fetch branch, run tests, build artifact, deploy, then verify health endpoint."
+        )
+    if "proxmox" in t or "pve" in t:
+        return (
+            "Understood. For Proxmox I can check host/VM/LXC status with deterministic skills. "
+            "Use 'proxmox health' or 'pve vm status <host_id> <node> <vmid>'."
+        )
+    return (
+        "On it. Cloud AI is currently unavailable, but I can still help with deterministic checks. "
+        "Try 'skills' or describe the system/service/target to inspect."
+    )
 
 
 def get_stt_provider() -> str:
@@ -549,24 +768,45 @@ def try_skill(text: str) -> dict[str, object] | None:
 @app.post("/chat", response_model=ChatOut)
 def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
     text = (payload.text or "").strip()
+    session = chat_history.ensure_session(payload.session_id)
+    session_id = session["id"]
     if not text:
-        return {"reply": "Say that again."}
+        return {"reply": "Say that again.", "session_id": session_id}
 
     token = None
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
 
+    chat_history.append_message(session_id, "user", text)
+
+    skill_first = try_skill(text)
+    if skill_first is not None:
+        reply = skill_first.get("reply", "Done.")
+        data = skill_first.get("data", {})
+        chat_history.append_message(session_id, "jarvis", reply)
+        return {"reply": reply, "data": data, "session_id": session_id}
+
     response = engine.process(text, token)
     summary = response.get("summary", "")
     data = response.get("data", {})
+
+    rag_hits = rag_store.search(text, limit=3)
+    if rag_hits and data.get("route") in {"offline", "cloud"}:
+        top = rag_hits[0]
+        summary = f"Understood. From {top.get('source')}: {top.get('title')}"
+        data = {**data, "rag": rag_hits, "route": "rag"}
+
     if data.get("route") != "cloud":
-        return {"reply": summary, "data": data}
+        chat_history.append_message(session_id, "jarvis", summary)
+        return {"reply": summary, "data": data, "session_id": session_id}
 
     provider = get_provider()
 
     try:
         if provider == "local":
-            return {"reply": local_ai_stub_reply(text)}
+            reply = local_ai_stub_reply(text)
+            chat_history.append_message(session_id, "jarvis", reply)
+            return {"reply": reply, "session_id": session_id}
 
         if provider == "gemini":
             client = get_gemini()
@@ -578,8 +818,9 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
                     {"role": "user", "parts": [{"text": f"{SYSTEM_PROMPT}\n\nUser: {text}"}]},
                 ],
             )
-            out = (getattr(resp, "text", "") or "").strip()
-            return {"reply": out or "On it. (No output returned.)"}
+            out = (getattr(resp, "text", "") or "").strip() or "On it. (No output returned.)"
+            chat_history.append_message(session_id, "jarvis", out)
+            return {"reply": out, "session_id": session_id}
 
         # default: openai
         client = get_openai()
@@ -594,11 +835,61 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
             temperature=0.3,
             max_tokens=int(os.getenv("OPENAI_MAX_TOKENS") or "120"),
         )
-        return {"reply": (resp.choices[0].message.content or "").strip()}
+        out = (resp.choices[0].message.content or "").strip()
+        chat_history.append_message(session_id, "jarvis", out)
+        return {"reply": out, "session_id": session_id}
 
-    except Exception as e:
-        raise HTTPException(502, f"Upstream error: {type(e).__name__}: {e}")
+    except Exception:
+        # Graceful assistant fallback instead of surfacing raw provider errors.
+        reply = build_context_reply(text)
+        chat_history.append_message(session_id, "jarvis", reply)
+        return {
+            "reply": reply,
+            "data": {
+                "route": "offline_assistant",
+                "reason": "cloud_unavailable",
+            },
+            "session_id": session_id,
+        }
 
+
+
+@app.get("/chat/sessions")
+def list_chat_sessions():
+    return {"sessions": chat_history.list_sessions()}
+
+
+@app.post("/chat/sessions")
+def create_chat_session(payload: ChatSessionCreateIn):
+    session = chat_history.create_session(payload.title)
+    return session
+
+
+@app.get("/chat/sessions/{session_id}")
+def get_chat_session(session_id: str):
+    session = chat_history.get_session(session_id)
+    if not session:
+        raise HTTPException(404, "session not found")
+    return session
+
+
+@app.get("/rag/status")
+def rag_status():
+    return {
+        "updated_at": rag_store.data.get("updated_at", 0),
+        "report": rag_store.data.get("report", {}),
+        "counts": {k: len(v) for k, v in (rag_store.data.get("sources") or {}).items()},
+    }
+
+
+@app.post("/rag/refresh")
+def rag_refresh():
+    return {"report": rag_store.refresh()}
+
+
+@app.get("/rag/search")
+def rag_search(q: str):
+    return {"results": rag_store.search(q, limit=5)}
 
 # ---------------------------
 # STT (local faster-whisper OR Gemini)
