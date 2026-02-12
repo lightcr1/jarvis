@@ -134,6 +134,51 @@ Damit legst du einen Host in der internen Host-Liste an (`proxmox_hosts.json`).
 - Self-signed Zertifikat: testweise `"verify_tls": false` setzen (nur intern/temporär).
 - In Proxmox muss der Token passende Berechtigungen auf Node/VM/LXC haben.
 
+## Learning / Memory (deterministisch)
+Jarvis kann Nutzungsdaten lokal speichern (JSON, kein Modell-Finetuning):
+- `JARVIS_MEMORY_PATH` (Default: `/var/lib/jarvis/memory.json`)
+- Merkt sich Query-Statistiken, Feedback und Alias-Korrekturen
+- Nach Responses liefert `data.feedback` eine Feedback-ID
+
+Feedback senden:
+```bash
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"feedback <id> ok"}'
+```
+oder bei falscher Zuordnung:
+```bash
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"feedback <id> bad correct: proxmox health"}'
+```
+
+Wenn eine unbeantwortete Anfrage häufiger vorkommt, wird in `data.skill_suggestion` vorgeschlagen, einen neuen Skill anzulegen.
+
+
+### Learning-Kommandos (direkt im Chat)
+Jarvis kann jetzt explizit Memory-Einträge setzen und anzeigen:
+- `remember node <name> <value>`
+- `remember vmid <name> <value>`
+- `remember default <key> <value>`
+- `memory show`
+
+Beispiele:
+```bash
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"remember node pve1 10.0.0.10"}'
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"memory show"}'
+```
+
+### Cloud-Ausfall / Offline-Assistant
+Wenn OpenAI/Gemini gerade nicht erreichbar ist oder API-Fehler liefert, gibt Jarvis jetzt **keinen rohen Upstream-Fehler** mehr zurück.
+Stattdessen antwortet er als Assistant mit kontextbasierten Next-Steps (z. B. für "web gui down", "deploy branch", "proxmox").
+
+### Lern- und Fallback-Tests
+```bash
+python -m unittest discover -s tests
+```
+Enthalten sind u. a. Tests für:
+- Feedback-Loop + Alias-Lernen
+- wiederholte unbekannte Anfragen → Skill-Suggestion
+- explizite Memory-Kommandos (`remember`, `memory show`)
+- Cloud-Fehler → kontextbasierte Offline-Assistant-Antwort
+
 ## Security-Model (Kurzfassung)
 - read: kein Token nötig.
 - write: Token + Confirm (`YES`).

@@ -118,6 +118,28 @@ def local_ai_stub_reply(text: str) -> str:
     return "On it. Local AI mode is enabled and model files are available."
 
 
+def build_context_reply(text: str) -> str:
+    t = (text or "").strip().lower()
+    if "web gui" in t or "gui" in t:
+        return (
+            "Understood. Quick check path: service status, recent logs, and network reachability. "
+            "Try 'status nginx', 'logs nginx' and 'ping <host>'."
+        )
+    if "deploy" in t and "branch" in t:
+        return (
+            "On it. Suggested deploy flow: fetch branch, run tests, build artifact, deploy, then verify health endpoint."
+        )
+    if "proxmox" in t or "pve" in t:
+        return (
+            "Understood. For Proxmox I can check host/VM/LXC status with deterministic skills. "
+            "Use 'proxmox health' or 'pve vm status <host_id> <node> <vmid>'."
+        )
+    return (
+        "On it. Cloud AI is currently unavailable, but I can still help with deterministic checks. "
+        "Try 'skills' or describe the system/service/target to inspect."
+    )
+
+
 def get_stt_provider() -> str:
     return (os.getenv("STT_PROVIDER") or "local").lower().strip()  # local|gemini
 
@@ -556,6 +578,10 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
     if authorization and authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
 
+    skill_first = try_skill(text)
+    if skill_first is not None:
+        return skill_first
+
     response = engine.process(text, token)
     summary = response.get("summary", "")
     data = response.get("data", {})
@@ -596,8 +622,15 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
         )
         return {"reply": (resp.choices[0].message.content or "").strip()}
 
-    except Exception as e:
-        raise HTTPException(502, f"Upstream error: {type(e).__name__}: {e}")
+    except Exception:
+        # Graceful assistant fallback instead of surfacing raw provider errors.
+        return {
+            "reply": build_context_reply(text),
+            "data": {
+                "route": "offline_assistant",
+                "reason": "cloud_unavailable",
+            },
+        }
 
 
 # ---------------------------

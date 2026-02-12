@@ -321,6 +321,7 @@
           <div class="actions">
             <button class="btn" id="talk">🎙️</button>
             <button class="btn" id="send">Send</button>
+            <button class="btn" id="skillsBtn" title="List all available skills">Skills</button>
             <button class="btn" id="clear">Clear</button>
           </div>
         </div>
@@ -357,6 +358,7 @@
   const inputEl = document.getElementById("input");
   const sendBtn = document.getElementById("send");
   const clearBtn = document.getElementById("clear");
+  const skillsBtn = document.getElementById("skillsBtn");
   const talkBtn = document.getElementById("talk");
   const statusText = document.getElementById("statusText");
   const orbBtn = document.getElementById("orbBtn");
@@ -569,6 +571,7 @@
   });
 
   sendBtn.addEventListener("click", ()=> sendText(inputEl.value));
+  skillsBtn.addEventListener("click", ()=> sendText("skills"));
 
   clearBtn.addEventListener("click", ()=>{
     messagesEl.innerHTML = "";
