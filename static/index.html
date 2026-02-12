@@ -37,7 +37,7 @@
       height:100vh;
       display:flex;
       flex-direction:column;
-      max-width: 980px;
+      max-width: 1260px;
       margin: 0 auto;
     }
 
@@ -96,8 +96,58 @@
       overflow:hidden;
     }
 
+    .workspace{
+      height:100%;
+      display:flex;
+      gap:12px;
+    }
+
+    .sidebar{
+      width:280px;
+      background: linear-gradient(180deg, rgba(12,19,34,.78), rgba(10,16,32,.82));
+      border:1px solid var(--border);
+      border-radius: var(--r);
+      box-shadow: var(--shadow);
+      display:flex;
+      flex-direction:column;
+      overflow:hidden;
+    }
+
+    .sideHead{
+      display:flex;
+      justify-content:space-between;
+      align-items:center;
+      padding:10px;
+      border-bottom:1px solid var(--border);
+    }
+
+    .chatList{
+      overflow:auto;
+      padding:8px;
+      display:flex;
+      flex-direction:column;
+      gap:8px;
+    }
+
+    .chatItem{
+      border:1px solid var(--border);
+      background: rgba(5,9,18,.45);
+      color:var(--text);
+      border-radius:12px;
+      padding:10px;
+      text-align:left;
+      cursor:pointer;
+      font-size:13px;
+    }
+    .chatItem.active{
+      border-color: var(--blue);
+      background: rgba(37,99,235,.2);
+    }
+    .chatItem .sub{color:var(--muted); font-size:11px; margin-top:4px;}
+
     .chatPanel{
       height:100%;
+      flex:1;
       background: linear-gradient(180deg, rgba(12,19,34,.78), rgba(10,16,32,.82));
       border:1px solid var(--border);
       border-radius: var(--r);
@@ -195,6 +245,7 @@
     #talk.rec{background: var(--bad);}
     #send{background: var(--good); color:#06250f;}
     #clear{background: #2a395a; color: var(--text);}
+    #newChatBtn{background:#1f2b44;color:var(--text); padding:8px 10px; font-size:12px;}
 
     .hint{
       padding: 0 14px 12px;
@@ -311,20 +362,31 @@
     </header>
 
     <main>
-      <div class="chatPanel">
-        <div class="messages" id="messages"></div>
-
-        <div class="hint">Tipps: <span class="pill">uptime</span> <span class="pill">status jarvis</span> <span class="pill">logs jarvis</span> <span class="pill">restart nginx</span></div>
-
-        <div class="composer">
-          <textarea id="input" placeholder="Type a message… (Enter = send, Shift+Enter = newline)"></textarea>
-          <div class="actions">
-            <button class="btn" id="talk">🎙️</button>
-            <button class="btn" id="send">Send</button>
-            <button class="btn" id="clear">Clear</button>
+      <div class="workspace">
+        <aside class="sidebar">
+          <div class="sideHead">
+            <strong>Chats</strong>
+            <button class="btn" id="newChatBtn">New</button>
           </div>
+          <div class="chatList" id="chatList"></div>
+        </aside>
+
+        <div class="chatPanel">
+          <div class="messages" id="messages"></div>
+
+          <div class="hint">Tipps: <span class="pill">uptime</span> <span class="pill">status jarvis</span> <span class="pill">logs jarvis</span> <span class="pill">restart nginx</span></div>
+
+          <div class="composer">
+            <textarea id="input" placeholder="Type a message… (Enter = send, Shift+Enter = newline)"></textarea>
+            <div class="actions">
+              <button class="btn" id="talk">🎙️</button>
+              <button class="btn" id="send">Send</button>
+              <button class="btn" id="skillsBtn" title="List all available skills">Skills</button>
+              <button class="btn" id="clear">Clear</button>
+            </div>
+          </div>
+          <div class="recordHint" id="recordHint">🎙️ Aufnahme starten → sprechen → erneut drücken zum Transkribieren</div>
         </div>
-        <div class="recordHint" id="recordHint">🎙️ Aufnahme starten → sprechen → erneut drücken zum Transkribieren</div>
       </div>
     </main>
   </div>
@@ -357,10 +419,13 @@
   const inputEl = document.getElementById("input");
   const sendBtn = document.getElementById("send");
   const clearBtn = document.getElementById("clear");
+  const skillsBtn = document.getElementById("skillsBtn");
   const talkBtn = document.getElementById("talk");
   const statusText = document.getElementById("statusText");
   const orbBtn = document.getElementById("orbBtn");
   const recordHint = document.getElementById("recordHint");
+  const chatListEl = document.getElementById("chatList");
+  const newChatBtn = document.getElementById("newChatBtn");
 
   // Auth UI
   const authDot = document.getElementById("authDot");
@@ -428,6 +493,58 @@
   function isWriteCommand(text){
     const t = (text||"").trim().toLowerCase();
     return t.startsWith("restart ") || t.startsWith("start ") || t.startsWith("stop ");
+  }
+
+  const ACTIVE_CHAT_KEY = "jarvis_active_chat";
+  let activeChatId = sessionStorage.getItem(ACTIVE_CHAT_KEY) || null;
+
+  function setActiveChat(id){
+    activeChatId = id;
+    if(id) sessionStorage.setItem(ACTIVE_CHAT_KEY, id);
+  }
+
+  async function getJSON(url){
+    const r = await fetch(url, { headers: authHeaders() });
+    const txt = await r.text();
+    let data = {};
+    try { data = txt ? JSON.parse(txt) : {}; } catch {}
+    if(!r.ok){ throw new Error(data.detail || txt || String(r.status)); }
+    return data;
+  }
+
+  function renderChatList(sessions){
+    chatListEl.innerHTML = "";
+    for(const s of sessions){
+      const b = document.createElement("button");
+      b.className = "chatItem" + (s.id===activeChatId ? " active" : "");
+      b.innerHTML = `<div>${s.title || "New chat"}</div><div class="sub">${s.message_count||0} msgs</div>`;
+      b.addEventListener("click", ()=> loadSession(s.id));
+      chatListEl.appendChild(b);
+    }
+  }
+
+  async function refreshSessions(){
+    const data = await getJSON('/chat/sessions');
+    const sessions = data.sessions || [];
+    if(!activeChatId && sessions.length){ setActiveChat(sessions[0].id); }
+    renderChatList(sessions);
+  }
+
+  async function loadSession(id){
+    const data = await getJSON('/chat/sessions/' + encodeURIComponent(id));
+    setActiveChat(data.id);
+    messagesEl.innerHTML = "";
+    for(const m of (data.messages || [])){
+      addMessage(m.role === 'assistant' ? 'jarvis' : m.role, m.text);
+    }
+    await refreshSessions();
+  }
+
+  async function createSession(){
+    const data = await postJSON('/chat/sessions', {title: 'New chat'}, true);
+    setActiveChat(data.id);
+    messagesEl.innerHTML = "";
+    await refreshSessions();
   }
 
   function addMessage(role, text){
@@ -542,9 +659,11 @@
     setStatus("thinking");
 
     try{
-      const res = await postJSON("/chat", { text: t }, true);
+      const res = await postJSON("/chat", { text: t, session_id: activeChatId }, true);
+      if(res.session_id) setActiveChat(res.session_id);
       const reply = res.reply || "—";
       addMessage("jarvis", reply);
+      await refreshSessions();
       setStatus("idle");
     } catch(err){
       // If token invalid/expired -> force unlock again
@@ -569,6 +688,7 @@
   });
 
   sendBtn.addEventListener("click", ()=> sendText(inputEl.value));
+  skillsBtn.addEventListener("click", ()=> sendText("skills"));
 
   clearBtn.addEventListener("click", ()=>{
     messagesEl.innerHTML = "";
@@ -577,6 +697,7 @@
   });
 
   orbBtn.addEventListener("click", ()=>{
+    if(activeChatId) sessionStorage.setItem(ACTIVE_CHAT_KEY, activeChatId);
     window.location.href = "/static/orb.html";
   });
 
@@ -647,12 +768,29 @@
     }
   });
 
-  // Welcome line
-  addMessage("jarvis", "Understood.\nSystem online.");
-  updateAuthUI();
-  setStatus("idle");
-  updateRecordHint(false);
-  setInterval(updateAuthUI, 2000);
+  newChatBtn.addEventListener("click", async ()=>{
+    await createSession();
+    addMessage("jarvis", "Understood.\nNew chat ready.");
+  });
+
+  // Init
+  (async ()=>{
+    try{
+      await refreshSessions();
+      if(activeChatId){
+        await loadSession(activeChatId);
+      } else {
+        await createSession();
+        addMessage("jarvis", "Understood.\nSystem online.");
+      }
+    } catch(e){
+      addMessage("jarvis", "Understood.\nHistory init failed.");
+    }
+    updateAuthUI();
+    setStatus("idle");
+    updateRecordHint(false);
+    setInterval(updateAuthUI, 2000);
+  })();
 </script>
 </body>
 </html>

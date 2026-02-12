@@ -134,6 +134,63 @@ Damit legst du einen Host in der internen Host-Liste an (`proxmox_hosts.json`).
 - Self-signed Zertifikat: testweise `"verify_tls": false` setzen (nur intern/temporär).
 - In Proxmox muss der Token passende Berechtigungen auf Node/VM/LXC haben.
 
+## Learning / Memory (deterministisch)
+Jarvis kann Nutzungsdaten lokal speichern (JSON, kein Modell-Finetuning):
+- `JARVIS_MEMORY_PATH` (Default: `/var/lib/jarvis/memory.json`)
+- Merkt sich Query-Statistiken, Feedback und Alias-Korrekturen
+- Nach Responses liefert `data.feedback` eine Feedback-ID
+
+Feedback senden:
+```bash
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"feedback <id> ok"}'
+```
+oder bei falscher Zuordnung:
+```bash
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"feedback <id> bad correct: proxmox health"}'
+```
+
+Wenn eine unbeantwortete Anfrage häufiger vorkommt, wird in `data.skill_suggestion` vorgeschlagen, einen neuen Skill anzulegen.
+
+
+### Selbstständiges Lernen (ohne expliziten Befehl)
+Jarvis speichert erfolgreiche Antworten jetzt zusätzlich als lokale Muster und kann ähnliche Fragen später aus der Memory beantworten:
+- Bei bekannten/erfolgreichen Antworten werden lokale Reply-Muster in `learned_replies` gespeichert.
+- Bei ähnlicher Formulierung nutzt Jarvis diese Antwort direkt (`route: learned_memory`).
+- Bei mittlerer Unsicherheit fragt Jarvis gezielt nach (`Need clarification`).
+
+Beispiel:
+```bash
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"how are you"}'
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"how are u today"}'
+```
+
+### Learning-Kommandos (direkt im Chat)
+Jarvis kann jetzt explizit Memory-Einträge setzen und anzeigen:
+- `remember node <name> <value>`
+- `remember vmid <name> <value>`
+- `remember default <key> <value>`
+- `memory show`
+
+Beispiele:
+```bash
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"remember node pve1 10.0.0.10"}'
+curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"memory show"}'
+```
+
+### Cloud-Ausfall / Offline-Assistant
+Wenn OpenAI/Gemini gerade nicht erreichbar ist oder API-Fehler liefert, gibt Jarvis jetzt **keinen rohen Upstream-Fehler** mehr zurück.
+Stattdessen antwortet er als Assistant mit kontextbasierten Next-Steps (z. B. für "web gui down", "deploy branch", "proxmox").
+
+### Lern- und Fallback-Tests
+```bash
+python -m unittest discover -s tests
+```
+Enthalten sind u. a. Tests für:
+- Feedback-Loop + Alias-Lernen
+- wiederholte unbekannte Anfragen → Skill-Suggestion
+- explizite Memory-Kommandos (`remember`, `memory show`)
+- Cloud-Fehler → kontextbasierte Offline-Assistant-Antwort
+
 ## Security-Model (Kurzfassung)
 - read: kein Token nötig.
 - write: Token + Confirm (`YES`).
@@ -184,6 +241,63 @@ Verwende ENV oder eine Datei wie `/etc/jarvis/config.env` (siehe `config/jarvis.
 - Optional: `PROXMOX_BASE_URL`, `PROXMOX_API_TOKEN`
 - Optional: `OPENAI_API_KEY`, `GEMINI_API_KEY`
 
+
+
+## RAG mit Wiki.js + GitHub
+Jarvis unterstützt vorbereitete RAG-Quellen für Wiki.js und GitHub (PAT-ready):
+
+### 1) ENV konfigurieren
+```env
+WIKIJS_GRAPHQL_URL=https://wiki.example.local/graphql
+WIKIJS_API_KEY=<wikijs_api_key>
+# Optional: eigene Query, sonst Default
+# WIKIJS_GRAPHQL_QUERY=query { pages { list(orderBy: TITLE) { title path description } } }
+
+GITHUB_REPO=owner/repo
+GITHUB_BRANCH=main
+# Für public optional, für private später erforderlich
+GITHUB_PAT=<github_pat>
+```
+
+### 2) RAG-Index aktualisieren
+```bash
+curl -X POST http://localhost:8000/rag/refresh
+curl "http://localhost:8000/rag/status"
+```
+
+### 3) Suche testen
+```bash
+curl "http://localhost:8000/rag/search?q=proxmox+vm+status"
+```
+
+Hinweis:
+- Wiki.js wird per GraphQL mit Bearer-Token angebunden.
+- GitHub ist für public Repos ohne Token nutzbar; für private Repos `GITHUB_PAT` setzen.
+
+## Serverseitige Chat-History (F5-safe)
+Chats werden jetzt serverseitig gespeichert (`JARVIS_CHAT_HISTORY_PATH`).
+- F5 verliert den Chat nicht mehr.
+- In der Web-UI gibt es links eine Chat-Liste mit alten Chats.
+- Mit **New** startest du einen neuen Chat.
+- Beim Wechsel von Chat → Orb bleibt der aktive Chat-Kontext erhalten.
+
+## Web-UI testen (Chat + Skills)
+1. Backend starten:
+```bash
+uvicorn jarvisappv4:app --host 0.0.0.0 --port 8000
+```
+2. Browser öffnen: `http://localhost:8000/static/index.html`
+3. In der Chat-UI testen:
+   - links **New** klicken (neuen Chat starten)
+   - `skills` oder auf den **Skills**-Button klicken
+   - `status jarvis`
+   - Proxmox-Status: `pve vm status <host_id> <node> <vmid>`
+   - Seite mit F5 neu laden (Chat muss erhalten bleiben)
+   - auf **ORB** wechseln und weiter fragen (gleicher aktiver Chat-Kontext)
+4. Optional Lernverhalten prüfen:
+   - `how are you`
+   - danach ähnliche Formulierung wie `how are u today`
+   - anschließend `memory show` prüfen
 
 ## Security-Model (Kurzfassung)
 - read: kein Token nötig.
