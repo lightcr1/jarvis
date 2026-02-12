@@ -3,7 +3,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime
 import difflib
+import json
 import os
+from pathlib import Path
 import re
 import time
 from typing import Callable
@@ -46,6 +48,7 @@ class ExecutionContext:
     now: float
     registry: "SkillRegistry"
     policy: "SecurityPolicy"
+    learning: "LearningStore"
     metadata: dict = field(default_factory=dict)
 
 
@@ -110,9 +113,11 @@ class JarvisEngine:
         self.registry = registry
         self.policy = policy
         self._pending: dict[str, ActionPlan] = {}
+        self.learning = LearningStore()
 
     def process(self, text: str, token: str | None) -> dict:
         cleaned, verbose = strip_verbose(text)
+        cleaned = self.learning.apply_aliases(cleaned)
         ctx = ExecutionContext(
             text=cleaned,
             token=token,
@@ -120,15 +125,36 @@ class JarvisEngine:
             now=time.time(),
             registry=self.registry,
             policy=self.policy,
+            learning=self.learning,
         )
 
         confirm = self._handle_confirm(cleaned, ctx)
         if confirm:
             return confirm
 
+        feedback = self._handle_feedback(cleaned)
+        if feedback:
+            return feedback
+
+        learning_cmd = self._handle_learning_commands(cleaned)
+        if learning_cmd:
+            return self._finalize_response(cleaned, "learning-command", learning_cmd, False)
+
+        proactive_learned = self.learning.find_learned_reply(cleaned, min_score=0.90)
+        if proactive_learned:
+            return summary_response(
+                proactive_learned["summary"],
+                {
+                    "route": "learned_memory",
+                    "confidence": proactive_learned["score"],
+                    "source": proactive_learned["source"],
+                },
+            )
+
         matches = self.registry.match(cleaned)
+        self.learning.record_query(cleaned, bool(matches))
         if not matches:
-            return self._fallback(ctx)
+            return self._fallback(cleaned, ctx)
 
         top_score = matches[0][1]
         contenders = [m for m in matches if top_score - m[1] < 0.08]
@@ -147,7 +173,19 @@ class JarvisEngine:
         result = skill.handler(ctx)
         if isinstance(result, ActionPlan):
             return self._handle_plan(result, ctx)
-        return summarize_output(result, ctx)
+        return self._finalize_response(cleaned, skill.name, summarize_output(result, ctx), False)
+
+    def _finalize_response(self, text: str, skill_name: str, response: dict, needs_confirmation: bool) -> dict:
+        if needs_confirmation:
+            return response
+        response_data = response.setdefault("data", {})
+        self.learning.record_success(text, response.get("summary", ""), skill_name)
+        feedback_id = self.learning.record_feedback_item(text, skill_name, response.get("summary", ""))
+        response_data["feedback"] = {
+            "id": feedback_id,
+            "prompt": f"feedback {feedback_id} ok|bad [correct: <dein mapping>]",
+        }
+        return response
 
     def _handle_confirm(self, text: str, ctx: ExecutionContext) -> dict | None:
         lowered = text.strip().lower()
@@ -157,8 +195,35 @@ class JarvisEngine:
             plan = self._pending.pop(ctx.token, None)
             if not plan:
                 return summary_response("Nothing pending.", {"error": "no_pending_action"})
-            return summarize_output(plan.execute(), ctx)
+            response = summarize_output(plan.execute(), ctx)
+            return self._finalize_response(text, "confirmed-plan", response, False)
         return None
+
+    def _handle_feedback(self, text: str) -> dict | None:
+        match = re.match(r"^feedback\s+(\S+)\s+(ok|bad)(?:\s+correct:\s+(.+))?$", text, re.IGNORECASE)
+        if not match:
+            return None
+        feedback_id, verdict, correction = match.groups()
+        saved = self.learning.save_feedback(feedback_id, verdict.lower(), correction or "")
+        if not saved:
+            return summary_response("Feedback ID unknown.", {"error": "feedback_not_found"})
+        return summary_response("Feedback gespeichert.", {"feedback_id": feedback_id, "verdict": verdict.lower()})
+
+    def _handle_learning_commands(self, text: str) -> dict | None:
+        lowered = normalize(text)
+        if lowered in {"memory show", "learning show", "memory"}:
+            return summary_response("Memory snapshot ready.", {"memory": self.learning.snapshot()})
+
+        match = re.match(r"^remember\s+(node|vmid|default)\s+(\S+)\s+(.+)$", text, re.IGNORECASE)
+        if not match:
+            return None
+
+        kind, key, value = match.groups()
+        self.learning.remember(kind.lower(), key, value)
+        return summary_response(
+            "Memory updated.",
+            {"stored": {"type": kind.lower(), "key": key, "value": value.strip()}},
+        )
 
     def _handle_plan(self, plan: ActionPlan, ctx: ExecutionContext) -> dict:
         if plan.risk in {RiskLevel.WRITE, RiskLevel.CRITICAL} and not ctx.token:
@@ -174,7 +239,10 @@ class JarvisEngine:
         if plan.risk == RiskLevel.CRITICAL:
             if ctx.token:
                 self._pending[ctx.token] = plan
-            return summary_response(
+            return self._finalize_response(
+                ctx.text,
+                "critical-plan",
+                summary_response(
                 "Plan ready. Confirmation required.",
                 {
                     "risk": plan.risk,
@@ -182,23 +250,55 @@ class JarvisEngine:
                     "steps": plan.steps,
                     "confirm": CONFIRM_CRITICAL,
                 },
+            ),
+                True,
             )
 
         if plan.risk == RiskLevel.WRITE:
             if ctx.token:
                 self._pending[ctx.token] = plan
-            return summary_response(
+            return self._finalize_response(
+                ctx.text,
+                "write-plan",
+                summary_response(
                 "Confirmation required.",
                 {
                     "risk": plan.risk,
                     "summary": plan.summary,
                     "confirm": CONFIRM_WRITE,
                 },
+            ),
+                True,
             )
 
-        return summarize_output(plan.execute(), ctx)
+        response = summarize_output(plan.execute(), ctx)
+        return self._finalize_response(ctx.text, "read-plan", response, False)
 
-    def _fallback(self, ctx: ExecutionContext) -> dict:
+    def _fallback(self, text: str, ctx: ExecutionContext) -> dict:
+        suggestion = self.learning.skill_suggestion(text)
+        learned = self.learning.find_learned_reply(text)
+        if learned:
+            return summary_response(
+                learned["summary"],
+                {
+                    "route": "learned_memory",
+                    "confidence": learned["score"],
+                    "source": learned["source"],
+                    "skill_suggestion": suggestion,
+                },
+            )
+
+        maybe = self.learning.closest_learned_phrase(text)
+        if maybe:
+            return summary_response(
+                "Need clarification.",
+                {
+                    "reason": "learned_but_uncertain",
+                    "hint": f"Did you mean: '{maybe['source']}'?",
+                    "skill_suggestion": suggestion,
+                },
+            )
+
         if cloud_configured():
             return summary_response(
                 "Cloud routing required.",
@@ -206,6 +306,7 @@ class JarvisEngine:
                     "info": "No local skill matched. Cloud LLM can be used via /chat in app server.",
                     "offline": False,
                     "route": "cloud",
+                    "skill_suggestion": suggestion,
                 },
             )
         return summary_response(
@@ -214,8 +315,153 @@ class JarvisEngine:
                 "offline": True,
                 "route": "offline",
                 "hint": "Try 'help' or 'skills' for available commands.",
+                "skill_suggestion": suggestion,
             },
         )
+
+
+class LearningStore:
+    def __init__(self) -> None:
+        configured = os.getenv("JARVIS_MEMORY_PATH")
+        self.path = Path(configured) if configured else Path("/var/lib/jarvis/memory.json")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.data = self._load()
+
+    def _empty(self) -> dict:
+        return {
+            "nodes": {},
+            "vmids": {},
+            "defaults": {},
+            "favorite_commands": [],
+            "learned_replies": {},
+            "query_stats": {},
+            "feedback_log": {},
+            "aliases": {},
+        }
+
+    def _load(self) -> dict:
+        if not self.path.exists():
+            return self._empty()
+        try:
+            content = json.loads(self.path.read_text(encoding="utf-8"))
+            return {**self._empty(), **content}
+        except (json.JSONDecodeError, OSError):
+            return self._empty()
+
+    def _save(self) -> None:
+        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def apply_aliases(self, text: str) -> str:
+        normalized = normalize(text)
+        replacement = self.data.get("aliases", {}).get(normalized)
+        return replacement or text
+
+    def record_query(self, text: str, matched: bool) -> None:
+        key = normalize(text)
+        stats = self.data.setdefault("query_stats", {}).setdefault(key, {"total": 0, "unmatched": 0})
+        stats["total"] += 1
+        if not matched:
+            stats["unmatched"] += 1
+        self._save()
+
+    def skill_suggestion(self, text: str) -> str | None:
+        key = normalize(text)
+        stats = self.data.get("query_stats", {}).get(key, {})
+        if stats.get("unmatched", 0) >= 3:
+            return f"'{text}' wird häufig gefragt. Soll ich dafür einen Skill anlegen?"
+        return None
+
+    def record_feedback_item(self, text: str, skill: str, summary: str) -> str:
+        item_id = f"fb-{int(time.time() * 1000)}"
+        self.data.setdefault("feedback_log", {})[item_id] = {
+            "text": text,
+            "skill": skill,
+            "summary": summary,
+            "verdict": "pending",
+            "correction": "",
+        }
+        self._save()
+        return item_id
+
+    def save_feedback(self, feedback_id: str, verdict: str, correction: str) -> bool:
+        feedback = self.data.setdefault("feedback_log", {}).get(feedback_id)
+        if not feedback:
+            return False
+        feedback["verdict"] = verdict
+        feedback["correction"] = correction.strip()
+        if verdict == "bad" and correction.strip():
+            self.data.setdefault("aliases", {})[normalize(feedback.get("text", ""))] = correction.strip()
+        self._save()
+        return True
+
+    def remember(self, kind: str, key: str, value: str) -> None:
+        value = value.strip()
+        key = key.strip()
+        if kind == "node":
+            self.data.setdefault("nodes", {})[key] = value
+        elif kind == "vmid":
+            self.data.setdefault("vmids", {})[key] = value
+        else:
+            self.data.setdefault("defaults", {})[key] = value
+        self._save()
+
+    def snapshot(self) -> dict:
+        return {
+            "nodes": self.data.get("nodes", {}),
+            "vmids": self.data.get("vmids", {}),
+            "defaults": self.data.get("defaults", {}),
+            "aliases": self.data.get("aliases", {}),
+            "learned_replies": len(self.data.get("learned_replies", {})),
+            "query_stats_size": len(self.data.get("query_stats", {})),
+            "feedback_entries": len(self.data.get("feedback_log", {})),
+        }
+
+    def record_success(self, text: str, summary: str, skill_name: str) -> None:
+        normalized = normalize(text)
+        if not normalized or not summary:
+            return
+        if normalized.startswith("feedback "):
+            return
+        self.data.setdefault("learned_replies", {})[normalized] = {
+            "summary": summary,
+            "skill": skill_name,
+            "updated_at": int(time.time()),
+        }
+        self._save()
+
+    def find_learned_reply(self, text: str, min_score: float = 0.80) -> dict | None:
+        normalized = normalize(text)
+        learned = self.data.get("learned_replies", {})
+        direct = learned.get(normalized)
+        if direct:
+            return {"summary": direct.get("summary", "Done."), "score": 1.0, "source": normalized}
+
+        best_key = ""
+        best_score = 0.0
+        for key in learned.keys():
+            score = difflib.SequenceMatcher(None, normalized, key).ratio()
+            if score > best_score:
+                best_score = score
+                best_key = key
+
+        if best_key and best_score >= min_score:
+            item = learned[best_key]
+            return {"summary": item.get("summary", "Done."), "score": round(best_score, 2), "source": best_key}
+        return None
+
+    def closest_learned_phrase(self, text: str) -> dict | None:
+        normalized = normalize(text)
+        learned = self.data.get("learned_replies", {})
+        best_key = ""
+        best_score = 0.0
+        for key in learned.keys():
+            score = difflib.SequenceMatcher(None, normalized, key).ratio()
+            if score > best_score:
+                best_score = score
+                best_key = key
+        if best_key and 0.62 <= best_score < 0.80:
+            return {"source": best_key, "score": round(best_score, 2)}
+        return None
 
 
 def normalize(text: str) -> str:
@@ -289,6 +535,16 @@ def build_registry() -> SkillRegistry:
             triggers=["status jarvis", "system status"],
             examples=["status jarvis"],
             handler=handle_status,
+        )
+    )
+    registry.register(
+        Skill(
+            name="assistant mood",
+            description="Smalltalk Antworten (wie geht's / how are you)",
+            risk=RiskLevel.READ,
+            triggers=["how are you", "wie gehts", "wie geht's", "hows it going"],
+            examples=["how are you"],
+            handler=handle_assistant_mood,
         )
     )
     registry.register(
@@ -388,6 +644,13 @@ def handle_status(ctx: ExecutionContext) -> dict:
     return {
         "summary": "Jarvis is running.",
         "data": {"time": now, "offline": not cloud_configured()},
+    }
+
+
+def handle_assistant_mood(ctx: ExecutionContext) -> dict:
+    return {
+        "summary": "Understood. Running stable and ready to help.",
+        "data": {"mode": "assistant", "tone": "confident"},
     }
 
 

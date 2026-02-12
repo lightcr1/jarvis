@@ -360,6 +360,10 @@
   </div>
 
 <script>
+  const needsHttpsRedirect = location.protocol === "http:" && !["localhost", "127.0.0.1"].includes(location.hostname);
+  if(needsHttpsRedirect){
+    location.replace("https://" + location.host + location.pathname + location.search + location.hash);
+  }
   const orbWrap = document.getElementById("orbWrap");
   const orbBtn = document.getElementById("orbBtn");
   const recDot = document.getElementById("recDot");
@@ -388,6 +392,8 @@
 
   const TOKEN_KEY = "jarvis_token";
   const TOKEN_EXP = "jarvis_token_exp_ms";
+  const ACTIVE_CHAT_KEY = "jarvis_active_chat";
+  let activeChatId = sessionStorage.getItem(ACTIVE_CHAT_KEY) || null;
 
   function getToken(){
     const t = sessionStorage.getItem(TOKEN_KEY);
@@ -505,7 +511,11 @@
 
   async function sendChat(transcript){
     setState("chatting");
-    const chat = await postJSON("/chat", { text: transcript }, true);
+    const chat = await postJSON("/chat", { text: transcript, session_id: activeChatId }, true);
+    if(chat.session_id){
+      activeChatId = chat.session_id;
+      sessionStorage.setItem(ACTIVE_CHAT_KEY, activeChatId);
+    }
     replyEl.textContent = chat.reply || "—";
     showBox(replyBox, true);
     await speak(chat.reply || "");
