@@ -25,8 +25,8 @@ curl http://localhost:8000/health
 ## HTML-UI öffnen
 Nach dem Start erreichst du die UI unter:
 - `http://localhost:8000/` (standardmäßig Orb-UI)
-- `http://localhost:8000/static/orb-v2.html`
-- `http://localhost:8000/static/static-v4-tts.html`
+- `http://localhost:8000/static/orb.html`
+- `http://localhost:8000/static/index.html`
 
 ## Troubleshooting
 - **CHDIR / WorkingDirectory Fehler**
@@ -64,7 +64,7 @@ Nach dem Start erreichst du die UI unter:
     ```
 
 ## Orb-UI (Voice)
-Die Orb-Oberfläche (`/static/orb-v2.html`) nutzt STT + TTS:
+Die Orb-Oberfläche (`/static/orb.html`) nutzt STT + TTS:
 - Spracheingabe → `/stt`
 - Antwort → `/chat` → Audioausgabe über `/tts`
 Wenn `/tts` nicht erreichbar ist, nutzt die Orb-UI den Browser-Voice-Fallback (SpeechSynthesis).
@@ -80,6 +80,59 @@ Verwende `/etc/jarvis/config.env` (Template: `config/jarvis.env.example`).
 - `COOLDOWN_RESTART_SECONDS`, `COOLDOWN_CRITICAL_SECONDS`
 - Optional: `PROXMOX_BASE_URL`, `PROXMOX_API_TOKEN`
 - Optional: `OPENAI_API_KEY`, `GEMINI_API_KEY`
+
+
+## Proxmox API-Key hinzufügen (Schritt-für-Schritt)
+Wenn du jetzt deinen Proxmox API-Token hast, kannst du ihn auf zwei Arten einbinden:
+
+### Variante A (einfach): direkt in `/etc/jarvis/config.env`
+1. Datei öffnen:
+   ```bash
+   sudo nano /etc/jarvis/config.env
+   ```
+2. Diese Werte setzen (Beispiel):
+   ```env
+   PROXMOX_BASE_URL=https://pve.example.local:8006
+   PROXMOX_API_TOKEN=root@pam!jarvis=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+   ```
+   Token-Format ist **genau**:
+   `user@realm!tokenid=tokensecret`
+3. Service neu starten:
+   ```bash
+   sudo systemctl restart jarvis.service
+   ```
+4. Prüfen:
+   ```bash
+   curl http://localhost:8000/health
+   curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"proxmox health"}'
+   ```
+
+### Variante B (empfohlen für mehrere Proxmox-Hosts): über API speichern
+Damit legst du einen Host in der internen Host-Liste an (`proxmox_hosts.json`).
+
+1. Token holen (Unlock):
+   ```bash
+   TOKEN=$(curl -s -X POST http://localhost:8000/unlock      -H "Content-Type: application/json"      -d '{"passphrase":"change-me"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
+   ```
+2. Host hinzufügen:
+   ```bash
+   curl -X POST http://localhost:8000/proxmox/hosts      -H "Authorization: Bearer $TOKEN"      -H "Content-Type: application/json"      -d '{
+       "name":"home-pve",
+       "base_url":"https://pve.example.local:8006",
+       "api_token":"root@pam!jarvis=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+       "verify_tls":true
+     }'
+   ```
+3. Hosts anzeigen:
+   ```bash
+   curl http://localhost:8000/proxmox/hosts
+   ```
+
+### Häufige Fehler
+- `401`/`403` von Proxmox: Token falsch oder Rechte fehlen.
+- `Proxmox unreachable`: URL/Port/TLS nicht erreichbar.
+- Self-signed Zertifikat: testweise `"verify_tls": false` setzen (nur intern/temporär).
+- In Proxmox muss der Token passende Berechtigungen auf Node/VM/LXC haben.
 
 ## Security-Model (Kurzfassung)
 - read: kein Token nötig.
@@ -131,6 +184,7 @@ Verwende ENV oder eine Datei wie `/etc/jarvis/config.env` (siehe `config/jarvis.
 - Optional: `PROXMOX_BASE_URL`, `PROXMOX_API_TOKEN`
 - Optional: `OPENAI_API_KEY`, `GEMINI_API_KEY`
 
+
 ## Security-Model (Kurzfassung)
 - read: kein Token nötig.
 - write: Token + Confirm (`YES`).
@@ -160,3 +214,18 @@ Siehe `trace.md` für R1–R25 Status.
 ```bash
 python -m unittest discover -s tests
 ```
+
+
+## Kiosk-Mode (Boot direkt in WEB-UI)
+Das Image konfiguriert beim ersten Boot automatisch einen lokalen `jarvis`-Benutzer im Kiosk-Betrieb:
+- Auto-Login auf `tty1`
+- Start von X/Openbox
+- Chromium im Kiosk-Vollbild auf `http://localhost:8000/`
+
+Dadurch kann das System auf SSD/USB geflasht und direkt auf einem anderen PC als Appliance genutzt werden (USB-Eingabegeräte wie Tastatur/Maus bleiben nutzbar).
+
+Anpassung über `/etc/jarvis/config.env`:
+- `KIOSK_URL` (default `http://localhost:8000/`)
+- `LOCAL_LLM_ENABLED` (default `0`)
+- `LOCAL_LLM_MODEL_DIR` (default `/var/lib/jarvis/local-ai/models`)
+- `LOCAL_LLM_DEFAULT_MODEL` (default `future-local-model`)
