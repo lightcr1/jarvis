@@ -90,6 +90,8 @@
       cursor:pointer;
     }
     .btnSmall:hover{filter:brightness(1.08)}
+    .toggleWrap{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:999px;background: rgba(12,19,34,.65);font-size:12px;color:var(--muted);}
+    .toggleWrap input{accent-color:var(--blue);}
 
     main{
       flex:1;
@@ -131,7 +133,9 @@
       gap:8px;
     }
 
+    .chatItemRow{display:flex; gap:8px; align-items:stretch;}
     .chatItem{
+      flex:1;
       border:1px solid var(--border);
       background: rgba(5,9,18,.45);
       color:var(--text);
@@ -146,6 +150,22 @@
       background: rgba(37,99,235,.2);
     }
     .chatItem .sub{color:var(--muted); font-size:11px; margin-top:4px;}
+    .chatDelete{
+      width:36px;
+      min-width:36px;
+      border:1px solid var(--border);
+      border-radius:10px;
+      background: rgba(127,29,29,.3);
+      color:#fecaca;
+      cursor:pointer;
+      opacity:0;
+      pointer-events:none;
+      transition: opacity .15s ease;
+    }
+    .chatItemRow:hover .chatDelete{
+      opacity:1;
+      pointer-events:auto;
+    }
 
     .chatPanel{
       height:100%;
@@ -370,6 +390,11 @@
           <span id="authInfo"></span>
         </span>
 
+        <label class="toggleWrap" title="Wakeword für Sprachbefehle aktivieren/deaktivieren">
+          <input type="checkbox" id="wakewordToggle" />
+          Wakeword
+        </label>
+
         <button class="btnSmall" id="orbBtn" title="Orb Mode">ORB</button>
       </div>
     </header>
@@ -440,6 +465,7 @@
   const talkBtn = document.getElementById("talk");
   const statusText = document.getElementById("statusText");
   const orbBtn = document.getElementById("orbBtn");
+  const wakewordToggle = document.getElementById("wakewordToggle");
   const recordHint = document.getElementById("recordHint");
   const chatListEl = document.getElementById("chatList");
   const newChatBtn = document.getElementById("newChatBtn");
@@ -513,7 +539,83 @@
   }
 
   const ACTIVE_CHAT_KEY = "jarvis_active_chat";
+  const WAKEWORD_SETTING_KEY = "jarvis_wakeword_ui_enabled";
   let activeChatId = sessionStorage.getItem(ACTIVE_CHAT_KEY) || null;
+
+  function isWakewordUiEnabled(){
+    const raw = localStorage.getItem(WAKEWORD_SETTING_KEY);
+    return raw === null ? false : raw === "1";
+  }
+
+  function setWakewordUiEnabled(enabled){
+    localStorage.setItem(WAKEWORD_SETTING_KEY, enabled ? "1" : "0");
+    if(wakewordToggle) wakewordToggle.checked = enabled;
+  }
+
+  let wakeRecognizer = null;
+  let wakeListening = false;
+
+  function wakePhrase(){
+    return "hey jarvis";
+  }
+
+  function supportsWakewordListener(){
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  }
+
+  async function handleWakeTranscript(transcript){
+    const t = (transcript || "").trim().toLowerCase();
+    const phrase = wakePhrase();
+    if(!t.includes(phrase)) return;
+
+    // Siri-like: pure wakeword => quick assistant reaction, wakeword+command => execute command
+    const idx = t.indexOf(phrase);
+    const after = t.slice(idx + phrase.length).trim();
+    const payload = after ? `${phrase} ${after}` : phrase;
+    await sendText(payload, { source: "voice" });
+  }
+
+  function startWakewordListener(){
+    if(!isWakewordUiEnabled()) return;
+    if(!supportsWakewordListener()){
+      addMessage("jarvis", "Understood. Background wakeword is not supported in this browser.");
+      return;
+    }
+    if(wakeListening) return;
+
+    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    wakeRecognizer = new Rec();
+    wakeRecognizer.continuous = true;
+    wakeRecognizer.interimResults = false;
+    wakeRecognizer.lang = "de-DE";
+
+    wakeRecognizer.onresult = async (event)=>{
+      for(let i = event.resultIndex; i < event.results.length; i++){
+        if(event.results[i].isFinal){
+          const transcript = event.results[i][0]?.transcript || "";
+          try { await handleWakeTranscript(transcript); } catch {}
+        }
+      }
+    };
+
+    wakeRecognizer.onerror = ()=>{};
+    wakeRecognizer.onend = ()=>{
+      if(isWakewordUiEnabled() && wakeListening){
+        try { wakeRecognizer.start(); } catch {}
+      }
+    };
+
+    wakeListening = true;
+    try { wakeRecognizer.start(); } catch {}
+  }
+
+  function stopWakewordListener(){
+    wakeListening = false;
+    if(wakeRecognizer){
+      try { wakeRecognizer.onend = null; wakeRecognizer.stop(); } catch {}
+      wakeRecognizer = null;
+    }
+  }
 
   function setActiveChat(id){
     activeChatId = id;
@@ -529,14 +631,52 @@
     return data;
   }
 
+  async function deleteSession(sessionId){
+    const r = await fetch('/chat/sessions/' + encodeURIComponent(sessionId), {
+      method:'DELETE',
+      headers: authHeaders(),
+    });
+    if(!r.ok){
+      const txt = await r.text();
+      throw new Error(txt || 'Delete failed');
+    }
+  }
+
   function renderChatList(sessions){
     chatListEl.innerHTML = "";
     for(const s of sessions){
+      const row = document.createElement("div");
+      row.className = "chatItemRow";
+
       const b = document.createElement("button");
       b.className = "chatItem" + (s.id===activeChatId ? " active" : "");
       b.innerHTML = `<div>${s.title || "New chat"}</div><div class="sub">${s.message_count||0} msgs</div>`;
       b.addEventListener("click", ()=> loadSession(s.id));
-      chatListEl.appendChild(b);
+
+      const del = document.createElement("button");
+      del.className = "chatDelete";
+      del.title = "Chat löschen";
+      del.textContent = "🗑";
+      del.addEventListener("click", async (e)=>{
+        e.stopPropagation();
+        try{
+          await deleteSession(s.id);
+          if(activeChatId === s.id){
+            activeChatId = null;
+            sessionStorage.removeItem(ACTIVE_CHAT_KEY);
+          }
+          await refreshSessions();
+          if(!activeChatId){
+            await createSession();
+          }
+        } catch(err){
+          addMessage("jarvis", "Understood. Delete failed: " + err.message);
+        }
+      });
+
+      row.appendChild(b);
+      row.appendChild(del);
+      chatListEl.appendChild(row);
     }
   }
 
@@ -661,7 +801,7 @@
     if(e.key==="Enter"){ e.preventDefault(); doUnlockBtn.click(); }
   });
 
-  async function sendText(text){
+  async function sendText(text, opts = {}){
     const t = (text || "").trim();
     if(!t) return;
 
@@ -676,7 +816,11 @@
     setStatus("thinking");
 
     try{
-      const res = await postJSON("/chat", { text: t, session_id: activeChatId }, true);
+      const source = opts.source || "text";
+      const sourceToSend = source === "voice"
+        ? (isWakewordUiEnabled() ? "voice" : "text")
+        : source;
+      const res = await postJSON("/chat", { text: t, session_id: activeChatId, source: sourceToSend }, true);
       if(res.session_id) setActiveChat(res.session_id);
       const reply = res.reply || "—";
       addMessage("jarvis", reply);
@@ -743,7 +887,7 @@
         const transcript = (stt.text || "").trim();
         if(transcript){
           inputEl.value = transcript;
-          await sendText(transcript);
+          await sendText(transcript, { source: "voice" });
         } else {
           setStatus("idle");
         }
@@ -803,6 +947,24 @@
     } catch(e){
       addMessage("jarvis", "Understood.\nHistory init failed.");
     }
+    setWakewordUiEnabled(isWakewordUiEnabled());
+    wakewordToggle.addEventListener("change", ()=>{
+      const enabled = !!wakewordToggle.checked;
+      setWakewordUiEnabled(enabled);
+      if(enabled){
+        startWakewordListener();
+      } else {
+        stopWakewordListener();
+      }
+      addMessage("jarvis", enabled
+        ? "Understood. Wakeword listening enabled. Say 'hey jarvis'."
+        : "Understood. Wakeword listening disabled.");
+    });
+
+    if(isWakewordUiEnabled()){
+      startWakewordListener();
+    }
+
     updateAuthUI();
     setStatus("idle");
     updateRecordHint(false);
