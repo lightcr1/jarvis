@@ -128,6 +128,17 @@ class JarvisEngine:
             learning=self.learning,
         )
 
+        if normalize(cleaned) in {"jarvis", "hey jarvis", "ok jarvis", "hello jarvis"}:
+            return self._finalize_response(
+                cleaned,
+                "status jarvis",
+                summary_response(
+                    "Understood. J.A.R.V.I.S online and ready.",
+                    {"hint": "Try: skills, status jarvis, proxmox health"},
+                ),
+                False,
+            )
+
         confirm = self._handle_confirm(cleaned, ctx)
         if confirm:
             return confirm
@@ -579,6 +590,26 @@ def build_registry() -> SkillRegistry:
     )
     registry.register(
         Skill(
+            name="proxmox vm status",
+            description="Proxmox VM-Status (deterministisch)",
+            risk=RiskLevel.READ,
+            triggers=["proxmox vm status", "pve vm status"],
+            examples=["pve vm status home-pve pve 100"],
+            handler=handle_proxmox_vm_status,
+        )
+    )
+    registry.register(
+        Skill(
+            name="proxmox lxc status",
+            description="Proxmox LXC-Status (deterministisch)",
+            risk=RiskLevel.READ,
+            triggers=["proxmox lxc status", "pve lxc status"],
+            examples=["pve lxc status home-pve pve 101"],
+            handler=handle_proxmox_lxc_status,
+        )
+    )
+    registry.register(
+        Skill(
             name="vm ssh exec",
             description="Remote SSH Befehl (kritisch)",
             risk=RiskLevel.CRITICAL,
@@ -688,6 +719,50 @@ def handle_proxmox_health(ctx: ExecutionContext) -> dict:
     return {
         "summary": "Proxmox configured (token present).",
         "data": {"mode": "ready"},
+    }
+
+
+def handle_proxmox_vm_status(ctx: ExecutionContext) -> dict:
+    parts = ctx.text.split()
+    if len(parts) < 6:
+        return {
+            "summary": "Need clarification.",
+            "data": {"hint": "Use: pve vm status <host_id> <node> <vmid>"},
+        }
+
+    host_id, node, vmid = parts[3], parts[4], parts[5]
+    return {
+        "summary": f"Proxmox VM status request ready for {host_id}/{node}/{vmid}.",
+        "data": {
+            "provider": "proxmox",
+            "resource": "vm",
+            "host_id": host_id,
+            "node": node,
+            "vmid": vmid,
+            "status": "not_executed_in_engine",
+        },
+    }
+
+
+def handle_proxmox_lxc_status(ctx: ExecutionContext) -> dict:
+    parts = ctx.text.split()
+    if len(parts) < 6:
+        return {
+            "summary": "Need clarification.",
+            "data": {"hint": "Use: pve lxc status <host_id> <node> <vmid>"},
+        }
+
+    host_id, node, vmid = parts[3], parts[4], parts[5]
+    return {
+        "summary": f"Proxmox LXC status request ready for {host_id}/{node}/{vmid}.",
+        "data": {
+            "provider": "proxmox",
+            "resource": "lxc",
+            "host_id": host_id,
+            "node": node,
+            "vmid": vmid,
+            "status": "not_executed_in_engine",
+        },
     }
 
 

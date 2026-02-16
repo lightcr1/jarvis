@@ -9,6 +9,7 @@ CONFIG_DIR="/etc/jarvis"
 CONFIG_FILE="${CONFIG_DIR}/config.env"
 SERVICE_SRC="${INSTALL_DIR}/systemd/jarvis.service"
 SERVICE_DST="/etc/systemd/system/jarvis.service"
+RUN_SCRIPT="${INSTALL_DIR}/scripts/run_jarvis.sh"
 HEALTH_URL_HTTP="http://localhost:8000/health"
 HEALTH_URL_HTTPS="https://localhost:8000/health"
 
@@ -25,6 +26,8 @@ command -v rsync >/dev/null 2>&1 || fail "rsync is required. Install it and retr
 command -v python3 >/dev/null 2>&1 || fail "python3 is required. Install it and retry."
 command -v systemctl >/dev/null 2>&1 || fail "systemctl is required on this host."
 command -v openssl >/dev/null 2>&1 || fail "openssl is required for TLS certificate generation."
+
+INSTALL_SST="${INSTALL_SST:-0}"
 
 mkdir -p "${INSTALL_DIR}"
 if [[ "$(realpath "${SOURCE_DIR}")" != "$(realpath "${INSTALL_DIR}")" ]]; then
@@ -45,6 +48,17 @@ fi
 
 if [[ ! -x "${VENV_DIR}/bin/uvicorn" ]]; then
   fail "uvicorn executable missing at ${VENV_DIR}/bin/uvicorn after install."
+fi
+
+[[ -f "${RUN_SCRIPT}" ]] || fail "Missing runtime launcher: ${RUN_SCRIPT}"
+chmod 755 "${RUN_SCRIPT}" || fail "Failed to make ${RUN_SCRIPT} executable"
+
+if [[ "${INSTALL_SST}" == "1" ]]; then
+  if [[ -x "${INSTALL_DIR}/scripts/install_sst.sh" ]]; then
+    "${INSTALL_DIR}/scripts/install_sst.sh" || fail "INSTALL_SST=1 but SST installation failed."
+  else
+    fail "INSTALL_SST=1 but missing ${INSTALL_DIR}/scripts/install_sst.sh"
+  fi
 fi
 
 mkdir -p "${CONFIG_DIR}"
