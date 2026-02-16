@@ -1,244 +1,262 @@
-# jarvis
-Jarvis ist ein Text- und Voice-Assistant mit Skill-Engine, Security-Policy und optionalem Cloud-KI-Fallback.
+# J.A.R.V.I.S (Iron Man Style) – Setup, Deployment, Betrieb
 
-## Quick Deploy (Ubuntu VM, idempotent)
-Nach einem Repo-Clone reicht:
+Jarvis ist ein lokaler Text- und Voice-Assistant mit Skill-Engine, Security-Policy, Proxmox-Integration, RAG-Quellen und optionalem Cloud-LLM-Fallback.
+
+- **Stimme/Tonality**: Antworten sind auf **J.A.R.V.I.S von Iron Man** ausgerichtet (präzise, technisch, "On it." / "Understood.").
+- **Skill-first**: Deterministische Skills werden vor Cloud-LLM genutzt.
+- **Ziel**: Schnell reproduzierbar deployen, klar konfigurieren, alle Abhängigkeiten transparent machen.
+
+---
+
+## 1) Voraussetzungen / Abhängigkeiten
+
+### Systemabhängigkeiten (Deploy-Host)
+- `bash`
+- `python3`
+- `systemd` (`systemctl`)
+- `rsync`
+- `openssl`
+- für SST: `node`, `npm` (werden über `scripts/install_sst.sh` bei Bedarf automatisch installiert)
+
+### Python-Abhängigkeiten
+Werden automatisch via `requirements.txt` installiert. `deploy_local.sh` installiert zusätzlich `uvicorn[standard]`.
+
+---
+
+## 2) One-shot Deployment (empfohlen)
+
+Nach Clone im Repo:
+
 ```bash
 sudo ./scripts/deploy_local.sh
 ```
 
-Das Script erledigt idempotent:
-- Sync nach `/opt/jarvis` via `rsync -a --delete`
-- venv unter `/opt/jarvis/.venv` (falls nicht vorhanden)
-- `pip install -r requirements.txt` + `uvicorn[standard]`
-- `/etc/jarvis/config.env` aus `config/jarvis.env.example` (falls nicht vorhanden, danach `chmod 600`)
-- Installation/Aktualisierung von `jarvis.service`
-- `systemctl daemon-reload && systemctl enable --now jarvis.service`
-- Ausgabe von Service-Status + Health-URL
+Das Deployment ist **idempotent** und erledigt alles in einem Lauf:
 
-Danach:
+1. Sync vom Repo nach `/opt/jarvis`
+2. Venv unter `/opt/jarvis/.venv`
+3. Python-Dependencies installieren
+4. `/etc/jarvis/config.env` aus Template erstellen (falls nicht vorhanden)
+5. TLS-Zertifikat erzeugen (self-signed, falls TLS-ENV gesetzt/ergänzt)
+6. `systemd/jarvis.service` installieren
+7. Service aktivieren/starten
+8. Healthcheck ausführen
+9. Sicherstellen, dass auch das Laufskript (`/opt/jarvis/scripts/run_jarvis.sh`) ausführbar ist
+
+Danach prüfen:
+
 ```bash
 systemctl status jarvis.service
-curl http://localhost:8000/health
+curl -k https://localhost:8000/health
 ```
 
-## HTML-UI öffnen
-Nach dem Start erreichst du die UI unter:
-- `https://localhost:8000/` (standardmäßig Orb-UI, self-signed nach Deploy)
-- `https://localhost:8000/static/orb.html`
+---
+
+## 3) Konfigurationsdatei und API-Keys
+
+Zentrale Datei:
+
+- `/etc/jarvis/config.env`
+
+Beispiel/Template:
+
+- `config/jarvis.env.example`
+
+### Pflichtwerte
+```env
+JARVIS_PASSPHRASE=change-me
+ALLOWED_TARGETS=local,web01
+COOLDOWN_RESTART_SECONDS=60
+COOLDOWN_CRITICAL_SECONDS=90
+```
+
+### API-Keys – wo eintragen?
+Alle Keys in `/etc/jarvis/config.env`:
+
+#### Proxmox
+```env
+PROXMOX_BASE_URL=https://pve.example.local:8006
+PROXMOX_API_TOKEN=root@pam!jarvis=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+```
+
+#### OpenAI
+```env
+OPENAI_API_KEY=sk-...
+```
+
+#### Gemini
+```env
+GEMINI_API_KEY=...
+```
+
+#### Wiki.js (RAG)
+```env
+WIKIJS_GRAPHQL_URL=https://wiki.example.local/graphql
+WIKIJS_API_KEY=...
+# Optional:
+# WIKIJS_GRAPHQL_QUERY=query { pages { list(orderBy: TITLE) { title path description } } }
+```
+
+#### GitHub (RAG)
+```env
+GITHUB_REPO=owner/repo
+GITHUB_BRANCH=main
+GITHUB_PAT=ghp_...
+```
+
+#### TTS (lokale Stimme)
+```env
+PIPER_BIN=/usr/local/bin/piper
+PIPER_MODEL=/opt/models/en_US-amy-medium.onnx
+```
+
+> Nach Änderungen an `config.env` immer:
+```bash
+sudo systemctl restart jarvis.service
+```
+
+---
+
+## 4) HTTPS, Web-UI und Voice
+
+UI:
+- `https://localhost:8000/`
 - `https://localhost:8000/static/index.html`
+- `https://localhost:8000/static/orb.html`
 
-Für Remote-Mic (Browser-API) ist ein **sicherer Kontext** nötig (`https://...`).
-Deploy erzeugt jetzt automatisch idempotent self-signed TLS-Dateien unter `/etc/jarvis/tls/` (falls nicht vorhanden), setzt die TLS-ENV in `/etc/jarvis/config.env` und prüft danach per `curl -k https://localhost:8000/health`.
+Für Browser-Mikrofon ist ein **sicherer Kontext** nötig (`https://...` oder localhost).
 
-## Troubleshooting
-- **CHDIR / WorkingDirectory Fehler**
-  - Symptom in Journal: `Failed at step CHDIR`.
-  - Ursache: falsches Arbeitsverzeichnis.
-  - Fix: Service verwendet `WorkingDirectory=/opt/jarvis`; erneut deployen:
-    ```bash
-    sudo ./scripts/deploy_local.sh
-    ```
+Deploy ergänzt standardmäßig TLS-Variablen und erzeugt bei Bedarf Zertifikate unter:
+- `/etc/jarvis/tls/fullchain.pem`
+- `/etc/jarvis/tls/privkey.pem`
 
-- **`No module named uvicorn`**
-  - Ursache: venv/dependencies fehlen oder falscher Python-Interpreter.
-  - Fix: Deploy-Script installiert `uvicorn[standard]` in `/opt/jarvis/.venv` und startet den Service mit diesem Binary:
-    ```bash
-    /opt/jarvis/.venv/bin/uvicorn
-    ```
+---
 
-- **`status=203/EXEC` bei `jarvis.service`**
-  - Ursache: `ExecStart` zeigt auf einen nicht existierenden/nicht ausführbaren Pfad (typisch: fehlendes venv oder fehlendes `uvicorn`).
-  - Fix:
-    ```bash
-    sudo ./scripts/deploy_local.sh
-    ```
-    Das Deploy-Script prüft explizit, dass `/opt/jarvis/.venv/bin/uvicorn` vorhanden und ausführbar ist.
+## 5) SST (essenziell) – Nutzung & Installation
 
-- **Service läuft, Seiten laden nicht**
-  - Logs prüfen:
-    ```bash
-    sudo journalctl -u jarvis.service -n 200 --no-pager
-    ```
-  - Lokal testen:
-    ```bash
-    curl -k -i https://localhost:8000/health
-    curl -k -i https://localhost:8000/
-    ```
+SST ist in diesem Repo nicht als IaC-Projekt verdrahtet, aber als Tooling explizit unterstützt.
 
-
-- **Mic error: `navigator.mediaDevices is undefined`**
-  - Ursache: Browser-Kontext ist nicht sicher (kein HTTPS/localhost), Berechtigung blockiert oder Browser hat kein Microphone-API.
-  - Jarvis-Änderung: Die Web-UI leitet Remote-HTTP automatisch auf `https://` um (localhost bleibt bei http erlaubt).
-  - Fix-Checkliste:
-    1. Einfach `sudo ./scripts/deploy_local.sh` ausführen (erstellt TLS-Dateien + ENV automatisch).
-    2. Service läuft dann direkt mit HTTPS; UI über `https://<host>:8000` öffnen.
-    3. Falls eigene Zertifikate gewünscht, in `/etc/jarvis/config.env` setzen:
-       ```env
-       JARVIS_TLS_CERT_FILE=/etc/jarvis/tls/fullchain.pem
-       JARVIS_TLS_KEY_FILE=/etc/jarvis/tls/privkey.pem
-       ```
-    4. Danach `sudo systemctl restart jarvis.service`.
-    5. Browser-Mikrofonrechte erlauben (Site Settings → Microphone → Allow).
-    6. In Chrome/Edge prüfen: `chrome://settings/content/microphone` und korrektes Input-Device wählen.
-    7. Bei Reverse-Proxy HTTPS korrekt terminieren und `X-Forwarded-Proto=https` setzen.
-    8. Gegenprobe: im gleichen Browser `navigator.mediaDevices` in der DevTools-Konsole prüfen.
-
-## Orb-UI (Voice)
-Die Orb-Oberfläche (`/static/orb.html`) nutzt STT + TTS:
-- Spracheingabe → `/stt`
-- Antwort → `/chat` → Audioausgabe über `/tts`
-Wenn `/tts` nicht erreichbar ist, nutzt die Orb-UI den Browser-Voice-Fallback (SpeechSynthesis).
-
-Damit lokale Sprachausgabe funktioniert, müssen gesetzt sein:
-- `PIPER_BIN` (Pfad zum piper Binary)
-- `PIPER_MODEL` (Pfad zum Voice-Model)
-
-## Konfiguration (ohne Secrets im Repo)
-Verwende `/etc/jarvis/config.env` (Template: `config/jarvis.env.example`).
-- `JARVIS_PASSPHRASE`
-- `ALLOWED_TARGETS` (deny-by-default für write/critical)
-- `COOLDOWN_RESTART_SECONDS`, `COOLDOWN_CRITICAL_SECONDS`
-- Optional: `PROXMOX_BASE_URL`, `PROXMOX_API_TOKEN`
-- Optional: `OPENAI_API_KEY`, `GEMINI_API_KEY`
-
-
-## Proxmox API-Key hinzufügen (Schritt-für-Schritt)
-Wenn du jetzt deinen Proxmox API-Token hast, kannst du ihn auf zwei Arten einbinden:
-
-### Variante A (einfach): direkt in `/etc/jarvis/config.env`
-1. Datei öffnen:
-   ```bash
-   sudo nano /etc/jarvis/config.env
-   ```
-2. Diese Werte setzen (Beispiel):
-   ```env
-   PROXMOX_BASE_URL=https://pve.example.local:8006
-   PROXMOX_API_TOKEN=root@pam!jarvis=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-   ```
-   Token-Format ist **genau**:
-   `user@realm!tokenid=tokensecret`
-3. Service neu starten:
-   ```bash
-   sudo systemctl restart jarvis.service
-   ```
-4. Prüfen:
-   ```bash
-   curl http://localhost:8000/health
-   curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"proxmox health"}'
-   ```
-
-### Variante B (empfohlen für mehrere Proxmox-Hosts): über API speichern
-Damit legst du einen Host in der internen Host-Liste an (`proxmox_hosts.json`).
-
-1. Token holen (Unlock):
-   ```bash
-   TOKEN=$(curl -s -X POST http://localhost:8000/unlock      -H "Content-Type: application/json"      -d '{"passphrase":"change-me"}' | python3 -c 'import sys,json; print(json.load(sys.stdin)["token"])')
-   ```
-2. Host hinzufügen:
-   ```bash
-   curl -X POST http://localhost:8000/proxmox/hosts      -H "Authorization: Bearer $TOKEN"      -H "Content-Type: application/json"      -d '{
-       "name":"home-pve",
-       "base_url":"https://pve.example.local:8006",
-       "api_token":"root@pam!jarvis=xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
-       "verify_tls":true
-     }'
-   ```
-3. Hosts anzeigen:
-   ```bash
-   curl http://localhost:8000/proxmox/hosts
-   ```
-
-### Häufige Fehler
-- `401`/`403` von Proxmox: Token falsch oder Rechte fehlen.
-- `Proxmox unreachable`: URL/Port/TLS nicht erreichbar.
-- Self-signed Zertifikat: testweise `"verify_tls": false` setzen (nur intern/temporär).
-- In Proxmox muss der Token passende Berechtigungen auf Node/VM/LXC haben.
-
-## Learning / Memory (deterministisch)
-Jarvis kann Nutzungsdaten lokal speichern (JSON, kein Modell-Finetuning):
-- `JARVIS_MEMORY_PATH` (Default: `/var/lib/jarvis/memory.json`)
-- Merkt sich Query-Statistiken, Feedback und Alias-Korrekturen
-- Nach Responses liefert `data.feedback` eine Feedback-ID
-
-Feedback senden:
+### Installation
 ```bash
-curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"feedback <id> ok"}'
-```
-oder bei falscher Zuordnung:
-```bash
-curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"feedback <id> bad correct: proxmox health"}'
+sudo ./scripts/install_sst.sh
 ```
 
-Wenn eine unbeantwortete Anfrage häufiger vorkommt, wird in `data.skill_suggestion` vorgeschlagen, einen neuen Skill anzulegen.
+Das Skript:
+- prüft ob `sst` bereits vorhanden ist
+- installiert bei Bedarf **Node.js + npm** automatisch (apt-get auf Ubuntu/Debian)
+- installiert anschließend SST global via `npm install -g sst`
 
-
-### Selbstständiges Lernen (ohne expliziten Befehl)
-Jarvis speichert erfolgreiche Antworten jetzt zusätzlich als lokale Muster und kann ähnliche Fragen später aus der Memory beantworten:
-- Bei bekannten/erfolgreichen Antworten werden lokale Reply-Muster in `learned_replies` gespeichert.
-- Bei ähnlicher Formulierung nutzt Jarvis diese Antwort direkt (`route: learned_memory`).
-- Bei mittlerer Unsicherheit fragt Jarvis gezielt nach (`Need clarification`).
-
-Beispiel:
+### Verifikation
 ```bash
-curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"how are you"}'
-curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"how are u today"}'
+sst --version
 ```
 
-### Learning-Kommandos (direkt im Chat)
-Jarvis kann jetzt explizit Memory-Einträge setzen und anzeigen:
-- `remember node <name> <value>`
-- `remember vmid <name> <value>`
-- `remember default <key> <value>`
-- `memory show`
-
-Beispiele:
+### Nutzung (Basis)
 ```bash
-curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"remember node pve1 10.0.0.10"}'
-curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"memory show"}'
+sst init
+sst dev
+sst deploy
 ```
 
-### Cloud-Ausfall / Offline-Assistant
-Wenn OpenAI/Gemini gerade nicht erreichbar ist oder API-Fehler liefert, gibt Jarvis jetzt **keinen rohen Upstream-Fehler** mehr zurück.
-Stattdessen antwortet er als Assistant mit kontextbasierten Next-Steps (z. B. für "web gui down", "deploy branch", "proxmox").
+> `deploy_local.sh` kann SST inklusive Node/npm automatisch installieren: `sudo INSTALL_SST=1 ./scripts/deploy_local.sh`.
 
-### Lern- und Fallback-Tests
-```bash
-python -m unittest discover -s tests
+---
+
+## 6) Skills, Domänenlogik und sinnvolle Antworten
+
+### Wichtige Skills
+- `help`
+- `skills`
+- `status jarvis`
+- `diagnose jarvis`
+- `config show`
+- `proxmox health`
+- `pve vm status <host_id> <node> <vmid>`
+- `pve lxc status <host_id> <node> <vmid>`
+- `service status <target> <service>`
+- `service restart <target> <service>`
+
+### Verbessertes Verhalten
+- Bei Proxmox-Fragen liefert Jarvis gezielte Proxmox-Antworten/Hints.
+- Wakeword-Handling für Voice-Requests ist konfigurierbar.
+- Neue Proxmox-Status-Skills (VM/LXC) ergänzt.
+
+
+---
+
+## 6b) Iron-Man Voice (natürlicher, weniger robotisch)
+
+Für weniger "robotisch" klingende TTS-Antworten:
+
+1. Nutze ein hochwertiges Piper-Modell (Studio/HiFi-ähnliche Stimmen, z. B. vits-medium/high).
+2. Tune die Parameter in `config.env`:
+
+```env
+PIPER_LENGTH_SCALE=1.12
+PIPER_NOISE_SCALE=0.55
+PIPER_NOISE_W=0.75
 ```
-Enthalten sind u. a. Tests für:
-- Feedback-Loop + Alias-Lernen
-- wiederholte unbekannte Anfragen → Skill-Suggestion
-- explizite Memory-Kommandos (`remember`, `memory show`)
-- Cloud-Fehler → kontextbasierte Offline-Assistant-Antwort
 
-## Security-Model (Kurzfassung)
-- read: kein Token nötig.
-- write: Token + Confirm (`YES`).
-- critical: Token + Plan + Confirm (`YES, proceed`).
-- Targets müssen in `ALLOWED_TARGETS` stehen (deny-by-default).
-- Cooldowns verhindern Restart-Loops.
+3. Jarvis normalisiert TTS-Text jetzt automatisch für natürlichere Aussprache:
+   - Kommandos wie `status jarvis` werden als natürliche Antwort gesprochen.
+   - Fachbegriffe wie `PVE`, `VMID`, `API` werden aussprachefreundlich aufbereitet.
 
-## Build: Bootbares ISO/Disk-Image
-Reproduzierbarer Build via `mkosi`:
-```bash
-scripts/build-image.sh
+Hinweis: Die exakte "Filmstimme" von Iron Man ist urheberrechtlich geschützt. Technisch am nächsten kommst du mit einer tiefen, klaren englischen TTS-Stimme + Piper-Tuning.
+
+---
+
+## 7) Wakeword ("Hey Jarvis")
+
+Für Voice-Requests kann ein echtes Wakeword erzwungen werden.
+
+- Standard-Wakeword: `hey jarvis`
+- **Standardmäßig in der Chat-UI deaktiviert** (privacy-first).
+- Wenn in `index.html` aktiviert, lauscht der Browser im Hintergrund per Web Speech API kontinuierlich auf `hey jarvis` (Siri-ähnlicher Trigger).
+- Wird `hey jarvis` erkannt, reagiert Jarvis automatisch; bei `hey jarvis <befehl>` wird der Befehl direkt verarbeitet.
+- Ohne Wakeword antwortet Jarvis im Voice-Source-Flow: `Awaiting wake word...`
+- In `static/index.html` gibt es dafür den **Wakeword Toggle** (Header).
+- Sichtbares Feedback ist eingebaut: `wake off` / `wake on` / `wake heard` zeigt direkt an, ob das Wakeword erkannt wurde.
+- Gleiches Prinzip im Orb (`static/orb.html`): bei aktivem Toggle hört Orb im Hintergrund zu und antwortet per Stimme automatisch.
+
+
+UI-Hinweis:
+- Chat-Liste unterstützt jetzt Löschen pro Chat: beim Hover erscheint ein Papierkorb-Symbol.
+- Wakeword-Toggle ist lokal pro Gerät gespeichert (`localStorage`).
+
+ENV-Konfiguration in `/etc/jarvis/config.env`:
+
+```env
+# Default (empfohlen): aus
+JARVIS_WAKEWORD_ENABLED=0
+JARVIS_WAKEWORD_PHRASE=hey jarvis
 ```
 
-Beim Boot sorgt `first-boot-wizard` automatisch für Grundkonfiguration und ruft anschließend `scripts/deploy_local.sh` auf. Dadurch werden Dependencies installiert und `jarvis.service` automatisch aktiviert/gestartet.
+Aktivieren:
 
-## Legacy Installer
-`install_service.sh` bleibt als Wrapper erhalten und ruft intern `deploy_local.sh` auf:
-```bash
-sudo ./scripts/install_service.sh
+```env
+JARVIS_WAKEWORD_ENABLED=1
 ```
 
-## Tests
+Danach immer neu starten:
+
 ```bash
-python -m unittest discover -s tests
+sudo systemctl restart jarvis.service
 ```
 
-## Lokales Starten (MVP)
+---
+
+## 8) Security-Modell
+
+- **READ**: kein Token nötig
+- **WRITE**: Token + Confirm `YES`
+- **CRITICAL**: Token + Plan + Confirm `YES, proceed`
+- Deny-by-default über `ALLOWED_TARGETS`
+- Cooldowns gegen Action-Loops
+
+---
+
+## 9) Lokaler Start (ohne systemd)
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
@@ -248,89 +266,36 @@ export ALLOWED_TARGETS=local
 uvicorn jarvisappv4:app --host 0.0.0.0 --port 8000
 ```
 
-Beispiele:
+---
+
+## 10) Tests
+
 ```bash
-curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"status jarvis"}'
-curl -X POST http://localhost:8000/chat -H "Content-Type: application/json" -d '{"text":"skills --verbose"}'
+python -m unittest discover -s tests
 ```
 
-## RAG mit Wiki.js + GitHub
-Jarvis unterstützt vorbereitete RAG-Quellen für Wiki.js und GitHub (PAT-ready):
+---
 
-### 1) ENV konfigurieren
-```env
-WIKIJS_GRAPHQL_URL=https://wiki.example.local/graphql
-WIKIJS_API_KEY=<wikijs_api_key>
-# Optional: eigene Query, sonst Default
-# WIKIJS_GRAPHQL_QUERY=query { pages { list(orderBy: TITLE) { title path description } } }
+## 11) Troubleshooting (kurz)
 
-GITHUB_REPO=owner/repo
-GITHUB_BRANCH=main
-# Für public optional, für private später erforderlich
-GITHUB_PAT=<github_pat>
-```
-
-### 2) RAG-Index aktualisieren
+### `status=203/EXEC`
+Deploy neu ausführen:
 ```bash
-curl -X POST http://localhost:8000/rag/refresh
-curl "http://localhost:8000/rag/status"
+sudo ./scripts/deploy_local.sh
 ```
 
-### 3) Suche testen
+### `No module named uvicorn`
+Deploy neu ausführen (venv + pip + uvicorn werden gesetzt):
 ```bash
-curl "http://localhost:8000/rag/search?q=proxmox+vm+status"
+sudo ./scripts/deploy_local.sh
 ```
 
-Hinweis:
-- Wiki.js wird per GraphQL mit Bearer-Token angebunden.
-- GitHub ist für public Repos ohne Token nutzbar; für private Repos `GITHUB_PAT` setzen.
+### Mic-Fehler (`navigator.mediaDevices is undefined`)
+- mit HTTPS öffnen
+- Browser-Mikrofon erlauben
+- Zertifikat/TLS-ENV prüfen
 
-## Serverseitige Chat-History (F5-safe)
-Chats werden jetzt serverseitig gespeichert (`JARVIS_CHAT_HISTORY_PATH`).
-- F5 verliert den Chat nicht mehr.
-- In der Web-UI gibt es links eine Chat-Liste mit alten Chats.
-- Mit **New** startest du einen neuen Chat.
-- Beim Wechsel von Chat → Orb bleibt der aktive Chat-Kontext erhalten.
-
-## Web-UI testen (Chat + Skills)
-1. Backend starten:
-```bash
-uvicorn jarvisappv4:app --host 0.0.0.0 --port 8000
-```
-2. Browser öffnen: `http://localhost:8000/static/index.html`
-3. In der Chat-UI testen:
-   - links **New** klicken (neuen Chat starten)
-   - `skills` oder auf den **Skills**-Button klicken
-   - `status jarvis`
-   - Proxmox-Status: `pve vm status <host_id> <node> <vmid>`
-   - Seite mit F5 neu laden (Chat muss erhalten bleiben)
-   - auf **ORB** wechseln und weiter fragen (gleicher aktiver Chat-Kontext)
-4. Optional Lernverhalten prüfen:
-   - `how are you`
-   - danach ähnliche Formulierung wie `how are u today`
-   - anschließend `memory show` prüfen
-
-## First-Boot Wizard
-Beim ersten Boot schreibt `first-boot-wizard` eine minimale Konfiguration:
-- `/etc/jarvis/config.env`
-- Statusdatei: `/var/lib/jarvis/first-boot.done`
-
-## Update-Strategie
-Empfohlen: neues Image bauen und per A/B-Update ausrollen. Im MVP werden keine automatischen Updates erzwungen.
-
-## Requirements-Trace
-Siehe `trace.md` für R1–R25 Status.
-
-## Kiosk-Mode (Boot direkt in WEB-UI)
-Das Image konfiguriert beim ersten Boot automatisch einen lokalen `jarvis`-Benutzer im Kiosk-Betrieb:
-- Auto-Login auf `tty1`
-- Start von X/Openbox
-- Chromium im Kiosk-Vollbild auf `http://localhost:8000/`
-
-Dadurch kann das System auf SSD/USB geflasht und direkt auf einem anderen PC als Appliance genutzt werden (USB-Eingabegeräte wie Tastatur/Maus bleiben nutzbar).
-
-Anpassung über `/etc/jarvis/config.env`:
-- `KIOSK_URL` (default `http://localhost:8000/`)
-- `LOCAL_LLM_ENABLED` (default `0`)
-- `LOCAL_LLM_MODEL_DIR` (default `/var/lib/jarvis/local-ai/models`)
-- `LOCAL_LLM_DEFAULT_MODEL` (default `future-local-model`)
+### Proxmox 401/403
+- Tokenformat prüfen: `user@realm!tokenid=tokensecret`
+- Rechte des Tokens prüfen
+- URL/Port/TLS Reachability prüfen

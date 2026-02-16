@@ -42,5 +42,18 @@ class ChatHistoryTests(unittest.TestCase):
         self.assertIn(sid, ids)
 
 
+
+    def test_delete_session(self):
+        create = self.client.post("/chat/sessions", json={"title": "Delete me"})
+        self.assertEqual(create.status_code, 200)
+        sid = create.json()["id"]
+
+        delete = self.client.delete(f"/chat/sessions/{sid}")
+        self.assertEqual(delete.status_code, 200)
+        self.assertTrue(delete.json().get("ok"))
+
+        detail = self.client.get(f"/chat/sessions/{sid}")
+        self.assertEqual(detail.status_code, 404)
+
 if __name__ == "__main__":
     unittest.main()
