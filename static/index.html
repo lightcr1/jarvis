@@ -90,6 +90,8 @@
       cursor:pointer;
     }
     .btnSmall:hover{filter:brightness(1.08)}
+    .toggleWrap{display:inline-flex;align-items:center;gap:8px;padding:6px 10px;border:1px solid var(--border);border-radius:999px;background: rgba(12,19,34,.65);font-size:12px;color:var(--muted);}
+    .toggleWrap input{accent-color:var(--blue);}
 
     main{
       flex:1;
@@ -370,6 +372,11 @@
           <span id="authInfo"></span>
         </span>
 
+        <label class="toggleWrap" title="Wakeword für Sprachbefehle aktivieren/deaktivieren">
+          <input type="checkbox" id="wakewordToggle" checked />
+          Wakeword
+        </label>
+
         <button class="btnSmall" id="orbBtn" title="Orb Mode">ORB</button>
       </div>
     </header>
@@ -440,6 +447,7 @@
   const talkBtn = document.getElementById("talk");
   const statusText = document.getElementById("statusText");
   const orbBtn = document.getElementById("orbBtn");
+  const wakewordToggle = document.getElementById("wakewordToggle");
   const recordHint = document.getElementById("recordHint");
   const chatListEl = document.getElementById("chatList");
   const newChatBtn = document.getElementById("newChatBtn");
@@ -513,7 +521,18 @@
   }
 
   const ACTIVE_CHAT_KEY = "jarvis_active_chat";
+  const WAKEWORD_SETTING_KEY = "jarvis_wakeword_ui_enabled";
   let activeChatId = sessionStorage.getItem(ACTIVE_CHAT_KEY) || null;
+
+  function isWakewordUiEnabled(){
+    const raw = localStorage.getItem(WAKEWORD_SETTING_KEY);
+    return raw === null ? true : raw === "1";
+  }
+
+  function setWakewordUiEnabled(enabled){
+    localStorage.setItem(WAKEWORD_SETTING_KEY, enabled ? "1" : "0");
+    if(wakewordToggle) wakewordToggle.checked = enabled;
+  }
 
   function setActiveChat(id){
     activeChatId = id;
@@ -661,7 +680,7 @@
     if(e.key==="Enter"){ e.preventDefault(); doUnlockBtn.click(); }
   });
 
-  async function sendText(text){
+  async function sendText(text, opts = {}){
     const t = (text || "").trim();
     if(!t) return;
 
@@ -676,7 +695,11 @@
     setStatus("thinking");
 
     try{
-      const res = await postJSON("/chat", { text: t, session_id: activeChatId }, true);
+      const source = opts.source || "text";
+      const sourceToSend = source === "voice"
+        ? (isWakewordUiEnabled() ? "voice" : "text")
+        : source;
+      const res = await postJSON("/chat", { text: t, session_id: activeChatId, source: sourceToSend }, true);
       if(res.session_id) setActiveChat(res.session_id);
       const reply = res.reply || "—";
       addMessage("jarvis", reply);
@@ -743,7 +766,7 @@
         const transcript = (stt.text || "").trim();
         if(transcript){
           inputEl.value = transcript;
-          await sendText(transcript);
+          await sendText(transcript, { source: "voice" });
         } else {
           setStatus("idle");
         }
@@ -803,6 +826,15 @@
     } catch(e){
       addMessage("jarvis", "Understood.\nHistory init failed.");
     }
+    setWakewordUiEnabled(isWakewordUiEnabled());
+    wakewordToggle.addEventListener("change", ()=>{
+      const enabled = !!wakewordToggle.checked;
+      setWakewordUiEnabled(enabled);
+      addMessage("jarvis", enabled
+        ? "Understood. Wakeword for voice is enabled ('hey jarvis')."
+        : "Understood. Wakeword for voice is disabled in this chat UI.");
+    });
+
     updateAuthUI();
     setStatus("idle");
     updateRecordHint(false);

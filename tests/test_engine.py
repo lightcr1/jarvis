@@ -79,6 +79,11 @@ class EngineTests(unittest.TestCase):
         response = self.engine.process("how are you", token=None)
         self.assertIn("ready to help", response["summary"].lower())
 
+
+    def test_wake_word_does_not_require_clarification(self):
+        response = self.engine.process("jarvis", token=None)
+        self.assertIn("J.A.R.V.I.S", response["summary"])
+
     def test_autonomous_learning_reuses_previous_reply(self):
         first = self.engine.process("memory show", token=None)
         self.assertEqual(first["summary"], "Memory snapshot ready.")

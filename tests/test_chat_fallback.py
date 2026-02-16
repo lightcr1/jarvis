@@ -33,5 +33,22 @@ class ChatFallbackTests(unittest.TestCase):
         self.assertIn("healthy", body["reply"].lower())
 
 
+
+    def test_voice_mode_requires_wakeword_when_enabled(self):
+        with patch.dict(os.environ, {"JARVIS_WAKEWORD_ENABLED": "1", "JARVIS_WAKEWORD_PHRASE": "hey jarvis"}, clear=False):
+            res = self.client.post("/chat", json={"text": "status jarvis", "source": "voice"})
+
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertIn("Awaiting wake word", body["reply"])
+
+    def test_voice_mode_accepts_command_with_wakeword(self):
+        with patch.dict(os.environ, {"JARVIS_WAKEWORD_ENABLED": "1", "JARVIS_WAKEWORD_PHRASE": "hey jarvis"}, clear=False):
+            res = self.client.post("/chat", json={"text": "hey jarvis status jarvis", "source": "voice"})
+
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertIn("jarvis", body["reply"].lower())
+
 if __name__ == "__main__":
     unittest.main()
