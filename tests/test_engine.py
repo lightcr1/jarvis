@@ -79,10 +79,25 @@ class EngineTests(unittest.TestCase):
         response = self.engine.process("how are you", token=None)
         self.assertIn("ready to help", response["summary"].lower())
 
+
+    def test_wake_word_does_not_require_clarification(self):
+        os.environ["JARVIS_WAKEWORD_ENABLED"] = "1"
+        engine = JarvisEngine(build_registry(), SecurityPolicy())
+        response = engine.process("jarvis", token=None)
+        self.assertIn("J.A.R.V.I.S", response["summary"])
+
+
+    def test_learning_requires_reinforcement_before_generalizing(self):
+        self.engine.process("memory show", token=None)
+        not_yet = self.engine.process("memory shwo", token=None)
+        self.assertNotEqual(not_yet.get("data", {}).get("route"), "learned_memory")
+
     def test_autonomous_learning_reuses_previous_reply(self):
         first = self.engine.process("memory show", token=None)
         self.assertEqual(first["summary"], "Memory snapshot ready.")
 
+        # strengthen confidence with repeated successful usage
+        self.engine.process("memory show", token=None)
         learned = self.engine.process("memory shwo", token=None)
         self.assertEqual(learned["summary"], "Memory snapshot ready.")
         self.assertEqual(learned["data"]["route"], "learned_memory")

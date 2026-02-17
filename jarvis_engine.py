@@ -128,6 +128,20 @@ class JarvisEngine:
             learning=self.learning,
         )
 
+        if wakeword_enabled() and normalize(cleaned) in wakeword_phrases():
+            return self._finalize_response(
+                cleaned,
+                "status jarvis",
+                summary_response(
+                    "Understood. J.A.R.V.I.S online and ready.",
+                    {
+                        "hint": "Try: skills, status jarvis, proxmox health",
+                        "wakeword": (os.getenv("JARVIS_WAKEWORD_PHRASE") or "hey jarvis"),
+                    },
+                ),
+                False,
+            )
+
         confirm = self._handle_confirm(cleaned, ctx)
         if confirm:
             return confirm
@@ -412,20 +426,33 @@ class LearningStore:
             "defaults": self.data.get("defaults", {}),
             "aliases": self.data.get("aliases", {}),
             "learned_replies": len(self.data.get("learned_replies", {})),
+            "stable_learned_replies": len([v for v in self.data.get("learned_replies", {}).values() if (v or {}).get("confidence", 0) >= 2]),
             "query_stats_size": len(self.data.get("query_stats", {})),
             "feedback_entries": len(self.data.get("feedback_log", {})),
         }
 
     def record_success(self, text: str, summary: str, skill_name: str) -> None:
         normalized = normalize(text)
-        if not normalized or not summary:
+        cleaned_summary = (summary or "").strip()
+        if not normalized or not cleaned_summary:
             return
         if normalized.startswith("feedback "):
             return
-        self.data.setdefault("learned_replies", {})[normalized] = {
-            "summary": summary,
+
+        learned = self.data.setdefault("learned_replies", {})
+        existing = learned.get(normalized, {})
+
+        # Prefer deterministic skills and avoid storing noisy cloud/error-like summaries.
+        lower_summary = cleaned_summary.lower()
+        if any(x in lower_summary for x in ["error", "exception", "traceback"]):
+            return
+
+        confidence = int(existing.get("confidence", 0)) + 1
+        learned[normalized] = {
+            "summary": cleaned_summary,
             "skill": skill_name,
             "updated_at": int(time.time()),
+            "confidence": confidence,
         }
         self._save()
 
@@ -433,12 +460,14 @@ class LearningStore:
         normalized = normalize(text)
         learned = self.data.get("learned_replies", {})
         direct = learned.get(normalized)
-        if direct:
+        if direct and int(direct.get("confidence", 0)) >= 2:
             return {"summary": direct.get("summary", "Done."), "score": 1.0, "source": normalized}
 
         best_key = ""
         best_score = 0.0
-        for key in learned.keys():
+        for key, item in learned.items():
+            if int((item or {}).get("confidence", 0)) < 2:
+                continue
             score = difflib.SequenceMatcher(None, normalized, key).ratio()
             if score > best_score:
                 best_score = score
@@ -454,7 +483,9 @@ class LearningStore:
         learned = self.data.get("learned_replies", {})
         best_key = ""
         best_score = 0.0
-        for key in learned.keys():
+        for key, item in learned.items():
+            if int((item or {}).get("confidence", 0)) < 2:
+                continue
             score = difflib.SequenceMatcher(None, normalized, key).ratio()
             if score > best_score:
                 best_score = score
@@ -478,6 +509,22 @@ def strip_verbose(text: str) -> tuple[str, bool]:
         else:
             filtered.append(token)
     return " ".join(filtered), verbose
+
+
+def wakeword_enabled() -> bool:
+    return (os.getenv("JARVIS_WAKEWORD_ENABLED") or "0").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def wakeword_phrases() -> set[str]:
+    primary = normalize((os.getenv("JARVIS_WAKEWORD_PHRASE") or "hey jarvis").strip())
+    aliases = {
+        primary,
+        "hey jarvis",
+        "ok jarvis",
+        "hello jarvis",
+        "jarvis",
+    }
+    return {a for a in aliases if a}
 
 
 def cloud_configured() -> bool:
@@ -575,6 +622,26 @@ def build_registry() -> SkillRegistry:
             triggers=["proxmox health", "pve health"],
             examples=["proxmox health"],
             handler=handle_proxmox_health,
+        )
+    )
+    registry.register(
+        Skill(
+            name="proxmox vm status",
+            description="Proxmox VM-Status (deterministisch)",
+            risk=RiskLevel.READ,
+            triggers=["proxmox vm status", "pve vm status"],
+            examples=["pve vm status home-pve pve 100"],
+            handler=handle_proxmox_vm_status,
+        )
+    )
+    registry.register(
+        Skill(
+            name="proxmox lxc status",
+            description="Proxmox LXC-Status (deterministisch)",
+            risk=RiskLevel.READ,
+            triggers=["proxmox lxc status", "pve lxc status"],
+            examples=["pve lxc status home-pve pve 101"],
+            handler=handle_proxmox_lxc_status,
         )
     )
     registry.register(
@@ -688,6 +755,50 @@ def handle_proxmox_health(ctx: ExecutionContext) -> dict:
     return {
         "summary": "Proxmox configured (token present).",
         "data": {"mode": "ready"},
+    }
+
+
+def handle_proxmox_vm_status(ctx: ExecutionContext) -> dict:
+    parts = ctx.text.split()
+    if len(parts) < 6:
+        return {
+            "summary": "Need clarification.",
+            "data": {"hint": "Use: pve vm status <host_id> <node> <vmid>"},
+        }
+
+    host_id, node, vmid = parts[3], parts[4], parts[5]
+    return {
+        "summary": f"Proxmox VM status request ready for {host_id}/{node}/{vmid}.",
+        "data": {
+            "provider": "proxmox",
+            "resource": "vm",
+            "host_id": host_id,
+            "node": node,
+            "vmid": vmid,
+            "status": "not_executed_in_engine",
+        },
+    }
+
+
+def handle_proxmox_lxc_status(ctx: ExecutionContext) -> dict:
+    parts = ctx.text.split()
+    if len(parts) < 6:
+        return {
+            "summary": "Need clarification.",
+            "data": {"hint": "Use: pve lxc status <host_id> <node> <vmid>"},
+        }
+
+    host_id, node, vmid = parts[3], parts[4], parts[5]
+    return {
+        "summary": f"Proxmox LXC status request ready for {host_id}/{node}/{vmid}.",
+        "data": {
+            "provider": "proxmox",
+            "resource": "lxc",
+            "host_id": host_id,
+            "node": node,
+            "vmid": vmid,
+            "status": "not_executed_in_engine",
+        },
     }
 
 
