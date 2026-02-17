@@ -66,6 +66,7 @@ _tokens: dict[str, float] = {}  # token -> expires_epoch
 class ChatIn(BaseModel):
     text: str
     session_id: str | None = None
+    source: str | None = None  # optional: "text" | "voice"
 
 
 class ChatOut(BaseModel):
@@ -169,6 +170,14 @@ class ChatHistoryStore:
 
     def get_session(self, session_id: str) -> dict | None:
         return self.data.get("sessions", {}).get(session_id)
+
+    def delete_session(self, session_id: str) -> bool:
+        sessions = self.data.setdefault("sessions", {})
+        if session_id not in sessions:
+            return False
+        sessions.pop(session_id, None)
+        self._save()
+        return True
 
 
 class RagStore:
@@ -437,19 +446,80 @@ def run_cmd(cmd: list[str], timeout: int = 8) -> str:
     return (p.stdout or "").strip()
 
 
+def tts_preprocess_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    lowered = cleaned.lower()
+
+    command_map = {
+        "status jarvis": "Understood. Jarvis is online and ready.",
+        "health": "Understood. System health check is ready.",
+        "proxmox health": "Understood. Proxmox health check is ready.",
+        "skills": "Understood. I can provide a list of available skills.",
+    }
+    if lowered in command_map:
+        return command_map[lowered]
+
+    # pronunciation tweaks for less robotic output
+    replacements = {
+        "pve": "P V E",
+        "vmid": "V M I D",
+        "api": "A P I",
+        "jarvis": "J.A.R.V.I.S",
+    }
+    out = cleaned
+    for src, dst in replacements.items():
+        out = re.sub(rf"\b{re.escape(src)}\b", dst, out, flags=re.IGNORECASE)
+
+    if out and out[-1] not in ".!?":
+        out += "."
+    return out
+
+
+def wakeword_enabled() -> bool:
+    return (os.getenv("JARVIS_WAKEWORD_ENABLED") or "0").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def wakeword_phrase() -> str:
+    return (os.getenv("JARVIS_WAKEWORD_PHRASE") or "hey jarvis").strip().lower()
+
+
+def strip_wakeword(text: str) -> tuple[str, bool]:
+    raw = (text or "").strip()
+    lowered = raw.lower()
+    phrase = wakeword_phrase()
+    if lowered == phrase:
+        return "status jarvis", True
+    if lowered.startswith(phrase + " "):
+        return raw[len(phrase):].strip(), True
+    return raw, False
+
+
 def synthesize_tts(text: str) -> bytes:
     piper_bin = os.getenv("PIPER_BIN") or "/usr/local/bin/piper"
     model = os.getenv("PIPER_MODEL") or os.getenv("PIPER_VOICE_MODEL") or ""
     if not model:
         raise HTTPException(500, "PIPER_MODEL not set")
 
+    length_scale = os.getenv("PIPER_LENGTH_SCALE") or "1.12"
+    noise_scale = os.getenv("PIPER_NOISE_SCALE") or "0.55"
+    noise_w = os.getenv("PIPER_NOISE_W") or "0.75"
+
+    speak_text = tts_preprocess_text(text)
+
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         out_wav = tmp.name
 
     try:
         subprocess.run(
-            [piper_bin, "--model", model, "--output_file", out_wav],
-            input=text,
+            [
+                piper_bin,
+                "--model", model,
+                "--output_file", out_wav,
+                "--length_scale", str(length_scale),
+                "--noise_scale", str(noise_scale),
+                "--noise_w", str(noise_w),
+            ],
+            input=speak_text,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -762,12 +832,147 @@ def try_skill(text: str) -> dict[str, object] | None:
     return None
 
 
+def rag_query_from_prompt(text: str) -> dict | None:
+    raw = (text or "").strip()
+    lowered = raw.lower()
+
+    # Explicit Wiki page requests
+    wiki_match = re.search(r"(?:wiki\s*seite|wiki\s*page)\s+([a-zA-Z0-9_\-./ ]+)", lowered)
+    if wiki_match:
+        title = wiki_match.group(1).strip(" .,!?:;\"'“”„").strip()
+        return {"query": title or raw, "source": "wikijs", "title": title, "mode": "page"}
+
+    # Task-list oriented asks should prefer wiki task pages
+    task_triggers = ["taskliste", "tasks", "aufgaben", "to do", "todo", "budgetplan", "budget"]
+    if any(tok in lowered for tok in task_triggers):
+        return {"query": "tasks", "source": "wikijs", "title": "", "mode": "tasks"}
+
+    # Explicit GitHub/repo asks
+    gh_match = re.search(r"(?:github|repo|repository)\s+([a-zA-Z0-9_\-./ ]+)", lowered)
+    if gh_match:
+        topic = gh_match.group(1).strip(" .,!?:;\"'“”„").strip()
+        return {"query": topic or raw, "source": "github", "title": "", "mode": "repo"}
+
+    # Keep RAG opt-in (avoid aggressive hijacking of normal questions)
+    explicit_rag = ["wiki", "wikijs", "github", "repository", "repo", "rag"]
+    if any(tok in lowered for tok in explicit_rag):
+        return {"query": raw, "source": "", "title": "", "mode": "generic"}
+
+    return None
+
+
+def select_rag_hits(intent: dict, limit: int = 3) -> list[dict]:
+    query = intent.get("query") or ""
+    source = (intent.get("source") or "").strip().lower()
+    title = (intent.get("title") or "").strip().lower()
+
+    hits = rag_store.search(query, limit=8)
+    if source:
+        hits = [h for h in hits if (h.get("source") or "").lower() == source]
+
+    if title:
+        exact = [h for h in hits if (h.get("title") or "").strip().lower() == title]
+        if exact:
+            hits = exact + [h for h in hits if h not in exact]
+
+    return hits[:limit]
+
+
+def format_rag_reply(intent: dict, hits: list[dict]) -> str:
+    mode = intent.get("mode") or "generic"
+    if not hits:
+        return "Understood. I found no matching RAG entries."
+
+    if mode == "tasks":
+        lines = []
+        for i, h in enumerate(hits[:5], start=1):
+            title = h.get("title") or "task"
+            text = (h.get("text") or "").strip()
+            snippet = text[:110] + ("…" if len(text) > 110 else "")
+            lines.append(f"{i}. {title} — {snippet}" if snippet else f"{i}. {title}")
+        return "Understood. Current tasks from wiki:\n" + "\n".join(lines)
+
+    top = hits[0]
+    snippet = (top.get("text") or "").strip()
+    snippet = snippet[:260] + ("…" if len(snippet) > 260 else "")
+    return f"Understood. From {top.get('source')}: {top.get('title')} — {snippet}" if snippet else f"Understood. From {top.get('source')}: {top.get('title')}"
+
+
+def cloud_llm_available() -> bool:
+    return bool((os.getenv("OPENAI_API_KEY") or "").strip() or (os.getenv("GEMINI_API_KEY") or "").strip())
+
+
+def rag_needs_smart_llm(text: str) -> bool:
+    lowered = (text or "").lower()
+    smart_terms = [
+        "liste", "list", "lese", "read", "vor", "vorlesen", "erklär", "explain",
+        "zusammen", "summary", "analys", "plan", "budget", "task", "aufgabe",
+    ]
+    return any(term in lowered for term in smart_terms)
+
+
+def rag_llm_answer(user_text: str, hits: list[dict]) -> str:
+    provider = get_provider()
+    context_lines = []
+    for i, h in enumerate(hits[:8], start=1):
+        context_lines.append(
+            f"[{i}] source={h.get('source','')} title={h.get('title','')} text={h.get('text','')}"
+        )
+    context_blob = "\n".join(context_lines)
+
+    prompt = (
+        "You are J.A.R.V.I.S. Use only the provided RAG context. "
+        "Answer in German, concise and structured, with bullets for lists/tasks. "
+        "If user asks to list/read items, enumerate clearly.\n\n"
+        f"User request: {user_text}\n\nRAG context:\n{context_blob}"
+    )
+
+    if provider == "gemini" and os.getenv("GEMINI_API_KEY"):
+        client = get_gemini()
+        model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+        resp = client.models.generate_content(
+            model=model,
+            contents=[{"role": "user", "parts": [{"text": prompt}]}],
+        )
+        return (getattr(resp, "text", "") or "").strip() or "Understood. No output returned."
+
+    if os.getenv("OPENAI_API_KEY"):
+        client = get_openai()
+        model = os.getenv("OPENAI_MODEL") or "gpt-4.1-mini"
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are J.A.R.V.I.S from Iron Man."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+            max_tokens=int(os.getenv("OPENAI_MAX_TOKENS") or "220"),
+        )
+        return (resp.choices[0].message.content or "").strip() or "Understood. No output returned."
+
+    raise RuntimeError("No supported cloud LLM configured for RAG smart response")
+
+
+
 # ---------------------------
 # Chat (Skills -> LLM fallback)
 # ---------------------------
 @app.post("/chat", response_model=ChatOut)
 def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
     text = (payload.text or "").strip()
+    source = (payload.source or "text").strip().lower()
+
+    if source == "voice" and wakeword_enabled():
+        stripped, detected = strip_wakeword(text)
+        if not detected:
+            phrase = wakeword_phrase()
+            return {
+                "reply": f"Awaiting wake word. Say: '{phrase}'.",
+                "data": {"wakeword_required": phrase},
+                "session_id": payload.session_id,
+            }
+        text = stripped
+
     session = chat_history.ensure_session(payload.session_id)
     session_id = session["id"]
     if not text:
@@ -786,15 +991,32 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
         chat_history.append_message(session_id, "jarvis", reply)
         return {"reply": reply, "data": data, "session_id": session_id}
 
+    rag_intent = rag_query_from_prompt(text)
+    if rag_intent:
+        rag_hits = select_rag_hits(rag_intent, limit=5 if rag_intent.get("mode") == "tasks" else 3)
+        if rag_hits:
+            needs_smart = rag_needs_smart_llm(text)
+            if needs_smart and not cloud_llm_available():
+                reply = "Understood. Für diese intelligente Wiki/Repo-Auswertung brauche ich Cloud-KI (OPENAI_API_KEY oder GEMINI_API_KEY)."
+                data = {"route": "rag", "rag": rag_hits, "intent": rag_intent, "error": "cloud_llm_required"}
+                chat_history.append_message(session_id, "jarvis", reply)
+                return {"reply": reply, "data": data, "session_id": session_id}
+
+            if needs_smart and cloud_llm_available():
+                try:
+                    reply = rag_llm_answer(text, rag_hits)
+                except Exception:
+                    reply = format_rag_reply(rag_intent, rag_hits)
+            else:
+                reply = format_rag_reply(rag_intent, rag_hits)
+
+            data = {"route": "rag", "rag": rag_hits, "intent": rag_intent, "smart": needs_smart}
+            chat_history.append_message(session_id, "jarvis", reply)
+            return {"reply": reply, "data": data, "session_id": session_id}
+
     response = engine.process(text, token)
     summary = response.get("summary", "")
     data = response.get("data", {})
-
-    rag_hits = rag_store.search(text, limit=3)
-    if rag_hits and data.get("route") in {"offline", "cloud"}:
-        top = rag_hits[0]
-        summary = f"Understood. From {top.get('source')}: {top.get('title')}"
-        data = {**data, "rag": rag_hits, "route": "rag"}
 
     if data.get("route") != "cloud":
         chat_history.append_message(session_id, "jarvis", summary)
@@ -871,6 +1093,14 @@ def get_chat_session(session_id: str):
     if not session:
         raise HTTPException(404, "session not found")
     return session
+
+
+@app.delete("/chat/sessions/{session_id}")
+def delete_chat_session(session_id: str):
+    deleted = chat_history.delete_session(session_id)
+    if not deleted:
+        raise HTTPException(404, "session not found")
+    return {"ok": True, "id": session_id}
 
 
 @app.get("/rag/status")
