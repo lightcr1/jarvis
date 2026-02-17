@@ -42,5 +42,37 @@ class ChatHistoryTests(unittest.TestCase):
         self.assertIn(sid, ids)
 
 
+
+    def test_delete_session(self):
+        create = self.client.post("/chat/sessions", json={"title": "Delete me"})
+        self.assertEqual(create.status_code, 200)
+        sid = create.json()["id"]
+
+        delete = self.client.delete(f"/chat/sessions/{sid}")
+        self.assertEqual(delete.status_code, 200)
+        self.assertTrue(delete.json().get("ok"))
+
+        detail = self.client.get(f"/chat/sessions/{sid}")
+        self.assertEqual(detail.status_code, 404)
+
+
+    def test_rag_wiki_phrase_maps_to_rag_result(self):
+        jarvisappv4.rag_store.data = {
+            "sources": {
+                "wikijs": [
+                    {"title": "tasks", "text": "Tasks page: backlog and priorities", "url": "/tasks"}
+                ],
+                "github": [],
+            },
+            "updated_at": 1,
+            "report": {},
+        }
+
+        res = self.client.post("/chat", json={"text": "Lies die Wiki Seite Tasks, was steht darin"})
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body.get("data", {}).get("route"), "rag")
+        self.assertIn("tasks", body.get("reply", "").lower())
+
 if __name__ == "__main__":
     unittest.main()

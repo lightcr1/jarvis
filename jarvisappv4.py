@@ -66,6 +66,7 @@ _tokens: dict[str, float] = {}  # token -> expires_epoch
 class ChatIn(BaseModel):
     text: str
     session_id: str | None = None
+    source: str | None = None  # optional: "text" | "voice"
 
 
 class ChatOut(BaseModel):
@@ -169,6 +170,14 @@ class ChatHistoryStore:
 
     def get_session(self, session_id: str) -> dict | None:
         return self.data.get("sessions", {}).get(session_id)
+
+    def delete_session(self, session_id: str) -> bool:
+        sessions = self.data.setdefault("sessions", {})
+        if session_id not in sessions:
+            return False
+        sessions.pop(session_id, None)
+        self._save()
+        return True
 
 
 class RagStore:
@@ -437,19 +446,80 @@ def run_cmd(cmd: list[str], timeout: int = 8) -> str:
     return (p.stdout or "").strip()
 
 
+def tts_preprocess_text(text: str) -> str:
+    cleaned = re.sub(r"\s+", " ", (text or "").strip())
+    lowered = cleaned.lower()
+
+    command_map = {
+        "status jarvis": "Understood. Jarvis is online and ready.",
+        "health": "Understood. System health check is ready.",
+        "proxmox health": "Understood. Proxmox health check is ready.",
+        "skills": "Understood. I can provide a list of available skills.",
+    }
+    if lowered in command_map:
+        return command_map[lowered]
+
+    # pronunciation tweaks for less robotic output
+    replacements = {
+        "pve": "P V E",
+        "vmid": "V M I D",
+        "api": "A P I",
+        "jarvis": "J.A.R.V.I.S",
+    }
+    out = cleaned
+    for src, dst in replacements.items():
+        out = re.sub(rf"\b{re.escape(src)}\b", dst, out, flags=re.IGNORECASE)
+
+    if out and out[-1] not in ".!?":
+        out += "."
+    return out
+
+
+def wakeword_enabled() -> bool:
+    return (os.getenv("JARVIS_WAKEWORD_ENABLED") or "0").strip().lower() not in {"0", "false", "no", "off"}
+
+
+def wakeword_phrase() -> str:
+    return (os.getenv("JARVIS_WAKEWORD_PHRASE") or "hey jarvis").strip().lower()
+
+
+def strip_wakeword(text: str) -> tuple[str, bool]:
+    raw = (text or "").strip()
+    lowered = raw.lower()
+    phrase = wakeword_phrase()
+    if lowered == phrase:
+        return "status jarvis", True
+    if lowered.startswith(phrase + " "):
+        return raw[len(phrase):].strip(), True
+    return raw, False
+
+
 def synthesize_tts(text: str) -> bytes:
     piper_bin = os.getenv("PIPER_BIN") or "/usr/local/bin/piper"
     model = os.getenv("PIPER_MODEL") or os.getenv("PIPER_VOICE_MODEL") or ""
     if not model:
         raise HTTPException(500, "PIPER_MODEL not set")
 
+    length_scale = os.getenv("PIPER_LENGTH_SCALE") or "1.12"
+    noise_scale = os.getenv("PIPER_NOISE_SCALE") or "0.55"
+    noise_w = os.getenv("PIPER_NOISE_W") or "0.75"
+
+    speak_text = tts_preprocess_text(text)
+
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         out_wav = tmp.name
 
     try:
         subprocess.run(
-            [piper_bin, "--model", model, "--output_file", out_wav],
-            input=text,
+            [
+                piper_bin,
+                "--model", model,
+                "--output_file", out_wav,
+                "--length_scale", str(length_scale),
+                "--noise_scale", str(noise_scale),
+                "--noise_w", str(noise_w),
+            ],
+            input=speak_text,
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -762,12 +832,63 @@ def try_skill(text: str) -> dict[str, object] | None:
     return None
 
 
+def rag_query_from_prompt(text: str) -> dict | None:
+    raw = (text or "").strip()
+    lowered = raw.lower()
+
+    # Examples: "lies die wiki seite tasks, was steht darin"
+    wiki_match = re.search(r"(?:wiki\s*seite|wiki\s*page)\s+([a-zA-Z0-9_\-./ ]+)", lowered)
+    if wiki_match:
+        title = wiki_match.group(1).strip(" .,!?:;\"'“”„").strip()
+        return {"query": title or raw, "source": "wikijs", "title": title}
+
+    gh_match = re.search(r"(?:github|repo|repository)\s+([a-zA-Z0-9_\-./ ]+)", lowered)
+    if gh_match:
+        topic = gh_match.group(1).strip(" .,!?:;\"'“”„").strip()
+        return {"query": topic or raw, "source": "github", "title": ""}
+
+    rag_triggers = ["lies", "read", "wiki", "doku", "documentation", "repo", "github", "rag"]
+    if any(tok in lowered for tok in rag_triggers):
+        return {"query": raw, "source": "", "title": ""}
+    return None
+
+
+def select_rag_hits(intent: dict, limit: int = 3) -> list[dict]:
+    query = intent.get("query") or ""
+    source = (intent.get("source") or "").strip().lower()
+    title = (intent.get("title") or "").strip().lower()
+
+    hits = rag_store.search(query, limit=8)
+    if source:
+        hits = [h for h in hits if (h.get("source") or "").lower() == source]
+
+    if title:
+        exact = [h for h in hits if (h.get("title") or "").strip().lower() == title]
+        if exact:
+            hits = exact + [h for h in hits if h not in exact]
+
+    return hits[:limit]
+
+
 # ---------------------------
 # Chat (Skills -> LLM fallback)
 # ---------------------------
 @app.post("/chat", response_model=ChatOut)
 def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
     text = (payload.text or "").strip()
+    source = (payload.source or "text").strip().lower()
+
+    if source == "voice" and wakeword_enabled():
+        stripped, detected = strip_wakeword(text)
+        if not detected:
+            phrase = wakeword_phrase()
+            return {
+                "reply": f"Awaiting wake word. Say: '{phrase}'.",
+                "data": {"wakeword_required": phrase},
+                "session_id": payload.session_id,
+            }
+        text = stripped
+
     session = chat_history.ensure_session(payload.session_id)
     session_id = session["id"]
     if not text:
@@ -785,6 +906,18 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
         data = skill_first.get("data", {})
         chat_history.append_message(session_id, "jarvis", reply)
         return {"reply": reply, "data": data, "session_id": session_id}
+
+    rag_intent = rag_query_from_prompt(text)
+    if rag_intent:
+        rag_hits = select_rag_hits(rag_intent, limit=3)
+        if rag_hits:
+            top = rag_hits[0]
+            snippet = (top.get("text") or "").strip()
+            snippet = snippet[:260] + ("…" if len(snippet) > 260 else "")
+            reply = f"Understood. From {top.get('source')}: {top.get('title')} — {snippet}" if snippet else f"Understood. From {top.get('source')}: {top.get('title')}"
+            data = {"route": "rag", "rag": rag_hits, "intent": rag_intent}
+            chat_history.append_message(session_id, "jarvis", reply)
+            return {"reply": reply, "data": data, "session_id": session_id}
 
     response = engine.process(text, token)
     summary = response.get("summary", "")
@@ -871,6 +1004,14 @@ def get_chat_session(session_id: str):
     if not session:
         raise HTTPException(404, "session not found")
     return session
+
+
+@app.delete("/chat/sessions/{session_id}")
+def delete_chat_session(session_id: str):
+    deleted = chat_history.delete_session(session_id)
+    if not deleted:
+        raise HTTPException(404, "session not found")
+    return {"ok": True, "id": session_id}
 
 
 @app.get("/rag/status")
