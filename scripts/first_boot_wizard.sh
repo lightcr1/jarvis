@@ -25,12 +25,24 @@ COOLDOWN_CRITICAL_SECONDS=90
 # Optional: Cloud LLM
 # OPENAI_API_KEY=insert_here
 # GEMINI_API_KEY=insert_here
+
+# Optional: Kiosk
+KIOSK_URL=http://localhost:8000/
+
+# Optional: local AI preparation
+LOCAL_LLM_ENABLED=0
+LOCAL_LLM_MODEL_DIR=/var/lib/jarvis/local-ai/models
+LOCAL_LLM_DEFAULT_MODEL=future-local-model
 EOF
 
 chmod 600 "${CONFIG_FILE}"
 
 if [[ -x "/opt/jarvis/scripts/deploy_local.sh" ]]; then
   SOURCE_DIR="/opt/jarvis" /opt/jarvis/scripts/deploy_local.sh
+fi
+
+if [[ -x "/usr/local/bin/jarvis-setup-kiosk" ]]; then
+  /usr/local/bin/jarvis-setup-kiosk
 fi
 
 touch "${STATE_FILE}"

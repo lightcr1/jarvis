@@ -1,0 +1,113 @@
+import os
+import tempfile
+import unittest
+
+from fastapi.testclient import TestClient
+
+import jarvisappv4
+
+
+class ChatHistoryTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        os.environ["JARVIS_CHAT_HISTORY_PATH"] = os.path.join(self.tmpdir.name, "chat_history.json")
+        os.environ["JARVIS_RAG_CACHE_PATH"] = os.path.join(self.tmpdir.name, "rag_cache.json")
+        jarvisappv4.chat_history = jarvisappv4.ChatHistoryStore()
+        jarvisappv4.rag_store = jarvisappv4.RagStore()
+        self.client = TestClient(jarvisappv4.app)
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_session_created_and_messages_persist(self):
+        res = self.client.post("/chat", json={"text": "health"})
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertTrue(body.get("session_id"))
+
+        sid = body["session_id"]
+        detail = self.client.get(f"/chat/sessions/{sid}")
+        self.assertEqual(detail.status_code, 200)
+        session = detail.json()
+        self.assertGreaterEqual(len(session.get("messages", [])), 2)
+
+    def test_create_and_list_sessions(self):
+        create = self.client.post("/chat/sessions", json={"title": "Deploy Chat"})
+        self.assertEqual(create.status_code, 200)
+        sid = create.json()["id"]
+
+        listing = self.client.get("/chat/sessions")
+        self.assertEqual(listing.status_code, 200)
+        ids = [s["id"] for s in listing.json().get("sessions", [])]
+        self.assertIn(sid, ids)
+
+
+
+    def test_delete_session(self):
+        create = self.client.post("/chat/sessions", json={"title": "Delete me"})
+        self.assertEqual(create.status_code, 200)
+        sid = create.json()["id"]
+
+        delete = self.client.delete(f"/chat/sessions/{sid}")
+        self.assertEqual(delete.status_code, 200)
+        self.assertTrue(delete.json().get("ok"))
+
+        detail = self.client.get(f"/chat/sessions/{sid}")
+        self.assertEqual(detail.status_code, 404)
+
+
+    def test_rag_wiki_phrase_maps_to_rag_result(self):
+        jarvisappv4.rag_store.data = {
+            "sources": {
+                "wikijs": [
+                    {"title": "tasks", "text": "Tasks page: backlog and priorities", "url": "/tasks"}
+                ],
+                "github": [],
+            },
+            "updated_at": 1,
+            "report": {},
+        }
+
+        res = self.client.post("/chat", json={"text": "Lies die Wiki Seite Tasks, was steht darin"})
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body.get("data", {}).get("route"), "rag")
+        self.assertIn("tasks", body.get("reply", "").lower())
+
+
+    def test_non_rag_question_does_not_get_hijacked_by_rag(self):
+        jarvisappv4.rag_store.data = {
+            "sources": {
+                "wikijs": [{"title": "Budget2025", "text": "Budget planning", "url": "/budget"}],
+                "github": [],
+            },
+            "updated_at": 1,
+            "report": {},
+        }
+
+        res = self.client.post("/chat", json={"text": "wie ist das wetter heute"})
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertNotEqual(body.get("data", {}).get("route"), "rag")
+
+    def test_tasks_request_returns_wiki_task_list(self):
+        jarvisappv4.rag_store.data = {
+            "sources": {
+                "wikijs": [
+                    {"title": "Tasks", "text": "Task A offen | Task B in Arbeit", "url": "/tasks"},
+                    {"title": "Taskboard", "text": "Task C review", "url": "/taskboard"},
+                ],
+                "github": [],
+            },
+            "updated_at": 1,
+            "report": {},
+        }
+
+        res = self.client.post("/chat", json={"text": "Zeige die aktuellen Tasks aus der Taskliste"})
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body.get("data", {}).get("route"), "rag")
+        self.assertIn("Current tasks", body.get("reply", ""))
+
+if __name__ == "__main__":
+    unittest.main()

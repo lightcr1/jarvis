@@ -316,6 +316,7 @@
 
       <button class="orbButton" id="orbBtn" aria-label="Speak to Jarvis"></button>
       <div class="orbHint" id="hint">tap/click orb to talk</div>
+      <div class="orbHint" id="wakeHint">wakeword: off</div>
     </div>
   </div>
 
@@ -360,11 +361,16 @@
   </div>
 
 <script>
+  const needsHttpsRedirect = location.protocol === "http:" && !["localhost", "127.0.0.1"].includes(location.hostname);
+  if(needsHttpsRedirect){
+    location.replace("https://" + location.host + location.pathname + location.search + location.hash);
+  }
   const orbWrap = document.getElementById("orbWrap");
   const orbBtn = document.getElementById("orbBtn");
   const recDot = document.getElementById("recDot");
   const stateEl = document.getElementById("state");
   const hintEl = document.getElementById("hint");
+  const wakeHintEl = document.getElementById("wakeHint");
 
   const transcriptBox = document.getElementById("transcriptBox");
   const replyBox = document.getElementById("replyBox");
@@ -388,6 +394,29 @@
 
   const TOKEN_KEY = "jarvis_token";
   const TOKEN_EXP = "jarvis_token_exp_ms";
+  const ACTIVE_CHAT_KEY = "jarvis_active_chat";
+  let activeChatId = sessionStorage.getItem(ACTIVE_CHAT_KEY) || null;
+  const WAKEWORD_SETTING_KEY = "jarvis_wakeword_ui_enabled";
+
+  function wakePhrase(){
+    return "hey jarvis";
+  }
+
+  function isWakewordUiEnabled(){
+    const raw = localStorage.getItem(WAKEWORD_SETTING_KEY);
+    return raw === "1";
+  }
+
+  function setWakeHint(text){
+    wakeHintEl.textContent = text;
+  }
+
+  let wakeRecognizer = null;
+  let wakeListening = false;
+
+  function supportsWakewordListener(){
+    return !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+  }
 
   function getToken(){
     const t = sessionStorage.getItem(TOKEN_KEY);
@@ -503,9 +532,13 @@
 
   function showBox(el, show=true){ el.style.display = show ? "block" : "none"; }
 
-  async function sendChat(transcript){
+  async function sendChat(transcript, source="text"){
     setState("chatting");
-    const chat = await postJSON("/chat", { text: transcript }, true);
+    const chat = await postJSON("/chat", { text: transcript, session_id: activeChatId, source }, true);
+    if(chat.session_id){
+      activeChatId = chat.session_id;
+      sessionStorage.setItem(ACTIVE_CHAT_KEY, activeChatId);
+    }
     replyEl.textContent = chat.reply || "—";
     showBox(replyBox, true);
     await speak(chat.reply || "");
@@ -553,6 +586,68 @@
     }
   }
 
+  async function handleWakeTranscript(transcript){
+    const t = (transcript || "").trim().toLowerCase();
+    const phrase = wakePhrase();
+    if(!t.includes(phrase)) return;
+
+    setWakeHint("wakeword: erkannt");
+    const idx = t.indexOf(phrase);
+    const after = t.slice(idx + phrase.length).trim();
+    const payload = after || "status jarvis";
+    transcriptEl.textContent = `${phrase}${after ? " " + after : ""}`;
+    showBox(transcriptBox, true);
+    await sendChat(payload, "text");
+    setTimeout(()=>{ if(isWakewordUiEnabled()) setWakeHint("wakeword: listening"); }, 1200);
+  }
+
+  function startWakewordListener(){
+    if(!isWakewordUiEnabled()){
+      setWakeHint("wakeword: off");
+      return;
+    }
+    if(!supportsWakewordListener()){
+      setWakeHint("wakeword: browser unsupported");
+      return;
+    }
+    if(wakeListening) return;
+
+    const Rec = window.SpeechRecognition || window.webkitSpeechRecognition;
+    wakeRecognizer = new Rec();
+    wakeRecognizer.continuous = true;
+    wakeRecognizer.interimResults = false;
+    wakeRecognizer.lang = "de-DE";
+
+    wakeRecognizer.onresult = async (event)=>{
+      for(let i = event.resultIndex; i < event.results.length; i++){
+        if(event.results[i].isFinal){
+          const transcript = event.results[i][0]?.transcript || "";
+          try{ await handleWakeTranscript(transcript); } catch{}
+        }
+      }
+    };
+
+    wakeRecognizer.onend = ()=>{
+      if(isWakewordUiEnabled() && wakeListening){
+        try { wakeRecognizer.start(); } catch {}
+      }
+    };
+    wakeRecognizer.onerror = ()=>{};
+
+    wakeListening = true;
+    setWakeHint("wakeword: listening");
+    try { wakeRecognizer.start(); } catch { setWakeHint("wakeword: error"); }
+  }
+
+  function stopWakewordListener(){
+    wakeListening = false;
+    setWakeHint("wakeword: off");
+    if(wakeRecognizer){
+      try { wakeRecognizer.onend = null; wakeRecognizer.stop(); } catch {}
+      wakeRecognizer = null;
+    }
+  }
+
   function finalizeRecording(){
     if(mediaRecorder && mediaRecorder.state === "recording"){
       try { mediaRecorder.requestData(); } catch {}
@@ -593,7 +688,7 @@
         showBox(transcriptBox, true);
 
         // Chat
-        await sendChat(transcript);
+        await sendChat(transcript, "text");
       } catch(err){
         if(err.status === 401){
           openUnlockModal(transcriptEl.textContent);
@@ -639,6 +734,8 @@
 
   // Initial
   setState("idle");
+  if(isWakewordUiEnabled()) startWakewordListener();
+  else setWakeHint("wakeword: off");
 </script>
 </body>
 </html>
