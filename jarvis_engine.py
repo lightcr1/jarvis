@@ -21,6 +21,38 @@ CONFIRM_WRITE = "YES"
 CONFIRM_CRITICAL = "YES, proceed"
 
 
+DEFAULT_ROLE = "standard_user"
+VALID_ROLES = {"admin", "standard_user", "guest_restricted", "service_system"}
+ROLE_PERMISSIONS = {
+    "admin": {"voice.use", "actions.write.execute", "actions.dangerous.execute"},
+    "standard_user": {"voice.use"},
+    "guest_restricted": {"voice.use"},
+    "service_system": set(),
+}
+
+
+def normalize_role(role: str | None) -> str:
+    candidate = (role or DEFAULT_ROLE).strip().lower()
+    return candidate if candidate in VALID_ROLES else DEFAULT_ROLE
+
+
+def role_has_permission(role: str | None, permission: str) -> bool:
+    normalized = normalize_role(role)
+    return permission in ROLE_PERMISSIONS.get(normalized, set())
+
+
+def has_permission(role: str | None, permission: str, granted_permissions: list[str] | None = None) -> bool:
+    if role_has_permission(role, permission):
+        return True
+    if granted_permissions and permission in set(granted_permissions):
+        return True
+    return False
+
+
+def emergency_stop_enabled() -> bool:
+    return (os.getenv("JARVIS_EMERGENCY_STOP") or "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 @dataclass
 class ActionPlan:
     summary: str
@@ -115,9 +147,10 @@ class JarvisEngine:
         self._pending: dict[str, ActionPlan] = {}
         self.learning = LearningStore()
 
-    def process(self, text: str, token: str | None) -> dict:
+    def process(self, text: str, token: str | None, role: str | None = DEFAULT_ROLE, source: str = "text", granted_permissions: list[str] | None = None) -> dict:
         cleaned, verbose = strip_verbose(text)
         cleaned = self.learning.apply_aliases(cleaned)
+        role_name = normalize_role(role)
         ctx = ExecutionContext(
             text=cleaned,
             token=token,
@@ -126,7 +159,14 @@ class JarvisEngine:
             registry=self.registry,
             policy=self.policy,
             learning=self.learning,
+            metadata={"role": role_name, "source": source, "granted_permissions": granted_permissions or []},
         )
+
+        if source == "voice" and not has_permission(role_name, "voice.use", granted_permissions):
+            return summary_response(
+                "Permission denied.",
+                {"error": "permission_denied", "permission": "voice.use", "role": role_name},
+            )
 
         if wakeword_enabled() and normalize(cleaned) in wakeword_phrases():
             return self._finalize_response(
@@ -184,8 +224,24 @@ class JarvisEngine:
             )
 
         skill = matches[0][0]
+        if skill.risk in {RiskLevel.WRITE, RiskLevel.CRITICAL}:
+            required_permission = "actions.write.execute" if skill.risk == RiskLevel.WRITE else "actions.dangerous.execute"
+            if not has_permission(role_name, required_permission, (ctx.metadata or {}).get("granted_permissions")):
+                return summary_response(
+                    "Permission denied.",
+                    {
+                        "error": "permission_denied",
+                        "permission": required_permission,
+                        "role": role_name,
+                        "skill": skill.name,
+                        "risk": skill.risk,
+                    },
+                )
+
         result = skill.handler(ctx)
         if isinstance(result, ActionPlan):
+            if emergency_stop_enabled() and result.risk != RiskLevel.READ:
+                return summary_response("Emergency stop active.", {"error": "emergency_stop"})
             return self._handle_plan(result, ctx)
         return self._finalize_response(cleaned, skill.name, summarize_output(result, ctx), False)
 
@@ -206,9 +262,19 @@ class JarvisEngine:
         if lowered in {CONFIRM_WRITE.lower(), CONFIRM_CRITICAL.lower()}:
             if not ctx.token:
                 return summary_response("Token required.", {"error": "missing_token"})
+            role_name = normalize_role((ctx.metadata or {}).get("role"))
             plan = self._pending.pop(ctx.token, None)
+            if plan and plan.risk in {RiskLevel.WRITE, RiskLevel.CRITICAL}:
+                required_permission = "actions.write.execute" if plan.risk == RiskLevel.WRITE else "actions.dangerous.execute"
+                if not has_permission(role_name, required_permission, (ctx.metadata or {}).get("granted_permissions")):
+                    return summary_response(
+                        "Permission denied.",
+                        {"error": "permission_denied", "permission": required_permission, "role": role_name},
+                    )
             if not plan:
                 return summary_response("Nothing pending.", {"error": "no_pending_action"})
+            if emergency_stop_enabled() and plan.risk != RiskLevel.READ:
+                return summary_response("Emergency stop active.", {"error": "emergency_stop"})
             response = summarize_output(plan.execute(), ctx)
             return self._finalize_response(text, "confirmed-plan", response, False)
         return None
@@ -244,6 +310,13 @@ class JarvisEngine:
             return summary_response("Token required.", {"error": "missing_token"})
 
         if plan.risk in {RiskLevel.WRITE, RiskLevel.CRITICAL}:
+            role_name = normalize_role((ctx.metadata or {}).get("role"))
+            required_permission = "actions.write.execute" if plan.risk == RiskLevel.WRITE else "actions.dangerous.execute"
+            if not has_permission(role_name, required_permission, (ctx.metadata or {}).get("granted_permissions")):
+                return summary_response(
+                    "Permission denied.",
+                    {"error": "permission_denied", "permission": required_permission, "role": role_name},
+                )
             if not ctx.policy.is_target_allowed(plan.target, plan.risk):
                 return summary_response(
                     "Target not allowed.",

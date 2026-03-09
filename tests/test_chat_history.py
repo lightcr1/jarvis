@@ -42,6 +42,11 @@ class ChatHistoryTests(unittest.TestCase):
         ids = [s["id"] for s in listing.json().get("sessions", [])]
         self.assertIn(sid, ids)
 
+    def test_root_serves_chat_page(self):
+        res = self.client.get("/")
+        self.assertEqual(res.status_code, 200)
+        self.assertIn("<title>J.A.R.V.I.S.</title>", res.text)
+
 
 
     def test_delete_session(self):

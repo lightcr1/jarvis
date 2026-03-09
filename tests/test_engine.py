@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from jarvis_engine import JarvisEngine, SecurityPolicy, build_registry
+from jarvis_engine import JarvisEngine, SecurityPolicy, build_registry, SkillRegistry, Skill, RiskLevel, ActionPlan
 
 
 class EngineTests(unittest.TestCase):
@@ -28,25 +28,25 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(response["summary"], "Need clarification.")
 
     def test_token_and_confirm_for_critical(self):
-        response = self.engine.process("service restart local nginx", token=None)
+        response = self.engine.process("service restart local nginx", token=None, role="admin")
         self.assertEqual(response["summary"], "Token required.")
 
-        response = self.engine.process("service restart local nginx", token="tok")
+        response = self.engine.process("service restart local nginx", token="tok", role="admin")
         self.assertIn("Confirmation", response["summary"])
         self.assertEqual(response["data"]["confirm"], "YES, proceed")
 
-        response = self.engine.process("YES, proceed", token="tok")
+        response = self.engine.process("YES, proceed", token="tok", role="admin")
         self.assertIn("not configured", response["summary"])
 
     def test_scope_allowlist(self):
-        response = self.engine.process("service restart web01 nginx", token="tok")
+        response = self.engine.process("service restart web01 nginx", token="tok", role="admin")
         self.assertEqual(response["summary"], "Target not allowed.")
 
     def test_rate_limit(self):
         os.environ["COOLDOWN_RESTART_SECONDS"] = "60"
         engine = JarvisEngine(build_registry(), SecurityPolicy())
-        engine.process("service restart local nginx", token="tok")
-        response = engine.process("service restart local nginx", token="tok")
+        engine.process("service restart local nginx", token="tok", role="admin")
+        response = engine.process("service restart local nginx", token="tok", role="admin")
         self.assertIn("Cooldown", response["summary"])
 
     def test_feedback_and_alias_learning(self):
@@ -101,6 +101,153 @@ class EngineTests(unittest.TestCase):
         learned = self.engine.process("memory shwo", token=None)
         self.assertEqual(learned["summary"], "Memory snapshot ready.")
         self.assertEqual(learned["data"]["route"], "learned_memory")
+
+
+
+    def test_unknown_role_falls_back_to_standard_user_permissions(self):
+        response = self.engine.process("service restart local nginx", token="tok", role="not_a_real_role")
+        self.assertEqual(response["summary"], "Permission denied.")
+        self.assertEqual(response["data"]["permission"], "actions.dangerous.execute")
+        self.assertEqual(response["data"]["role"], "standard_user")
+
+    def test_standard_user_cannot_run_critical_skill(self):
+        response = self.engine.process("service restart local nginx", token="tok", role="standard_user")
+        self.assertEqual(response["summary"], "Permission denied.")
+        self.assertEqual(response["data"]["permission"], "actions.dangerous.execute")
+
+    def test_guest_voice_permission_denied_when_removed(self):
+        from jarvis_engine import ROLE_PERMISSIONS
+
+        saved = set(ROLE_PERMISSIONS["guest_restricted"])
+        try:
+            ROLE_PERMISSIONS["guest_restricted"].discard("voice.use")
+            response = self.engine.process("status jarvis", token=None, role="guest_restricted", source="voice")
+            self.assertEqual(response["summary"], "Permission denied.")
+            self.assertEqual(response["data"]["permission"], "voice.use")
+        finally:
+            ROLE_PERMISSIONS["guest_restricted"] = saved
+
+
+    def test_emergency_stop_blocks_critical_action(self):
+        os.environ["JARVIS_EMERGENCY_STOP"] = "1"
+        try:
+            response = self.engine.process("service restart local nginx", token="tok", role="admin")
+            self.assertEqual(response["summary"], "Emergency stop active.")
+            self.assertEqual(response["data"]["error"], "emergency_stop")
+        finally:
+            os.environ.pop("JARVIS_EMERGENCY_STOP", None)
+
+    def test_emergency_stop_blocks_confirmed_pending_action(self):
+        first = self.engine.process("service restart local nginx", token="tok", role="admin")
+        self.assertIn("Confirmation", first["summary"])
+
+        os.environ["JARVIS_EMERGENCY_STOP"] = "1"
+        try:
+            confirmed = self.engine.process("YES, proceed", token="tok", role="admin")
+            self.assertEqual(confirmed["summary"], "Emergency stop active.")
+            self.assertEqual(confirmed["data"]["error"], "emergency_stop")
+        finally:
+            os.environ.pop("JARVIS_EMERGENCY_STOP", None)
+
+
+    def test_standard_user_cannot_run_write_plan_skill(self):
+        registry = SkillRegistry()
+
+        def write_handler(_ctx):
+            return ActionPlan(
+                summary="Write op",
+                steps=["do write"],
+                risk=RiskLevel.WRITE,
+                target="local",
+                execute=lambda: {"summary": "write done", "data": {"ok": True}},
+            )
+
+        registry.register(
+            Skill(
+                name="write-test",
+                description="write test",
+                risk=RiskLevel.WRITE,
+                triggers=["write test"],
+                examples=["write test"],
+                handler=write_handler,
+            )
+        )
+
+        engine = JarvisEngine(registry, SecurityPolicy())
+        response = engine.process("write test", token="tok", role="standard_user")
+        self.assertEqual(response["summary"], "Permission denied.")
+        self.assertEqual(response["data"]["permission"], "actions.write.execute")
+
+    def test_admin_can_receive_write_confirmation(self):
+        registry = SkillRegistry()
+
+        def write_handler(_ctx):
+            return ActionPlan(
+                summary="Write op",
+                steps=["do write"],
+                risk=RiskLevel.WRITE,
+                target="local",
+                execute=lambda: {"summary": "write done", "data": {"ok": True}},
+            )
+
+        registry.register(
+            Skill(
+                name="write-test",
+                description="write test",
+                risk=RiskLevel.WRITE,
+                triggers=["write test"],
+                examples=["write test"],
+                handler=write_handler,
+            )
+        )
+
+        engine = JarvisEngine(registry, SecurityPolicy())
+        response = engine.process("write test", token="tok", role="admin")
+        self.assertIn("Confirmation", response["summary"])
+        self.assertEqual(response["data"]["confirm"], "YES")
+
+
+    def test_granted_permissions_allow_write_for_standard_user(self):
+        registry = SkillRegistry()
+
+        def write_handler(_ctx):
+            return ActionPlan(
+                summary="Write op",
+                steps=["do write"],
+                risk=RiskLevel.WRITE,
+                target="local",
+                execute=lambda: {"summary": "write done", "data": {"ok": True}},
+            )
+
+        registry.register(
+            Skill(
+                name="write-test",
+                description="write test",
+                risk=RiskLevel.WRITE,
+                triggers=["write test"],
+                examples=["write test"],
+                handler=write_handler,
+            )
+        )
+
+        engine = JarvisEngine(registry, SecurityPolicy())
+        response = engine.process(
+            "write test",
+            token="tok",
+            role="standard_user",
+            granted_permissions=["actions.write.execute"],
+        )
+        self.assertIn("Confirmation", response["summary"])
+
+    def test_granted_permissions_allow_voice_for_service_role(self):
+        response = self.engine.process(
+            "status jarvis",
+            token=None,
+            role="service_system",
+            source="voice",
+            granted_permissions=["voice.use"],
+        )
+        self.assertNotEqual(response["summary"], "Permission denied.")
 
 
 if __name__ == "__main__":

@@ -120,7 +120,7 @@ sudo systemctl restart jarvis.service
 ## 4) HTTPS, Web-UI und Voice
 
 UI:
-- `https://localhost:8000/`
+- `https://localhost:8000/` (öffnet direkt die Chat-Seite)
 - `https://localhost:8000/static/index.html`
 - `https://localhost:8000/static/orb.html`
 
@@ -345,6 +345,29 @@ python -m unittest discover -s tests
 
 ---
 
+
+### Admin data backup/restore (V1 ops)
+
+```bash
+./scripts/backup_admin_data.sh ./backups
+./scripts/restore_admin_data.sh ./backups/<archive>.tar.gz
+```
+
+`restore_admin_data.sh` only accepts expected admin-data filenames from the archive and will fail fast on unexpected entries.
+
+Admin API endpoints under `/admin/*` require:
+- `Authorization: Bearer <unlock_token>`
+- `X-Jarvis-User-Id: <user_id>` for an enabled user with role `admin`
+- `X-Jarvis-Role: admin` (must match stored role)
+
+Usernames in the admin user store are unique (case-insensitive), group names are unique (case-insensitive), memberships reject duplicates, user roles are validated against the V1 role set (`admin`, `standard_user`, `guest_restricted`, `service_system`), and permission sets reject unknown permission keys.
+
+Audit APIs validate query bounds: `/admin/audit/events` requires `limit` between 1 and 500, and both `/admin/audit/events` and `/admin/audit/counts` require `since_ts <= until_ts` when both are provided.
+
+Deleting users/groups performs cleanup of related memberships and direct permission sets to avoid orphaned admin-policy data.
+
+First-run bootstrap: when the user store has no users yet, only `POST /admin/users` accepts `X-Jarvis-Role: admin` + active bearer token without `X-Jarvis-User-Id` so an initial **enabled admin** can be created.
+
 ## 11) Troubleshooting (kurz)
 
 ### `status=203/EXEC`
@@ -368,3 +391,13 @@ sudo ./scripts/deploy_local.sh
 - Tokenformat prüfen: `user@realm!tokenid=tokensecret`
 - Rechte des Tokens prüfen
 - URL/Port/TLS Reachability prüfen
+
+---
+
+## V1 Planning Docs
+
+- `ROADMAP_V1.md` – phased roadmap and timeline to August launch.
+- `EXECUTION_CHECKLIST_V1.md` – operational step-by-step tracker for delivery.
+- `ROLE_PERMISSION_MATRIX_V1.md` – V1 RBAC roles, permissions, and enforcement rules.
+- `RELEASE_CRITERIA_V1.md` – objective pass/fail launch criteria and required evidence.
+- `SPRINT_PLAN_V1.md` – detailed sprint execution plan with estimates, dependencies, and exit criteria.

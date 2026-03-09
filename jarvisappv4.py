@@ -28,7 +28,22 @@ from google import genai
 from faster_whisper import WhisperModel
 
 from proxmox_module import build_router, proxmox_lxc_status, proxmox_vm_status
-from jarvis_engine import JarvisEngine, build_registry, SecurityPolicy
+from authz import build_permission_context, permission_decision, resolve_effective_permissions
+from admin_access import require_admin_access as require_admin_access_guard
+from audit_log_store import AuditLogStore
+from identity import get_active_user_or_raise
+from user_store import UserStore
+from group_store import GroupStore
+from membership_store import MembershipStore
+from permission_store import PermissionStore, KNOWN_PERMISSIONS
+from jarvis_engine import (
+    JarvisEngine,
+    build_registry,
+    SecurityPolicy,
+    normalize_role,
+    role_has_permission,
+    emergency_stop_enabled,
+)
 
 app = FastAPI(title="Jarvis Backend")
 logger = logging.getLogger("jarvis.audio")
@@ -39,7 +54,7 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.get("/")
 def root():
-    return FileResponse("static/orb.html")
+    return FileResponse("static/index.html")
 
 
 @app.get("/static/orb-v2.html")
@@ -104,6 +119,36 @@ class TTSIn(BaseModel):
 class UnlockOut(BaseModel):
     token: str
     expires_in_sec: int
+
+
+class AdminUserCreateIn(BaseModel):
+    username: str
+    role: str = "standard_user"
+    enabled: bool = True
+
+
+class AdminUserUpdateIn(BaseModel):
+    role: str | None = None
+    enabled: bool | None = None
+
+
+class AdminGroupCreateIn(BaseModel):
+    name: str
+    description: str = ""
+
+
+class AdminGroupUpdateIn(BaseModel):
+    name: str | None = None
+    description: str | None = None
+
+
+class AdminMembershipIn(BaseModel):
+    user_id: str
+    group_id: str
+
+
+class AdminPermissionSetIn(BaseModel):
+    permissions: list[str] = Field(default_factory=list)
 
 
 class ChatHistoryStore:
@@ -178,6 +223,8 @@ class ChatHistoryStore:
         sessions.pop(session_id, None)
         self._save()
         return True
+
+
 
 
 class RagStore:
@@ -284,6 +331,11 @@ class RagStore:
 
 chat_history = ChatHistoryStore()
 rag_store = RagStore()
+audit_log = AuditLogStore()
+user_store = UserStore()
+group_store = GroupStore()
+membership_store = MembershipStore()
+permission_store = PermissionStore()
 
 
 @app.get("/health")
@@ -411,6 +463,30 @@ def require_token(auth: str | None):
 
 
 app.include_router(build_router(require_token))
+
+
+def require_admin_access(
+    x_jarvis_user_id: str | None,
+    x_jarvis_role: str | None,
+    authorization: str | None,
+    *,
+    allow_bootstrap: bool = False,
+) -> tuple[str, str]:
+    return require_admin_access_guard(
+        user_store,
+        _tokens,
+        x_jarvis_user_id,
+        x_jarvis_role,
+        authorization,
+        allow_bootstrap=allow_bootstrap,
+    )
+
+
+def _validate_audit_query(limit: int, since_ts: int | None, until_ts: int | None) -> None:
+    if limit < 1 or limit > 500:
+        raise HTTPException(400, "limit must be between 1 and 500")
+    if since_ts is not None and until_ts is not None and since_ts > until_ts:
+        raise HTTPException(400, "since_ts must be <= until_ts")
 
 engine = JarvisEngine(build_registry(), SecurityPolicy())
 
@@ -632,7 +708,20 @@ def parse_ping(output: str) -> dict[str, str]:
     return data
 
 
-def try_skill(text: str) -> dict[str, object] | None:
+def block_write_if_unauthorized(role: str, token: str | None, granted_permissions: list[str] | None = None) -> dict[str, object] | None:
+    if emergency_stop_enabled():
+        return {"reply": "Emergency stop active.", "data": {"error": "emergency_stop"}}
+    if not token:
+        return {"reply": "Token required.", "data": {"error": "missing_token"}}
+    if not (role_has_permission(role, "actions.write.execute") or ((granted_permissions or []) and "actions.write.execute" in set(granted_permissions))):
+        return {
+            "reply": "Permission denied.",
+            "data": {"error": "permission_denied", "permission": "actions.write.execute", "role": role},
+        }
+    return None
+
+
+def try_skill(text: str, role: str = "admin", token: str | None = None, granted_permissions: list[str] | None = None) -> dict[str, object] | None:
     t = text.strip().lower()
 
     # READ
@@ -809,6 +898,9 @@ def try_skill(text: str) -> dict[str, object] | None:
 
     # WRITE
     if t.startswith("restart "):
+        blocked = block_write_if_unauthorized(role, token, granted_permissions)
+        if blocked is not None:
+            return blocked
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
         run_cmd(["/usr/bin/sudo", "/bin/systemctl", "restart", service], timeout=15)
@@ -816,6 +908,9 @@ def try_skill(text: str) -> dict[str, object] | None:
         return {"reply": f"On it. {service} restarted ({st}).", "data": {"service": service, "active": st}}
 
     if t.startswith("start "):
+        blocked = block_write_if_unauthorized(role, token, granted_permissions)
+        if blocked is not None:
+            return blocked
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
         run_cmd(["/usr/bin/sudo", "/bin/systemctl", "start", service], timeout=15)
@@ -823,6 +918,9 @@ def try_skill(text: str) -> dict[str, object] | None:
         return {"reply": f"On it. {service} started ({st}).", "data": {"service": service, "active": st}}
 
     if t.startswith("stop "):
+        blocked = block_write_if_unauthorized(role, token, granted_permissions)
+        if blocked is not None:
+            return blocked
         service = t.split(" ", 1)[1].strip()
         ensure_service_allowed(service)
         run_cmd(["/usr/bin/sudo", "/bin/systemctl", "stop", service], timeout=15)
@@ -958,7 +1056,12 @@ def rag_llm_answer(user_text: str, hits: list[dict]) -> str:
 # Chat (Skills -> LLM fallback)
 # ---------------------------
 @app.post("/chat", response_model=ChatOut)
-def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
+def chat(
+    payload: ChatIn,
+    authorization: str | None = Header(default=None),
+    x_jarvis_role: str | None = Header(default=None),
+    x_jarvis_user_id: str | None = Header(default=None),
+):
     text = (payload.text or "").strip()
     source = (payload.source or "text").strip().lower()
 
@@ -984,10 +1087,27 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
 
     chat_history.append_message(session_id, "user", text)
 
-    skill_first = try_skill(text)
+    role = normalize_role(x_jarvis_role)
+    try:
+        active_user = get_active_user_or_raise(user_store, x_jarvis_user_id)
+    except LookupError:
+        audit_log.write("invalid_user_context", {"role": role, "source": source, "text": text, "user_id": x_jarvis_user_id, "reason": "not_found"})
+        raise HTTPException(404, "user not found")
+    except PermissionError:
+        audit_log.write("invalid_user_context", {"role": role, "source": source, "text": text, "user_id": x_jarvis_user_id, "reason": "disabled"})
+        raise HTTPException(403, "user disabled")
+
+    effective_user_id = active_user["id"] if active_user else None
+    granted_permissions = sorted(resolve_effective_permissions(role, effective_user_id, membership_store, permission_store))
+
+    skill_first = try_skill(text, role=role, token=token, granted_permissions=granted_permissions)
     if skill_first is not None:
         reply = skill_first.get("reply", "Done.")
         data = skill_first.get("data", {})
+        if data.get("error") == "permission_denied":
+            audit_log.write("permission_denied", {"role": role, "source": source, "text": text, "data": data, "path": "try_skill"})
+        if data.get("error") == "emergency_stop":
+            audit_log.write("emergency_stop_blocked", {"role": role, "source": source, "text": text, "path": "try_skill"})
         chat_history.append_message(session_id, "jarvis", reply)
         return {"reply": reply, "data": data, "session_id": session_id}
 
@@ -1014,9 +1134,17 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
             chat_history.append_message(session_id, "jarvis", reply)
             return {"reply": reply, "data": data, "session_id": session_id}
 
-    response = engine.process(text, token)
+    response = engine.process(text, token, role=role, source=source, granted_permissions=granted_permissions)
     summary = response.get("summary", "")
     data = response.get("data", {})
+
+    if data.get("error") == "permission_denied":
+        audit_log.write("permission_denied", {"role": role, "source": source, "text": text, "data": data})
+    if data.get("error") == "emergency_stop":
+        audit_log.write("emergency_stop_blocked", {"role": role, "source": source, "text": text, "path": "engine"})
+
+    if data.get("confirm") in {"YES", "YES, proceed"}:
+        audit_log.write("dangerous_action_confirmation_requested", {"role": role, "source": source, "text": text, "risk": data.get("risk")})
 
     if data.get("route") != "cloud":
         chat_history.append_message(session_id, "jarvis", summary)
@@ -1075,6 +1203,341 @@ def chat(payload: ChatIn, authorization: str | None = Header(default=None)):
         }
 
 
+
+
+
+@app.get("/admin/audit/events")
+def admin_audit_events(
+    limit: int = 100,
+    event: str | None = None,
+    role: str | None = None,
+    since_ts: int | None = None,
+    until_ts: int | None = None,
+    x_jarvis_user_id: str | None = Header(default=None),
+    x_jarvis_role: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+):
+    require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    _validate_audit_query(limit, since_ts, until_ts)
+
+    events = audit_log.read_events(
+        limit=limit,
+        event=event,
+        role=role,
+        since_ts=since_ts,
+        until_ts=until_ts,
+    )
+    return {
+        "events": events,
+        "count": len(events),
+        "filters": {
+            "limit": limit,
+            "event": event,
+            "role": role,
+            "since_ts": since_ts,
+            "until_ts": until_ts,
+        },
+    }
+
+
+
+
+
+@app.get("/admin/audit/counts")
+def admin_audit_counts(
+    role: str | None = None,
+    since_ts: int | None = None,
+    until_ts: int | None = None,
+    x_jarvis_user_id: str | None = Header(default=None),
+    x_jarvis_role: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+):
+    require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    _validate_audit_query(100, since_ts, until_ts)
+
+    counts = audit_log.aggregate_counts(role=role, since_ts=since_ts, until_ts=until_ts)
+    total = sum(counts.values())
+    return {
+        "total": total,
+        "counts": counts,
+        "filters": {"role": role, "since_ts": since_ts, "until_ts": until_ts},
+    }
+
+@app.get("/admin/users")
+def admin_list_users(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    return {"users": user_store.list_users()}
+
+
+@app.post("/admin/users")
+def admin_create_user(payload: AdminUserCreateIn, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    actor_user_id, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization, allow_bootstrap=True)
+    if actor_user_id == "bootstrap":
+        # During first-run bootstrap, only allow creating the initial enabled admin account.
+        if normalize_role(payload.role) != "admin":
+            raise HTTPException(400, "bootstrap can only create admin user")
+        if not bool(payload.enabled):
+            raise HTTPException(400, "bootstrap admin must be enabled")
+    try:
+        created = user_store.create_user(payload.username, role=payload.role, enabled=payload.enabled)
+    except ValueError as exc:
+        detail = str(exc)
+        if detail == "username already exists":
+            raise HTTPException(409, detail)
+        raise HTTPException(400, detail)
+    audit_log.write("admin_user_created", {"actor_role": caller_role, "user_id": created["id"], "username": created["username"], "role": created["role"]})
+    return created
+
+
+@app.patch("/admin/users/{user_id}")
+def admin_update_user(user_id: str, payload: AdminUserUpdateIn, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    try:
+        updated = user_store.update_user(user_id, role=payload.role, enabled=payload.enabled)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    if not updated:
+        raise HTTPException(404, "user not found")
+    audit_log.write("admin_user_updated", {"actor_role": caller_role, "user_id": user_id})
+    return updated
+
+
+@app.delete("/admin/users/{user_id}")
+def admin_delete_user(user_id: str, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    deleted = user_store.delete_user(user_id)
+    if not deleted:
+        raise HTTPException(404, "user not found")
+    removed_memberships = membership_store.remove_user_memberships(user_id)
+    removed_permissions = permission_store.clear_user_permissions(user_id)
+    audit_log.write(
+        "admin_user_deleted",
+        {
+            "actor_role": caller_role,
+            "user_id": user_id,
+            "removed_memberships": removed_memberships,
+            "removed_user_permissions": bool(removed_permissions),
+        },
+    )
+    return {"ok": True, "id": user_id}
+
+
+
+@app.get("/admin/groups")
+def admin_list_groups(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    return {"groups": group_store.list_groups()}
+
+
+@app.post("/admin/groups")
+def admin_create_group(payload: AdminGroupCreateIn, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    try:
+        created = group_store.create_group(payload.name, description=payload.description)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    audit_log.write("admin_group_created", {"actor_role": caller_role, "group_id": created["id"], "name": created["name"]})
+    return created
+
+
+@app.patch("/admin/groups/{group_id}")
+def admin_update_group(group_id: str, payload: AdminGroupUpdateIn, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    try:
+        updated = group_store.update_group(group_id, name=payload.name, description=payload.description)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    if not updated:
+        raise HTTPException(404, "group not found")
+    audit_log.write("admin_group_updated", {"actor_role": caller_role, "group_id": group_id})
+    return updated
+
+
+@app.delete("/admin/groups/{group_id}")
+def admin_delete_group(group_id: str, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    deleted = group_store.delete_group(group_id)
+    if not deleted:
+        raise HTTPException(404, "group not found")
+    removed_memberships = membership_store.remove_group_memberships(group_id)
+    removed_permissions = permission_store.clear_group_permissions(group_id)
+    audit_log.write(
+        "admin_group_deleted",
+        {
+            "actor_role": caller_role,
+            "group_id": group_id,
+            "removed_memberships": removed_memberships,
+            "removed_group_permissions": bool(removed_permissions),
+        },
+    )
+    return {"ok": True, "id": group_id}
+
+
+
+@app.get("/admin/assignments")
+def admin_list_assignments(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    return {"memberships": membership_store.list_memberships()}
+
+
+@app.post("/admin/assignments")
+def admin_add_assignment(payload: AdminMembershipIn, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    if not user_store.get_user(payload.user_id):
+        raise HTTPException(404, "user not found")
+    if not group_store.get_group(payload.group_id):
+        raise HTTPException(404, "group not found")
+
+    try:
+        item = membership_store.add_membership(payload.user_id, payload.group_id)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc))
+    audit_log.write(
+        "admin_assignment_added",
+        {"actor_role": caller_role, "user_id": payload.user_id, "group_id": payload.group_id},
+    )
+    return item
+
+
+@app.delete("/admin/assignments")
+def admin_remove_assignment(user_id: str, group_id: str, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    removed = membership_store.remove_membership(user_id, group_id)
+    if not removed:
+        raise HTTPException(404, "assignment not found")
+    audit_log.write(
+        "admin_assignment_removed",
+        {"actor_role": caller_role, "user_id": user_id, "group_id": group_id},
+    )
+    return {"ok": True, "user_id": user_id, "group_id": group_id}
+
+
+
+@app.get("/admin/permissions")
+def admin_list_permissions(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    return {
+        "known_permissions": sorted(KNOWN_PERMISSIONS),
+        "group_permissions": permission_store.list_group_permissions(),
+        "user_permissions": permission_store.list_user_permissions(),
+    }
+
+
+@app.put("/admin/permissions/groups/{group_id}")
+def admin_set_group_permissions(group_id: str, payload: AdminPermissionSetIn, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    if not group_store.get_group(group_id):
+        raise HTTPException(404, "group not found")
+
+    invalid = permission_store.invalid_permissions(payload.permissions)
+    if invalid:
+        raise HTTPException(400, f"invalid permissions: {', '.join(invalid)}")
+
+    try:
+        updated = permission_store.set_group_permissions(group_id, payload.permissions)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    audit_log.write("admin_group_permissions_set", {"actor_role": caller_role, "group_id": group_id, "count": len(updated)})
+    return {"group_id": group_id, "permissions": updated}
+
+
+@app.put("/admin/permissions/users/{user_id}")
+def admin_set_user_permissions(user_id: str, payload: AdminPermissionSetIn, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    if not user_store.get_user(user_id):
+        raise HTTPException(404, "user not found")
+
+    invalid = permission_store.invalid_permissions(payload.permissions)
+    if invalid:
+        raise HTTPException(400, f"invalid permissions: {', '.join(invalid)}")
+
+    try:
+        updated = permission_store.set_user_permissions(user_id, payload.permissions)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc))
+    audit_log.write("admin_user_permissions_set", {"actor_role": caller_role, "user_id": user_id, "count": len(updated)})
+    return {"user_id": user_id, "permissions": updated}
+
+
+@app.delete("/admin/permissions/groups/{group_id}")
+def admin_clear_group_permissions(group_id: str, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    cleared = permission_store.clear_group_permissions(group_id)
+    if not cleared:
+        raise HTTPException(404, "group permissions not found")
+    audit_log.write("admin_group_permissions_cleared", {"actor_role": caller_role, "group_id": group_id})
+    return {"ok": True, "group_id": group_id}
+
+
+@app.delete("/admin/permissions/users/{user_id}")
+def admin_clear_user_permissions(user_id: str, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    _, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    cleared = permission_store.clear_user_permissions(user_id)
+    if not cleared:
+        raise HTTPException(404, "user permissions not found")
+    audit_log.write("admin_user_permissions_cleared", {"actor_role": caller_role, "user_id": user_id})
+    return {"ok": True, "user_id": user_id}
+
+
+
+@app.get("/admin/permissions/effective/{user_id}")
+def admin_effective_permissions(
+    user_id: str,
+    x_jarvis_user_id: str | None = Header(default=None),
+    x_jarvis_role: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+):
+    require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+
+    try:
+        user = get_active_user_or_raise(user_store, user_id)
+    except LookupError:
+        raise HTTPException(404, "user not found")
+    except PermissionError:
+        raise HTTPException(403, "user disabled")
+
+    context = build_permission_context(user.get("role"), user_id, membership_store, permission_store)
+    return {"user": user, "permissions": context}
+
+
+
+@app.get("/admin/authz/check")
+def admin_check_authorization(
+    user_id: str,
+    permission: str,
+    x_jarvis_user_id: str | None = Header(default=None),
+    x_jarvis_role: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+):
+    require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+
+    try:
+        user = get_active_user_or_raise(user_store, user_id)
+    except LookupError:
+        raise HTTPException(404, "user not found")
+    except PermissionError:
+        raise HTTPException(403, "user disabled")
+
+    decision = permission_decision(user.get("role"), user_id, permission, membership_store, permission_store)
+    return {"user": user, **decision}
+
+
+
+@app.get("/admin/status/summary")
+def admin_status_summary(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+    require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+
+    memberships = membership_store.list_memberships()
+    return {
+        "counts": {
+            "users": len(user_store.list_users()),
+            "groups": len(group_store.list_groups()),
+            "memberships": len(memberships),
+            "group_permission_sets": len(permission_store.list_group_permissions()),
+            "user_permission_sets": len(permission_store.list_user_permissions()),
+            "audit_events": audit_log.count_events(),
+        }
+    }
 
 @app.get("/chat/sessions")
 def list_chat_sessions():
