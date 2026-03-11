@@ -42,6 +42,7 @@ Das Deployment ist **idempotent** und erledigt alles in einem Lauf:
 7. Service aktivieren/starten
 8. Healthcheck ausführen
 9. Sicherstellen, dass auch das Laufskript (`/opt/jarvis/scripts/run_jarvis.sh`) ausführbar ist
+10. Admin-Store-Defaults in `config.env` ergänzen und Daten-Dateien unter `/var/lib/jarvis` mit gültigen Initialstrukturen vorbereiten
 
 Danach prüfen:
 
@@ -120,7 +121,7 @@ sudo systemctl restart jarvis.service
 ## 4) HTTPS, Web-UI und Voice
 
 UI:
-- `https://localhost:8000/`
+- `https://localhost:8000/` (öffnet direkt die Chat-Seite)
 - `https://localhost:8000/static/index.html`
 - `https://localhost:8000/static/orb.html`
 
@@ -345,6 +346,40 @@ python -m unittest discover -s tests
 
 ---
 
+
+### Admin data backup/restore (V1 ops)
+
+```bash
+./scripts/backup_admin_data.sh ./backups
+./scripts/restore_admin_data.sh ./backups/<archive>.tar.gz
+./scripts/check_admin_data_integrity.sh
+```
+
+`check_admin_data_integrity.sh` validates admin-policy schema and semantics (known roles/permission keys, sourced from runtime constants when available), warns on orphan references by default (missing user/group links), and flags duplicate/malformed memberships. Set `JARVIS_INTEGRITY_FAIL_ON_ORPHANS=1` to make orphan drift fail hard (useful in strict CI/deploy gates, including malformed membership records) and `JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS=1` to fail on duplicate/malformed membership drift specifically (exit code `8`). The script also reports admin lockout posture (`locked_out`/`at_risk`) from enabled-admin count; set `JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT=1` to fail when no enabled admin exists.
+
+`deploy_local.sh` now seeds integrity strictness flags (`JARVIS_INTEGRITY_FAIL_ON_ORPHANS`, `JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT`, `JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS`) to `0` in `/etc/jarvis/config.env` when missing, so behavior is explicit and opt-in.
+
+`restore_admin_data.sh` only accepts expected admin-data filenames from the archive and will fail fast on unexpected entries.
+
+Admin API endpoints under `/admin/*` require:
+- `Authorization: Bearer <unlock_token>`
+- `X-Jarvis-User-Id: <user_id>` for an enabled user with role `admin`
+- `X-Jarvis-Role: admin` (must match stored role)
+
+Usernames in the admin user store are unique (case-insensitive), group names are unique (case-insensitive), memberships reject duplicates, user roles are validated against the V1 role set (`admin`, `standard_user`, `guest_restricted`, `service_system`), and permission sets reject unknown permission keys.
+
+Audit APIs validate query bounds: `/admin/audit/events` requires `limit` between 1 and 500, and both `/admin/audit/events` and `/admin/audit/counts` require `since_ts <= until_ts` when both are provided.
+
+Deleting users/groups performs cleanup of related memberships and direct permission sets to avoid orphaned admin-policy data.
+`/admin/status/summary` now also reports orphan diagnostics (memberships or permission sets that reference missing users/groups).
+`/admin/status/summary` includes `enabled_admins`, `disabled_admins`, `admin_lockout_risk`, and `admin_lockout_state` (`ok|at_risk|locked_out`) to quickly surface admin-access fragility.
+
+Safety guard: deleting the last enabled admin user is blocked to prevent administrative lockout.
+Safety guard: disabling the last enabled admin user is also blocked.
+Safety guard: changing the last enabled admin's role away from `admin` is blocked.
+
+First-run bootstrap: when the user store has no users yet, only `POST /admin/users` accepts `X-Jarvis-Role: admin` + active bearer token without `X-Jarvis-User-Id` so an initial **enabled admin** can be created.
+
 ## 11) Troubleshooting (kurz)
 
 ### `status=203/EXEC`
@@ -368,3 +403,13 @@ sudo ./scripts/deploy_local.sh
 - Tokenformat prüfen: `user@realm!tokenid=tokensecret`
 - Rechte des Tokens prüfen
 - URL/Port/TLS Reachability prüfen
+
+---
+
+## V1 Planning Docs
+
+- `ROADMAP_V1.md` – phased roadmap and timeline to August launch.
+- `EXECUTION_CHECKLIST_V1.md` – operational step-by-step tracker for delivery.
+- `ROLE_PERMISSION_MATRIX_V1.md` – V1 RBAC roles, permissions, and enforcement rules.
+- `RELEASE_CRITERIA_V1.md` – objective pass/fail launch criteria and required evidence.
+- `SPRINT_PLAN_V1.md` – detailed sprint execution plan with estimates, dependencies, and exit criteria.

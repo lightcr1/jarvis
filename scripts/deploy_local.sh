@@ -73,6 +73,74 @@ set -a
 source "${CONFIG_FILE}"
 set +a
 
+# Ensure admin data store env defaults exist so runtime + ops scripts are aligned.
+ensure_env_default() {
+  local key="$1"
+  local value="$2"
+  if ! grep -q "^${key}=" "${CONFIG_FILE}"; then
+    echo "${key}=${value}" >> "${CONFIG_FILE}"
+  fi
+}
+
+ensure_env_default "JARVIS_AUDIT_LOG_PATH" "/var/lib/jarvis/audit.log"
+ensure_env_default "JARVIS_USER_STORE_PATH" "/var/lib/jarvis/users.json"
+ensure_env_default "JARVIS_GROUP_STORE_PATH" "/var/lib/jarvis/groups.json"
+ensure_env_default "JARVIS_MEMBERSHIP_STORE_PATH" "/var/lib/jarvis/memberships.json"
+ensure_env_default "JARVIS_PERMISSION_STORE_PATH" "/var/lib/jarvis/permissions.json"
+ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_ORPHANS" "0"
+ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT" "0"
+ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS" "0"
+
+# Reload after defaults so variables are available below.
+set -a
+# shellcheck disable=SC1090
+source "${CONFIG_FILE}"
+set +a
+
+ADMIN_DATA_PATHS=(
+  "${JARVIS_AUDIT_LOG_PATH}"
+  "${JARVIS_USER_STORE_PATH}"
+  "${JARVIS_GROUP_STORE_PATH}"
+  "${JARVIS_MEMBERSHIP_STORE_PATH}"
+  "${JARVIS_PERMISSION_STORE_PATH}"
+)
+
+seed_admin_data_file() {
+  local path="$1"
+  local base
+  base="$(basename "${path}")"
+  case "${base}" in
+    users.json)
+      printf '%s\n' '{"users": {}}' > "${path}"
+      ;;
+    groups.json)
+      printf '%s\n' '{"groups": {}}' > "${path}"
+      ;;
+    memberships.json)
+      printf '%s\n' '{"memberships": []}' > "${path}"
+      ;;
+    permissions.json)
+      printf '%s\n' '{"group_permissions": {}, "user_permissions": {}}' > "${path}"
+      ;;
+    audit.log)
+      : > "${path}"
+      ;;
+    *)
+      : > "${path}"
+      ;;
+  esac
+}
+
+for p in "${ADMIN_DATA_PATHS[@]}"; do
+  [[ -n "${p}" ]] || continue
+  mkdir -p "$(dirname "${p}")"
+  if [[ ! -f "${p}" ]]; then
+    seed_admin_data_file "${p}"
+  fi
+done
+
+chmod 640 "${JARVIS_AUDIT_LOG_PATH}" "${JARVIS_USER_STORE_PATH}" "${JARVIS_GROUP_STORE_PATH}" "${JARVIS_MEMBERSHIP_STORE_PATH}" "${JARVIS_PERMISSION_STORE_PATH}" || fail "Failed to set permissions on admin data files"
+
 TLS_CERT="${JARVIS_TLS_CERT_FILE:-}"
 TLS_KEY="${JARVIS_TLS_KEY_FILE:-}"
 TLS_ACTIVE="0"
@@ -125,4 +193,8 @@ if [[ "${TLS_ACTIVE}" == "1" ]]; then
 else
   echo "Health URL: ${HEALTH_URL_HTTP}"
   curl -fsS "${HEALTH_URL_HTTP}" || fail "HTTP health check failed"
+fi
+
+if [[ -x "${INSTALL_DIR}/scripts/check_admin_data_integrity.sh" ]]; then
+  "${INSTALL_DIR}/scripts/check_admin_data_integrity.sh" || fail "Admin data integrity check failed"
 fi

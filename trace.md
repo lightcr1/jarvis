@@ -27,3 +27,116 @@
 - [x] **R25** Testsuite (Matching/Security/Scopes/Rate-limit). ✅ `tests/test_engine.py`.
 
 **Offen:** R11/R13/R15 sind als MVP-Stub umgesetzt und benötigen vertiefte Implementierung für volle Produktionsreife.
+
+## V1 Delivery Progress Notes
+
+- ✅ Sprint 2 seed delivered: admin-only audit read endpoint (`GET /admin/audit/events`) with role check and event filters.
+- ✅ Audit storage now supports filtered reads (`limit`, `event`, `role`) for admin operations visibility.
+- ✅ Audit log module extracted (`audit_log_store.py`) with unit tests for write/read/filter robustness.
+- ✅ Sprint 2 backend progress: admin user-management APIs (`/admin/users`) scaffolded with admin-only access and audit events.
+- ✅ Sprint 2 backend progress: admin group-management APIs (`/admin/groups`) scaffolded with admin-only access and audit events.
+- ✅ Sprint 2 backend progress: admin assignment APIs (`/admin/assignments`) scaffolded for user↔group membership management.
+- ✅ Sprint 2 backend progress: admin permissions APIs (`/admin/permissions`) scaffolded for user/group permission sets.
+- ✅ Sprint 2 backend progress: effective permission resolution scaffolded (role + user + group permissions) for runtime checks.
+- ✅ Sprint 2 backend progress: admin endpoints now require active bearer unlock token in addition to admin role header.
+- ✅ Sprint 2 backend progress: permissions API now validates against a known-permissions allowlist to prevent invalid policy entries.
+- ✅ Sprint 2 backend progress: audit API queryability expanded with time-range filters (`since_ts`, `until_ts`).
+- ✅ Sprint 2 backend progress: added admin effective-permissions inspection endpoint (`/admin/permissions/effective/{user_id}`).
+- ✅ Sprint 2 backend progress: added admin authorization decision check endpoint (`/admin/authz/check`) with permission-source insight.
+- ✅ Sprint 2 backend progress: request identity validation added (user must exist and be enabled) before permission resolution.
+- ✅ Sprint 2 backend progress: added admin status summary endpoint (`/admin/status/summary`) for core admin-data/audit counts.
+- ✅ Sprint 2 backend progress: added audit event-count aggregation endpoint (`/admin/audit/counts`) with role/time filters.
+- ✅ Sprint 2/ops progress: added admin data backup/restore scripts (`backup_admin_data.sh`, `restore_admin_data.sh`).
+- ✅ Sprint 2/ops hardening: restore script now rejects unexpected archive entries; backup/restore scripts now covered by automated tests.
+- ✅ Sprint 2/admin hardening: admin APIs now validate caller identity from `X-Jarvis-User-Id` against user store (enabled admin required) instead of trusting role header alone.
+- ✅ Sprint 2/admin bootstrap safety: when no users exist yet, admin guard allows token-authenticated `X-Jarvis-Role: admin` calls to create initial admin user without permanent lockout.
+- ✅ Sprint 2/admin API validation: added integration tests for `/admin/users` auth flow (token required, first-user bootstrap, post-bootstrap identity enforcement).
+- ✅ Sprint 2/admin hardening follow-up: bootstrap access is now endpoint-scoped (only initial `POST /admin/users`), with tests to prevent bootstrap use on other admin routes.
+- ✅ Sprint 2/admin hardening follow-up: bootstrap now only permits creating an enabled admin account (cannot seed disabled/non-admin first user).
+- ✅ Sprint 2/admin data integrity: usernames are now enforced unique (case-insensitive) in user store; duplicate admin-user creates return conflict.
+- ✅ Roadmap tracking updated: `ROADMAP_V1.md` now includes an explicit current-state marker for March 2026 and next-phase focus.
+- ✅ Sprint 2/admin data integrity: user role values are now validated against known RBAC roles in store/API paths with test coverage.
+- ✅ Sprint 2/admin data integrity: group names are now enforced unique (case-insensitive) in store/API paths with conflict responses and tests.
+- ✅ Sprint 2/admin data integrity: memberships now reject duplicate user↔group assignments with API conflict responses and coverage.
+- ✅ Sprint 2/admin data integrity: permission store now rejects unknown permission keys at write-time (store + API coverage).
+- ✅ Sprint 2/admin API hardening: audit endpoints now validate `limit` bounds and reject invalid `since_ts`/`until_ts` ranges.
+- ✅ Sprint 2/admin consistency: deleting users/groups now cascades cleanup of memberships and scoped permission sets (API + store coverage).
+- ✅ Sprint 2/admin safety: deleting the last enabled admin is now blocked to avoid irreversible admin lockout.
+- ✅ Sprint 2/admin safety: disabling the last enabled admin is now blocked as well.
+- ✅ Sprint 2/admin safety: demoting the last enabled admin role is now blocked to prevent role-based lockout.
+- ✅ Deployment alignment: `deploy_local.sh` now seeds admin store env defaults and prepares admin data files so runtime + backup/restore paths stay consistent.
+- ✅ Deployment alignment: admin data files are now initialized with valid default JSON structures at deploy-time (no empty-placeholder files).
+- ✅ Admin observability: `/admin/status/summary` now includes orphan diagnostics for memberships and permission sets referencing missing principals/groups.
+- ✅ Ops hardening: added `check_admin_data_integrity.sh` and wired deploy to run it after health checks.
+- ✅ Ops hardening: integrity checker now detects orphan references; can optionally fail strict gates via `JARVIS_INTEGRITY_FAIL_ON_ORPHANS=1`.
+- ✅ Admin observability: status summary now reports enabled/disabled admin counts plus lockout state (`ok`, `at_risk`, `locked_out`).
+- ✅ Ops hardening: integrity checker now warns on admin lockout posture and can hard-fail locked-out state via `JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT=1`.
+- ✅ Ops hardening: integrity checker now validates known roles/permissions and reports duplicate-membership drift.
+- ✅ Ops hardening: integrity checker now reuses runtime role/permission constants (with fallback) to reduce policy drift.
+- ✅ Deployment alignment: deploy now seeds integrity strictness env flags (`JARVIS_INTEGRITY_FAIL_ON_ORPHANS`, `JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT`) with safe defaults.
+- ✅ Ops hardening: integrity checker now handles malformed membership entries defensively without crashing.
+- ✅ Ops hardening: strict orphan gate now also fails on malformed membership entries (not only missing principal/group refs).
+- ✅ Ops hardening: malformed membership objects with missing/invalid `user_id`/`group_id` are now treated as malformed drift in integrity checks.
+- ✅ Ops hardening: strict orphan gate now also fails on dict-shaped malformed memberships (e.g. missing `group_id`).
+- ✅ Ops hardening: strict orphan gate regression now covers empty-string membership IDs as malformed drift.
+- ✅ Ops hardening: strict orphan gate regression now covers whitespace-only membership IDs as malformed drift.
+- ✅ Ops hardening: strict orphan gate regression now covers whitespace-only `group_id` membership values as malformed drift.
+- ✅ Ops hardening: added optional strict duplicate-membership gate via `JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS=1` (exit code 8).
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers malformed dict-shaped memberships as well.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers whitespace-only `user_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers whitespace-only `group_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers empty `group_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers non-string `user_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers non-string `group_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers `None` `user_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers `None` `group_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers empty `user_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers non-dict membership entries as malformed drift.
+- ✅ Ops docs hardening: regression test now asserts README documents duplicate-membership strictness flag semantics.
+- ✅ Ops docs hardening: README regression now also checks deploy-seeding documentation for duplicate-membership strictness flag.
+- ✅ Ops docs hardening: README regression now asserts deploy-seeding phrasing remains present for integrity strictness flags.
+- ✅ Ops docs hardening: README regression now asserts all deploy-seeded integrity flags are explicitly listed together.
+- ✅ Ops docs hardening: README regression now asserts `=1` strictness examples for orphan and admin-lockout flags too.
+- ✅ Ops docs hardening: README now documents duplicate-membership strict gate exit code (`8`) and regression checks it.
+- ✅ Ops docs hardening: README regression now asserts deploy-seeding target path (`/etc/jarvis/config.env`) remains documented.
+- ✅ Ops docs hardening: README regression now asserts integrity strictness deploy defaults remain explicitly opt-in.
+- ✅ Ops docs hardening: README regression now asserts the exact deploy-defaults sentence to prevent partial-text false positives.
+- ✅ Ops docs hardening: moved README deploy-defaults regression expectations into module-level constants for clearer maintenance.
+- ✅ Ops docs hardening: README regression helper now emits explicit missing-snippet messages for faster review triage.
+- ✅ Ops docs hardening: added a regression guard ensuring README snippet expectation fixtures remain duplicate-free.
+- ✅ Ops docs hardening: README snippet expectation fixture is now normalized in sorted order with a guard test to reduce diff noise.
+- ✅ Ops docs hardening: README snippet expectations are now explicitly sorted in-source and guarded to stay non-empty/trimmed.
+- ✅ Ops docs hardening: full deploy-defaults README assertion now uses an explicit diagnostic helper message for clearer failures.
+- ✅ Ops docs hardening: snippet hygiene test now emits explicit diagnostics for empty or whitespace-padded expectations.
+- ✅ Ops docs hardening: helper assertion methods in deploy-defaults regression test now use explicit `-> None` annotations for clarity.
+- ✅ Ops docs hardening: deploy/default regression test now uses centralized path constants for script/env/readme fixtures.
+- ✅ Ops docs hardening: deploy-defaults regression fixtures are now annotated with `Final` types to signal immutability intent.
+- ✅ Ops docs hardening: added a named tuple type alias for README snippet fixtures to improve annotation readability.
+- ✅ Ops docs hardening: added guard test asserting centralized deploy/default fixture paths resolve to existing files.
+- ✅ Ops docs hardening: added guard test asserting centralized fixture paths remain distinct (no accidental path aliasing).
+- ✅ Ops docs hardening: added guard test ensuring centralized fixture paths stay repository-relative (not absolute).
+- ✅ Ops docs hardening: added guard test ensuring centralized fixture paths avoid parent-directory traversal segments (`..`).
+- ✅ Ops docs hardening: centralized all deploy/default fixture path guards to a shared `FIXTURE_PATHS` constant to avoid tuple drift.
+- ✅ Ops docs hardening: added guard test ensuring `FIXTURE_PATHS` matches exactly the intended deploy/env/readme fixture set.
+- ✅ Ops docs hardening: added guard test pinning `FIXTURE_PATHS` order (deploy/env/readme) for predictable subTest diagnostics.
+- ✅ Ops docs hardening: added explicit tuple-vs-set cardinality guard for README snippet expectations to catch duplicate fixture entries.
+- ✅ Ops docs hardening: replaced redundant snippet-uniqueness assertions with a single explicit expected-snippet-set guard.
+- ✅ Ops docs hardening: added guard ensuring snippet tuple ordering exactly matches the sorted expected-snippet set.
+- ✅ Ops docs hardening: deduplicated repeated expected README snippet set literals into one module-level constant.
+- ✅ Ops docs hardening: added sentence-hygiene guard ensuring deploy-default README sentence fixture is non-empty and trimmed.
+- ✅ Ops docs hardening: introduced a shared sorted-snippet constant to remove repeated sorting expressions in README regression tests.
+- ✅ Ops docs hardening: snippet-sortedness assertion now reuses the shared sorted expected constant for consistency.
+- ✅ Ops docs hardening: consolidated snippet-order assertions through a shared helper to keep diagnostics/messages aligned.
+- ✅ Ops docs hardening: removed redundant duplicate snippet-order test while keeping shared-order helper coverage intact.
+- ✅ Ops docs hardening: introduced `EXPECTED_FIXTURE_PATHS` constant so fixture-path order/set tests share one expected tuple source.
+- ✅ Ops docs hardening: collapsed fixture-path guards to a single `EXPECTED_FIXTURE_PATHS` source-of-truth constant.
+- ✅ Ops docs hardening: added shared fixture-path iteration helper to reduce repeated subTest loops in path guard checks.
+- ✅ Ops docs hardening: fixture-path iteration helper now uses an explicit callable type alias for clearer typing intent.
+
+## Handoff Notes (2026-03-11)
+
+- Branch in use: `work`
+- Latest commit before this handoff update: `b4f8418`
+- Regression hardening area: `tests/test_deploy_config_defaults.py` (fixture/source-of-truth + assertion diagnostics/maintainability improvements).
+- Full validation command repeatedly green in this phase: `python -m unittest discover -s tests`
+- Recommended next step: shift from docs-regression hardening to closing Security+Access `[~]` checklist items with concrete production acceptance evidence and remaining admin/ops polish.
