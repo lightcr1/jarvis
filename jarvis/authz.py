@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from jarvis_engine import ROLE_PERMISSIONS, normalize_role
-from permission_store import KNOWN_PERMISSIONS
+from .jarvis_engine import ROLE_PERMISSIONS, normalize_role
+from .permission_store import KNOWN_PERMISSIONS
 
 
 def _normalized_permissions(values: list[str] | None) -> list[str]:

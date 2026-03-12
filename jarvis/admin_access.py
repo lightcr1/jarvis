@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from fastapi import HTTPException
 
-from jarvis_engine import normalize_role
-from session_auth import bearer_token_from_header, is_token_active, prune_expired_tokens
+from .jarvis_engine import normalize_role
+from .session_auth import bearer_token_from_header, is_token_active, prune_expired_tokens
 
 
 def require_admin_access(

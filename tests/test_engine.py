@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from jarvis_engine import JarvisEngine, SecurityPolicy, build_registry, SkillRegistry, Skill, RiskLevel, ActionPlan
+from jarvis.jarvis_engine import JarvisEngine, SecurityPolicy, build_registry, SkillRegistry, Skill, RiskLevel, ActionPlan
 
 
 class EngineTests(unittest.TestCase):
@@ -116,7 +116,7 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(response["data"]["permission"], "actions.dangerous.execute")
 
     def test_guest_voice_permission_denied_when_removed(self):
-        from jarvis_engine import ROLE_PERMISSIONS
+        from jarvis.jarvis_engine import ROLE_PERMISSIONS
 
         saved = set(ROLE_PERMISSIONS["guest_restricted"])
         try:

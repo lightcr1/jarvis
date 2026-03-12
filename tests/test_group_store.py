@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from group_store import GroupStore
+from jarvis.group_store import GroupStore
 
 
 class GroupStoreTests(unittest.TestCase):

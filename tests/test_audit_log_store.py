@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from audit_log_store import AuditLogStore
+from jarvis.audit_log_store import AuditLogStore
 
 
 class AuditLogStoreTests(unittest.TestCase):

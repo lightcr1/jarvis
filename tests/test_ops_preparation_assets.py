@@ -48,7 +48,7 @@ class OpsPreparationAssetsTests(unittest.TestCase):
         self.assertIn("Recovery Drill Report", content)
 
     def test_user_runbook_mentions_remaining_user_actions(self):
-        content = Path("USER_EXECUTION_RUNBOOK_V1.md").read_text(encoding="utf-8")
+        content = Path("docs/v1/handoff/USER_EXECUTION_RUNBOOK_V1.md").read_text(encoding="utf-8")
         self.assertIn("One-Command Deploy Validation", content)
         self.assertIn("Lower-End Hardware Performance Check", content)
         self.assertIn("Failure Recovery Execution", content)

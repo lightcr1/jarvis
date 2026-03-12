@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from membership_store import MembershipStore
+from jarvis.membership_store import MembershipStore
 
 
 class MembershipStoreTests(unittest.TestCase):

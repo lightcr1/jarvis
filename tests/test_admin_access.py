@@ -3,7 +3,7 @@ import unittest
 
 from fastapi import HTTPException
 
-from admin_access import require_admin_access
+from jarvis.admin_access import require_admin_access
 
 
 class _Store:

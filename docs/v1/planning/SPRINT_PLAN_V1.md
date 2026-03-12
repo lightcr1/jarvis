@@ -94,7 +94,7 @@ This plan translates the roadmap/checklist into executable sprint work.
 
 Store validation artifacts under:
 
-- `trace.md` (summary links)
+- `docs/v1/trace.md` (summary links)
 - `tests/` for automated test evidence
 - runtime logs under configured paths (audit and service logs)
 

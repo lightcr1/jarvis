@@ -6,7 +6,7 @@ from pathlib import Path
 import time
 import uuid
 
-from jarvis_engine import VALID_ROLES
+from .jarvis_engine import VALID_ROLES
 
 
 class UserStore:

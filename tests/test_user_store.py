@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from user_store import UserStore
+from jarvis.user_store import UserStore
 
 
 class UserStoreTests(unittest.TestCase):

@@ -2,11 +2,11 @@ import os
 import tempfile
 import unittest
 
-from authz import build_permission_context, permission_decision, resolve_effective_permissions
-from group_store import GroupStore
-from membership_store import MembershipStore
-from permission_store import PermissionStore
-from user_store import UserStore
+from jarvis.authz import build_permission_context, permission_decision, resolve_effective_permissions
+from jarvis.group_store import GroupStore
+from jarvis.membership_store import MembershipStore
+from jarvis.permission_store import PermissionStore
+from jarvis.user_store import UserStore
 
 
 class AuthzResolutionTests(unittest.TestCase):

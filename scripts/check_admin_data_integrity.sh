@@ -29,12 +29,12 @@ settings_path = Path(os.environ.get('JARVIS_ADMIN_SETTINGS_PATH', '/var/lib/jarv
 audit_path = Path(os.environ.get('JARVIS_AUDIT_LOG_PATH', '/var/lib/jarvis/audit.log'))
 
 try:
-    from jarvis_engine import VALID_ROLES as RUNTIME_VALID_ROLES
+    from jarvis.jarvis_engine import VALID_ROLES as RUNTIME_VALID_ROLES
 except Exception:
     RUNTIME_VALID_ROLES = {'admin', 'standard_user', 'guest_restricted', 'service_system'}
 
 try:
-    from permission_store import KNOWN_PERMISSIONS as RUNTIME_KNOWN_PERMISSIONS
+    from jarvis.permission_store import KNOWN_PERMISSIONS as RUNTIME_KNOWN_PERMISSIONS
 except Exception:
     RUNTIME_KNOWN_PERMISSIONS = {
         'voice.use',

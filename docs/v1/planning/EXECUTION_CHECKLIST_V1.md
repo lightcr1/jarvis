@@ -62,7 +62,7 @@ Use this file as the operational tracker while building toward August launch.
 
 ## Step 7 — Quality & Release Readiness
 
-- [ ] Manual acceptance pack executed and signed. (`MANUAL_ACCEPTANCE_V1.md`)
+- [ ] Manual acceptance pack executed and signed. (`docs/v1/handoff/MANUAL_ACCEPTANCE_V1.md`)
 - [x] Core voice workflow tests pass. (Voice chat wakeword paths plus `/stt` and `/tts` endpoint tests green under `.venv`)
 - [x] User permission tests pass. (RBAC/admin/authz/chat permission coverage green under `.venv`)
 - [x] Dangerous-action confirmation tests pass. (Engine confirmation/emergency-stop regression pack green)
@@ -79,16 +79,16 @@ Use this file as the operational tracker while building toward August launch.
 
 ## Step 1 Artifacts (Created)
 
-- `ROLE_PERMISSION_MATRIX_V1.md`
-- `RELEASE_CRITERIA_V1.md`
+- `docs/v1/planning/ROLE_PERMISSION_MATRIX_V1.md`
+- `docs/v1/planning/RELEASE_CRITERIA_V1.md`
 
 ## Planning Artifacts (Execution Layer)
 
-- `ROADMAP_V1.md`
-- `EXECUTION_CHECKLIST_V1.md`
-- `ROLE_PERMISSION_MATRIX_V1.md`
-- `RELEASE_CRITERIA_V1.md`
-- `SPRINT_PLAN_V1.md`
+- `docs/v1/planning/ROADMAP_V1.md`
+- `docs/v1/planning/EXECUTION_CHECKLIST_V1.md`
+- `docs/v1/planning/ROLE_PERMISSION_MATRIX_V1.md`
+- `docs/v1/planning/RELEASE_CRITERIA_V1.md`
+- `docs/v1/planning/SPRINT_PLAN_V1.md`
 
 
 ## Current Session Handoff Snapshot (2026-03-11)

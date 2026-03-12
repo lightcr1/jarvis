@@ -28,17 +28,17 @@ from google import genai
 # Local STT
 from faster_whisper import WhisperModel
 
-from proxmox_module import build_router, proxmox_lxc_status, proxmox_vm_status
-from authz import build_permission_context, permission_decision, resolve_effective_permissions
-from admin_access import require_admin_access as require_admin_access_guard
-from audit_log_store import AuditLogStore
-from identity import get_active_user_or_raise
-from user_store import UserStore
-from group_store import GroupStore
-from membership_store import MembershipStore
-from permission_store import PermissionStore, KNOWN_PERMISSIONS
-from admin_settings_store import AdminSettingsStore
-from jarvis_engine import (
+from jarvis.proxmox_module import build_router, proxmox_lxc_status, proxmox_vm_status
+from jarvis.authz import build_permission_context, permission_decision, resolve_effective_permissions
+from jarvis.admin_access import require_admin_access as require_admin_access_guard
+from jarvis.audit_log_store import AuditLogStore
+from jarvis.identity import get_active_user_or_raise
+from jarvis.user_store import UserStore
+from jarvis.group_store import GroupStore
+from jarvis.membership_store import MembershipStore
+from jarvis.permission_store import PermissionStore, KNOWN_PERMISSIONS
+from jarvis.admin_settings_store import AdminSettingsStore
+from jarvis.jarvis_engine import (
     JarvisEngine,
     build_registry,
     SecurityPolicy,
@@ -47,7 +47,7 @@ from jarvis_engine import (
     emergency_stop_enabled,
     VALID_ROLES,
 )
-from session_auth import bearer_token_from_header, enforce_token_capacity, is_token_active, prune_expired_tokens
+from jarvis.session_auth import bearer_token_from_header, enforce_token_capacity, is_token_active, prune_expired_tokens
 
 app = FastAPI(title="Jarvis Backend")
 logger = logging.getLogger("jarvis.audio")

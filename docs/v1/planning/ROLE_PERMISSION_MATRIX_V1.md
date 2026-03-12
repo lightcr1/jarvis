@@ -70,6 +70,6 @@ This file defines the baseline RBAC model for V1.
 
 ## Suggested Implementation Mapping
 
-- Backend permission resolver in `jarvis_engine.py` and API route guards in `jarvisappv4.py`.
+- Backend permission resolver in `jarvis/jarvis_engine.py` and API route guards in `jarvisappv4.py`.
 - Persist users/roles/groups/permissions in a DB-backed store for V1 production use.
 - Add admin UI tabs in `static/index.html` (or new admin view) for role/permission administration.

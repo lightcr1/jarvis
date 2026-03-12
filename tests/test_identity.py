@@ -2,8 +2,8 @@ import os
 import tempfile
 import unittest
 
-from identity import get_active_user_or_raise
-from user_store import UserStore
+from jarvis.identity import get_active_user_or_raise
+from jarvis.user_store import UserStore
 
 
 class IdentityTests(unittest.TestCase):

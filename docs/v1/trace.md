@@ -5,7 +5,7 @@
 - [x] **R3** KI-Fallback (OpenAI + Gemini vorbereitet). ✅ optional via ENV.  
 - [x] **R4** Fuzzy-Matching + Disambiguation. ✅ `SkillRegistry.match()` + Ambiguitätshandling.  
 - [x] **R5** Fehlerselbstdiagnose. ✅ `diagnose jarvis` Skill.  
-- [x] **R6** Proxmox-Integration vorbereitet. ✅ `proxmox_module.py` + `proxmox health`.  
+- [x] **R6** Proxmox-Integration vorbereitet. ✅ `jarvis/proxmox_module.py` + `proxmox health`.  
 - [x] **R7** VM Remote Execution vorbereitet. ✅ `vm ssh exec` Skill (blocked by default).  
 - [x] **R8** Risk-Level pro Skill (read/write/critical). ✅ Skill-Metadaten.  
 - [x] **R9** Token + Bestätigung für write/critical. ✅ Tokenpflicht + Confirm.  
@@ -32,7 +32,7 @@
 
 - ✅ Sprint 2 seed delivered: admin-only audit read endpoint (`GET /admin/audit/events`) with role check and event filters.
 - ✅ Audit storage now supports filtered reads (`limit`, `event`, `role`) for admin operations visibility.
-- ✅ Audit log module extracted (`audit_log_store.py`) with unit tests for write/read/filter robustness.
+- ✅ Audit log module extracted (`jarvis/audit_log_store.py`) with unit tests for write/read/filter robustness.
 - ✅ Sprint 2 backend progress: admin user-management APIs (`/admin/users`) scaffolded with admin-only access and audit events.
 - ✅ Sprint 2 backend progress: admin group-management APIs (`/admin/groups`) scaffolded with admin-only access and audit events.
 - ✅ Sprint 2 backend progress: admin assignment APIs (`/admin/assignments`) scaffolded for user↔group membership management.
@@ -54,7 +54,7 @@
 - ✅ Sprint 2/admin hardening follow-up: bootstrap access is now endpoint-scoped (only initial `POST /admin/users`), with tests to prevent bootstrap use on other admin routes.
 - ✅ Sprint 2/admin hardening follow-up: bootstrap now only permits creating an enabled admin account (cannot seed disabled/non-admin first user).
 - ✅ Sprint 2/admin data integrity: usernames are now enforced unique (case-insensitive) in user store; duplicate admin-user creates return conflict.
-- ✅ Roadmap tracking updated: `ROADMAP_V1.md` now includes an explicit current-state marker for March 2026 and next-phase focus.
+- ✅ Roadmap tracking updated: `docs/v1/planning/ROADMAP_V1.md` now includes an explicit current-state marker for March 2026 and next-phase focus.
 - ✅ Sprint 2/admin data integrity: user role values are now validated against known RBAC roles in store/API paths with test coverage.
 - ✅ Sprint 2/admin data integrity: group names are now enforced unique (case-insensitive) in store/API paths with conflict responses and tests.
 - ✅ Sprint 2/admin data integrity: memberships now reject duplicate user↔group assignments with API conflict responses and coverage.
@@ -182,7 +182,7 @@
 - ✅ Security+Access hardening: added regression coverage for malformed-data authz normalization and direct-user permission source precedence in `tests/test_authz.py`.
 - ✅ Runtime hardening: default chat-history, RAG-cache, and learning-memory stores now fall back to a writable temp location when `/var/lib/jarvis` is unavailable.
 - ✅ Validation milestone: installed repo dependencies into `.venv` and ran the full automated suite green with `.venv/bin/python -m unittest discover -s tests -v` (238 tests).
-- ✅ Release-readiness support: added `MANUAL_ACCEPTANCE_V1.md` as the human-only acceptance/sign-off pack for voice quality, GitHub grounding, deploy/rollback, recovery, performance, and admin UX.
+- ✅ Release-readiness support: added `docs/v1/handoff/MANUAL_ACCEPTANCE_V1.md` as the human-only acceptance/sign-off pack for voice quality, GitHub grounding, deploy/rollback, recovery, performance, and admin UX.
 - ✅ Core assistant hardening: GitHub RAG refresh now ingests filtered file contents from repository blobs with configurable caps and metadata instead of caching file paths only.
 - ✅ Voice regression expansion: added `/stt` and `/tts` endpoint coverage in `tests/test_voice_api.py` plus GitHub refresh coverage in `tests/test_rag_refresh.py`.
 - ✅ Validation milestone update: full repo-local suite now passes at `245` tests under `.venv/bin/python -m unittest discover -s tests -v`.
@@ -192,7 +192,7 @@
 - ✅ Validation milestone update: full repo-local suite now passes at `253` tests under `.venv/bin/python -m unittest discover -s tests -v`.
 - ✅ Environment-prep completion (local scope): added isolated `dev` / `test` / `prod` config templates under `config/env/` with distinct paths/ports and explicit `JARVIS_WIKIJS_ENABLED=0` defaults to support V1 scope separation.
 - ✅ Evidence-prep completion (local scope): added `scripts/benchmark_local.py` and `scripts/recovery_drill.sh` so performance and recovery evidence can be collected consistently on real target infrastructure.
-- ✅ User handoff completion: added `USER_EXECUTION_RUNBOOK_V1.md` with exact commands, evidence expectations, and checklist mapping for the remaining environment-bound tasks.
+- ✅ User handoff completion: added `docs/v1/handoff/USER_EXECUTION_RUNBOOK_V1.md` with exact commands, evidence expectations, and checklist mapping for the remaining environment-bound tasks.
 
 ## Handoff Notes (2026-03-11)
 
@@ -200,4 +200,4 @@
 - Latest commit before this handoff update: `b4f8418`
 - Regression hardening area: `tests/test_deploy_config_defaults.py` (fixture/source-of-truth + assertion diagnostics/maintainability improvements).
 - Full validation command repeatedly green in this phase: `python -m unittest discover -s tests`
-- Recommended next step: execute `USER_EXECUTION_RUNBOOK_V1.md` on the target environment to collect deploy/update/rollback, environment split, performance, recovery, and WikiJS scope evidence.
+- Recommended next step: execute `docs/v1/handoff/USER_EXECUTION_RUNBOOK_V1.md` on the target environment to collect deploy/update/rollback, environment split, performance, recovery, and WikiJS scope evidence.

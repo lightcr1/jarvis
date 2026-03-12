@@ -1,6 +1,6 @@
 import unittest
 
-from session_auth import bearer_token_from_header, enforce_token_capacity, is_token_active, prune_expired_tokens
+from jarvis.session_auth import bearer_token_from_header, enforce_token_capacity, is_token_active, prune_expired_tokens
 
 
 class SessionAuthTests(unittest.TestCase):

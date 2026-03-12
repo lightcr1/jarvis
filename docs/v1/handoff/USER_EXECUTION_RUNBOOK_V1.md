@@ -9,10 +9,10 @@ What to decide:
 - If keeping that scope, leave `JARVIS_WIKIJS_ENABLED=0` in the active environment file.
 
 How to do it:
-1. Open [ROADMAP_V1.md](/home/jarvis/jarvis/ROADMAP_V1.md).
+1. Open [ROADMAP_V1.md](/home/jarvis/jarvis/docs/v1/planning/ROADMAP_V1.md).
 2. Confirm the product decision that GitHub grounding is sufficient for V1 launch.
 3. In the active environment config, keep `JARVIS_WIKIJS_ENABLED=0`.
-4. Mark `WikiJS removed from V1 critical path` complete in [EXECUTION_CHECKLIST_V1.md](/home/jarvis/jarvis/EXECUTION_CHECKLIST_V1.md).
+4. Mark `WikiJS removed from V1 critical path` complete in [EXECUTION_CHECKLIST_V1.md](/home/jarvis/jarvis/docs/v1/planning/EXECUTION_CHECKLIST_V1.md).
 
 Evidence to keep:
 - The final deployed `config.env`.
@@ -142,7 +142,7 @@ Keep both reports as launch evidence.
 
 ## 8. Checklist Items You Can Mark After Running The Above
 
-After successful execution, update [EXECUTION_CHECKLIST_V1.md](/home/jarvis/jarvis/EXECUTION_CHECKLIST_V1.md):
+After successful execution, update [EXECUTION_CHECKLIST_V1.md](/home/jarvis/jarvis/docs/v1/planning/EXECUTION_CHECKLIST_V1.md):
 - `WikiJS removed from V1 critical path`
 - `One-command deploy validated`
 - `Dev/Test/Prod environment split validated`

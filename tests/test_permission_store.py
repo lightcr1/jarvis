@@ -2,7 +2,7 @@ import os
 import tempfile
 import unittest
 
-from permission_store import PermissionStore
+from jarvis.permission_store import PermissionStore
 
 
 class PermissionStoreTests(unittest.TestCase):
