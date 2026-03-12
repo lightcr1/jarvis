@@ -18,6 +18,7 @@ class TestAdminOpsScripts(unittest.TestCase):
                 "JARVIS_GROUP_STORE_PATH": str(data_dir / "groups.json"),
                 "JARVIS_MEMBERSHIP_STORE_PATH": str(data_dir / "memberships.json"),
                 "JARVIS_PERMISSION_STORE_PATH": str(data_dir / "permissions.json"),
+                "JARVIS_ADMIN_SETTINGS_PATH": str(data_dir / "admin_settings.json"),
             }
         )
         return env
@@ -26,7 +27,7 @@ class TestAdminOpsScripts(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             env = self._env(root)
-            for name in ("audit.log", "users.json", "groups.json", "memberships.json", "permissions.json"):
+            for name in ("audit.log", "users.json", "groups.json", "memberships.json", "permissions.json", "admin_settings.json"):
                 (root / "data" / name).write_text(f"{name}-content", encoding="utf-8")
 
             backup_dir = root / "backups"
@@ -52,6 +53,7 @@ class TestAdminOpsScripts(unittest.TestCase):
 
             self.assertEqual((root / "data" / "users.json").read_text(encoding="utf-8"), "users.json-content")
             self.assertEqual((root / "data" / "audit.log").read_text(encoding="utf-8"), "audit.log-content")
+            self.assertEqual((root / "data" / "admin_settings.json").read_text(encoding="utf-8"), "admin_settings.json-content")
 
     def test_restore_rejects_unexpected_archive_entries(self) -> None:
         with tempfile.TemporaryDirectory() as td:

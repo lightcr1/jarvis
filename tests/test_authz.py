@@ -80,6 +80,43 @@ class AuthzResolutionTests(unittest.TestCase):
         self.assertFalse(denied["allowed"])
         self.assertIsNone(denied["source"])
 
+    def test_resolver_ignores_malformed_group_ids_and_invalid_permission_entries(self):
+        u = self.users.create_user("dana", role="standard_user")
+        g = self.groups.create_group("ops")
+
+        self.permissions.data["user_permissions"][u["id"]] = ["audit.read", "unknown.permission", "", None]
+        self.permissions.data["group_permissions"][g["id"]] = ["actions.write.execute", "bad.permission", " ", None]
+
+        original_list_user_groups = self.memberships.list_user_groups
+
+        def bad_groups(user_id):
+            return original_list_user_groups(user_id) + [g["id"], " ", None, 42]
+
+        self.memberships.add_membership(u["id"], g["id"])
+        self.memberships.list_user_groups = bad_groups
+
+        perms = resolve_effective_permissions("standard_user", u["id"], self.memberships, self.permissions)
+        self.assertIn("audit.read", perms)
+        self.assertIn("actions.write.execute", perms)
+        self.assertNotIn("unknown.permission", perms)
+        self.assertNotIn("bad.permission", perms)
+
+        ctx = build_permission_context("standard_user", u["id"], self.memberships, self.permissions)
+        self.assertEqual(ctx["group_ids"], [g["id"]])
+        self.assertEqual(ctx["user_permissions"], ["audit.read"])
+        self.assertEqual(ctx["group_permissions"][g["id"]], ["actions.write.execute"])
+
+    def test_permission_decision_prefers_direct_user_source_before_group(self):
+        u = self.users.create_user("erin", role="standard_user")
+        g = self.groups.create_group("ops")
+        self.memberships.add_membership(u["id"], g["id"])
+        self.permissions.set_user_permissions(u["id"], ["audit.read"])
+        self.permissions.set_group_permissions(g["id"], ["audit.read"])
+
+        decision = permission_decision("standard_user", u["id"], "audit.read", self.memberships, self.permissions)
+        self.assertTrue(decision["allowed"])
+        self.assertEqual(decision["source"], "user")
+
 
 if __name__ == "__main__":
     unittest.main()

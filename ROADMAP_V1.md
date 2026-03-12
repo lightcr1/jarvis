@@ -92,9 +92,9 @@ This roadmap is focused on a **stable first usable release**.
 ### Current state marker (March 2026)
 
 - ✅ Scope/architecture artifacts are in repo (`ROADMAP_V1.md`, `EXECUTION_CHECKLIST_V1.md`, `RELEASE_CRITERIA_V1.md`, `ROLE_PERMISSION_MATRIX_V1.md`, `SPRINT_PLAN_V1.md`).
-- [~] Security/access baseline is implemented in backend scaffolding (RBAC helpers, admin APIs, audit store, token + identity guard), but remains in hardening phase.
-- [~] Admin operations baseline is implemented (users/groups/assignments/permissions APIs + backup/restore scripts), with ongoing production-readiness polish.
-- ➡️ Next roadmap focus: April phase completion (security baseline end-to-end hardening + acceptance evidence).
+- [x] Security/access baseline is implemented and regression-validated locally (RBAC helpers, admin APIs, audit store, token + identity guard, 245-test suite green in `.venv`).
+- [~] Admin operations baseline is implemented (users/groups/assignments/permissions APIs + backup/restore scripts), with remaining work centered on UI completion and real-environment operational evidence.
+- ➡️ Next roadmap focus: remaining V1 execution work outside local automation: admin UI completion, voice-quality sign-off, deploy/update/rollback execution, and performance/recovery evidence.
 
 ## April: Security + Access Foundation (3–4 weeks)
 

@@ -62,6 +62,9 @@ Zentrale Datei:
 Beispiel/Template:
 
 - `config/jarvis.env.example`
+- `config/env/dev.env.example`
+- `config/env/test.env.example`
+- `config/env/prod.env.example`
 
 ### Pflichtwerte
 ```env
@@ -111,6 +114,11 @@ PIPER_BIN=/usr/local/bin/piper
 PIPER_MODEL=/opt/models/en_US-amy-medium.onnx
 ```
 
+#### Persisted admin runtime defaults
+```env
+JARVIS_ADMIN_SETTINGS_PATH=/var/lib/jarvis/admin_settings.json
+```
+
 > Nach Änderungen an `config.env` immer:
 ```bash
 sudo systemctl restart jarvis.service
@@ -123,6 +131,7 @@ sudo systemctl restart jarvis.service
 UI:
 - `https://localhost:8000/` (öffnet direkt die Chat-Seite)
 - `https://localhost:8000/static/index.html`
+- `https://localhost:8000/static/admin.html`
 - `https://localhost:8000/static/orb.html`
 
 Für Browser-Mikrofon ist ein **sicherer Kontext** nötig (`https://...` oder localhost).
@@ -344,7 +353,25 @@ uvicorn jarvisappv4:app --host 0.0.0.0 --port 8000
 python -m unittest discover -s tests
 ```
 
+Repo-local validation path used in this roadmap phase:
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m unittest discover -s tests -v
+```
+
 ---
+
+### Prepared environment split templates
+
+Use the following as the starting point for real environment separation:
+
+- `config/env/dev.env.example`
+- `config/env/test.env.example`
+- `config/env/prod.env.example`
+
+They intentionally use different ports, passphrases, and state directories so dev/test/prod do not share runtime data.
 
 
 ### Admin data backup/restore (V1 ops)
@@ -353,18 +380,62 @@ python -m unittest discover -s tests
 ./scripts/backup_admin_data.sh ./backups
 ./scripts/restore_admin_data.sh ./backups/<archive>.tar.gz
 ./scripts/check_admin_data_integrity.sh
+sudo ./scripts/update_local.sh
+sudo ./scripts/rollback_local.sh
 ```
 
-`check_admin_data_integrity.sh` validates admin-policy schema and semantics (known roles/permission keys, sourced from runtime constants when available), warns on orphan references by default (missing user/group links), and flags duplicate/malformed memberships. Set `JARVIS_INTEGRITY_FAIL_ON_ORPHANS=1` to make orphan drift fail hard (useful in strict CI/deploy gates, including malformed membership records) and `JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS=1` to fail on duplicate/malformed membership drift specifically (exit code `8`). The script also reports admin lockout posture (`locked_out`/`at_risk`) from enabled-admin count; set `JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT=1` to fail when no enabled admin exists.
+`check_admin_data_integrity.sh` validates admin-policy schema and semantics (known roles/permission keys, sourced from runtime constants when available), warns on orphan references by default (missing user/group links), validates `JARVIS_ADMIN_SETTINGS_PATH` structure, and flags duplicate/malformed memberships. Set `JARVIS_INTEGRITY_FAIL_ON_ORPHANS=1` to make orphan drift fail hard (useful in strict CI/deploy gates, including malformed membership records) and `JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS=1` to fail on duplicate/malformed membership drift specifically (exit code `8`). The script also reports admin lockout posture (`locked_out`/`at_risk`) from enabled-admin count; set `JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT=1` to fail when no enabled admin exists.
 
-`deploy_local.sh` now seeds integrity strictness flags (`JARVIS_INTEGRITY_FAIL_ON_ORPHANS`, `JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT`, `JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS`) to `0` in `/etc/jarvis/config.env` when missing, so behavior is explicit and opt-in.
+`deploy_local.sh` now seeds integrity strictness flags (`JARVIS_INTEGRITY_FAIL_ON_ORPHANS`, `JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT`, `JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS`) to `0` in `/etc/jarvis/config.env` when missing, so behavior is explicit and opt-in. It also seeds `JARVIS_ADMIN_SETTINGS_PATH` and creates `admin_settings.json` with runtime defaults for token TTL, max active tokens, wakeword behavior, and STT provider.
 
 `restore_admin_data.sh` only accepts expected admin-data filenames from the archive and will fail fast on unexpected entries.
+
+`update_local.sh` snapshots the current `/opt/jarvis` release plus admin data backup, then runs `deploy_local.sh` against the current repo so update/rollback is deterministic. `rollback_local.sh` restores the last release snapshot (or an explicit snapshot path), restores the matching admin data archive when present, restarts `jarvis.service`, and reruns `check_admin_data_integrity.sh`.
+
+Prepared but user-run evidence helpers:
+
+```bash
+python3 scripts/benchmark_local.py --base-url http://127.0.0.1:8000 --iterations 25 --output ./benchmark_report.json
+HEALTH_URL=http://127.0.0.1:8000/health RESTART_COMMAND="systemctl restart jarvis.service" ./scripts/recovery_drill.sh ./recovery_drill_report.md
+```
+
+Those scripts prepare the remaining performance/recovery evidence collection, but they still must be executed on the real target environment to close the checklist honestly.
+
+Backup/restore ops evidence can be captured safely against a probe copy of the current admin stores with:
+
+```bash
+bash scripts/admin_backup_restore_drill.sh ./admin_backup_restore_drill_report.md
+```
+
+The drill snapshots the currently configured admin data files, runs backup and restore against a temporary probe workspace, verifies the restored files match the original snapshot byte-for-byte, and finishes with `check_admin_data_integrity.sh`. Live admin data is read as seed input but is not mutated by the drill.
 
 Admin API endpoints under `/admin/*` require:
 - `Authorization: Bearer <unlock_token>`
 - `X-Jarvis-User-Id: <user_id>` for an enabled user with role `admin`
 - `X-Jarvis-Role: admin` (must match stored role)
+
+The browser admin console is available at `/static/admin.html` and covers:
+- users
+- groups and assignments
+- permissions and effective-permission lookup
+- action logs
+- persisted settings / usage limits
+
+For the remaining real-environment execution steps, use `USER_EXECUTION_RUNBOOK_V1.md`.
+
+Token lifecycle ops evidence can be captured against a live instance with:
+
+```bash
+python3 scripts/token_lifecycle_drill.py \
+  --base-url https://localhost:8000 \
+  --passphrase "$JARVIS_PASSPHRASE" \
+  --admin-user-id usr-123456abcdef \
+  --audit-log-path /var/lib/jarvis/audit.log \
+  --insecure \
+  --report-path ./token_lifecycle_drill_report.md
+```
+
+For first-run systems with no users yet, omit `--admin-user-id` and the drill will bootstrap an enabled admin via `POST /admin/users`. To validate expiry handling as evidence, run the service with a short token TTL (for example `JARVIS_TOKEN_TTL_MIN=1`) and add `--expiry-wait-seconds 65`; the drill then verifies expired-token denial plus the matching `unlock_revoke_denied` audit event.
 
 Usernames in the admin user store are unique (case-insensitive), group names are unique (case-insensitive), memberships reject duplicates, user roles are validated against the V1 role set (`admin`, `standard_user`, `guest_restricted`, `service_system`), and permission sets reject unknown permission keys.
 

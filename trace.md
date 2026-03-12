@@ -174,6 +174,25 @@
 - ✅ Security+Access hardening: added regression coverage proving blank audit filters normalize to `None` on `/admin/audit/count`.
 - ✅ Security+Access hardening: centralized audit filter prep now normalizes `event`, `role`, and `token_fingerprint` to lowercase for resilient query UX.
 - ✅ Security+Access hardening: added regression coverage for uppercase audit filter inputs on events/count endpoints.
+- ✅ Security+Access hardening: added `scripts/token_lifecycle_drill.py` so ops can capture live unlock/revoke/expiry evidence, including audit verification by token fingerprint.
+- ✅ Security+Access hardening: added stdlib-only regression coverage for the drill script in `tests/test_token_lifecycle_drill.py`.
+- ✅ Ops hardening: added `scripts/admin_backup_restore_drill.sh` to generate repeatable backup/restore evidence against a probe copy of the configured admin stores.
+- ✅ Ops hardening: added regression coverage for the backup/restore drill in `tests/test_admin_backup_restore_drill.py`.
+- ✅ Security+Access hardening: runtime authz resolution now ignores malformed group ids and invalid permission entries instead of granting from drifted store data.
+- ✅ Security+Access hardening: added regression coverage for malformed-data authz normalization and direct-user permission source precedence in `tests/test_authz.py`.
+- ✅ Runtime hardening: default chat-history, RAG-cache, and learning-memory stores now fall back to a writable temp location when `/var/lib/jarvis` is unavailable.
+- ✅ Validation milestone: installed repo dependencies into `.venv` and ran the full automated suite green with `.venv/bin/python -m unittest discover -s tests -v` (238 tests).
+- ✅ Release-readiness support: added `MANUAL_ACCEPTANCE_V1.md` as the human-only acceptance/sign-off pack for voice quality, GitHub grounding, deploy/rollback, recovery, performance, and admin UX.
+- ✅ Core assistant hardening: GitHub RAG refresh now ingests filtered file contents from repository blobs with configurable caps and metadata instead of caching file paths only.
+- ✅ Voice regression expansion: added `/stt` and `/tts` endpoint coverage in `tests/test_voice_api.py` plus GitHub refresh coverage in `tests/test_rag_refresh.py`.
+- ✅ Validation milestone update: full repo-local suite now passes at `245` tests under `.venv/bin/python -m unittest discover -s tests -v`.
+- ✅ Admin/runtime settings hardening: added persisted `admin_settings.json` support with `/admin/settings` GET/PUT, audit emission for settings changes, and runtime fallback integration for token TTL/capacity plus wakeword/STT defaults when env overrides are absent.
+- ✅ Admin UI completion: added `/static/admin.html` covering users, groups, assignments, permissions, action logs, and persisted settings/usage-limit controls; linked the main chat UI to the admin console.
+- ✅ Ops flow completion (local scope): added `scripts/update_local.sh` and `scripts/rollback_local.sh`, extended backup/restore/integrity flows to include `admin_settings.json`, and documented the local update/rollback path in `README.md`.
+- ✅ Validation milestone update: full repo-local suite now passes at `253` tests under `.venv/bin/python -m unittest discover -s tests -v`.
+- ✅ Environment-prep completion (local scope): added isolated `dev` / `test` / `prod` config templates under `config/env/` with distinct paths/ports and explicit `JARVIS_WIKIJS_ENABLED=0` defaults to support V1 scope separation.
+- ✅ Evidence-prep completion (local scope): added `scripts/benchmark_local.py` and `scripts/recovery_drill.sh` so performance and recovery evidence can be collected consistently on real target infrastructure.
+- ✅ User handoff completion: added `USER_EXECUTION_RUNBOOK_V1.md` with exact commands, evidence expectations, and checklist mapping for the remaining environment-bound tasks.
 
 ## Handoff Notes (2026-03-11)
 
@@ -181,4 +200,4 @@
 - Latest commit before this handoff update: `b4f8418`
 - Regression hardening area: `tests/test_deploy_config_defaults.py` (fixture/source-of-truth + assertion diagnostics/maintainability improvements).
 - Full validation command repeatedly green in this phase: `python -m unittest discover -s tests`
-- Recommended next step: attach scripted ops evidence for revoke/expiry drills and then push remaining Step 2 items from `[~]` to fully done acceptance state.
+- Recommended next step: execute `USER_EXECUTION_RUNBOOK_V1.md` on the target environment to collect deploy/update/rollback, environment split, performance, recovery, and WikiJS scope evidence.

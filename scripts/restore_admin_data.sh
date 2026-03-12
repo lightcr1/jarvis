@@ -12,13 +12,14 @@ USERS_PATH="${JARVIS_USER_STORE_PATH:-/var/lib/jarvis/users.json}"
 GROUPS_PATH="${JARVIS_GROUP_STORE_PATH:-/var/lib/jarvis/groups.json}"
 MEMBERSHIPS_PATH="${JARVIS_MEMBERSHIP_STORE_PATH:-/var/lib/jarvis/memberships.json}"
 PERMS_PATH="${JARVIS_PERMISSION_STORE_PATH:-/var/lib/jarvis/permissions.json}"
+SETTINGS_PATH="${JARVIS_ADMIN_SETTINGS_PATH:-/var/lib/jarvis/admin_settings.json}"
 
-mkdir -p "$(dirname "$AUDIT_PATH")" "$(dirname "$USERS_PATH")" "$(dirname "$GROUPS_PATH")" "$(dirname "$MEMBERSHIPS_PATH")" "$(dirname "$PERMS_PATH")"
+mkdir -p "$(dirname "$AUDIT_PATH")" "$(dirname "$USERS_PATH")" "$(dirname "$GROUPS_PATH")" "$(dirname "$MEMBERSHIPS_PATH")" "$(dirname "$PERMS_PATH")" "$(dirname "$SETTINGS_PATH")"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-ALLOWED_FILES_REGEX='^(\./)?(audit\.log|users\.json|groups\.json|memberships\.json|permissions\.json)$'
+ALLOWED_FILES_REGEX='^(\./)?(audit\.log|users\.json|groups\.json|memberships\.json|permissions\.json|admin_settings\.json)$'
 
 while IFS= read -r entry; do
   if [ "$entry" = "./" ] || [ "$entry" = "." ]; then
@@ -45,5 +46,6 @@ restore_if_exists "$TMPDIR/users.json" "$USERS_PATH"
 restore_if_exists "$TMPDIR/groups.json" "$GROUPS_PATH"
 restore_if_exists "$TMPDIR/memberships.json" "$MEMBERSHIPS_PATH"
 restore_if_exists "$TMPDIR/permissions.json" "$PERMS_PATH"
+restore_if_exists "$TMPDIR/admin_settings.json" "$SETTINGS_PATH"
 
 echo "Restore completed from: $ARCHIVE_PATH"

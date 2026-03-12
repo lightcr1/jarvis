@@ -402,6 +402,7 @@
         </label>
 
         <button class="btnSmall" id="orbBtn" title="Orb Mode">ORB</button>
+        <button class="btnSmall" id="adminBtn" title="Admin Console">ADMIN</button>
       </div>
     </header>
 
@@ -473,6 +474,7 @@
   const wakeDot = document.getElementById("wakeDot");
   const wakeText = document.getElementById("wakeText");
   const orbBtn = document.getElementById("orbBtn");
+  const adminBtn = document.getElementById("adminBtn");
   const wakewordToggle = document.getElementById("wakewordToggle");
   const recordHint = document.getElementById("recordHint");
   const chatListEl = document.getElementById("chatList");
@@ -882,6 +884,11 @@
   orbBtn.addEventListener("click", ()=>{
     if(activeChatId) sessionStorage.setItem(ACTIVE_CHAT_KEY, activeChatId);
     window.location.href = "/static/orb.html";
+  });
+
+  adminBtn.addEventListener("click", ()=>{
+    if(activeChatId) sessionStorage.setItem(ACTIVE_CHAT_KEY, activeChatId);
+    window.location.href = "/static/admin.html";
   });
 
   function finalizeRecording(){

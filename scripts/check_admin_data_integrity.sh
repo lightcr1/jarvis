@@ -6,8 +6,9 @@ USERS_PATH="${JARVIS_USER_STORE_PATH:-/var/lib/jarvis/users.json}"
 GROUPS_PATH="${JARVIS_GROUP_STORE_PATH:-/var/lib/jarvis/groups.json}"
 MEMBERSHIPS_PATH="${JARVIS_MEMBERSHIP_STORE_PATH:-/var/lib/jarvis/memberships.json}"
 PERMS_PATH="${JARVIS_PERMISSION_STORE_PATH:-/var/lib/jarvis/permissions.json}"
+SETTINGS_PATH="${JARVIS_ADMIN_SETTINGS_PATH:-/var/lib/jarvis/admin_settings.json}"
 
-for p in "$AUDIT_PATH" "$USERS_PATH" "$GROUPS_PATH" "$MEMBERSHIPS_PATH" "$PERMS_PATH"; do
+for p in "$AUDIT_PATH" "$USERS_PATH" "$GROUPS_PATH" "$MEMBERSHIPS_PATH" "$PERMS_PATH" "$SETTINGS_PATH"; do
   if [[ ! -f "$p" ]]; then
     echo "Missing admin data file: $p"
     exit 2
@@ -24,6 +25,7 @@ users_path = Path(os.environ.get('JARVIS_USER_STORE_PATH', '/var/lib/jarvis/user
 groups_path = Path(os.environ.get('JARVIS_GROUP_STORE_PATH', '/var/lib/jarvis/groups.json'))
 memberships_path = Path(os.environ.get('JARVIS_MEMBERSHIP_STORE_PATH', '/var/lib/jarvis/memberships.json'))
 permissions_path = Path(os.environ.get('JARVIS_PERMISSION_STORE_PATH', '/var/lib/jarvis/permissions.json'))
+settings_path = Path(os.environ.get('JARVIS_ADMIN_SETTINGS_PATH', '/var/lib/jarvis/admin_settings.json'))
 audit_path = Path(os.environ.get('JARVIS_AUDIT_LOG_PATH', '/var/lib/jarvis/audit.log'))
 
 try:
@@ -70,6 +72,7 @@ users = load_json(users_path)
 groups = load_json(groups_path)
 memberships = load_json(memberships_path)
 permissions = load_json(permissions_path)
+settings = load_json(settings_path)
 fail_on_orphans = (os.environ.get('JARVIS_INTEGRITY_FAIL_ON_ORPHANS', '0') or '0').strip().lower() in {'1', 'true', 'yes', 'on'}
 fail_on_admin_lockout = (os.environ.get('JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT', '0') or '0').strip().lower() in {'1', 'true', 'yes', 'on'}
 fail_on_duplicate_memberships = (os.environ.get('JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS', '0') or '0').strip().lower() in {'1', 'true', 'yes', 'on'}
@@ -85,6 +88,32 @@ if not isinstance(memberships.get('memberships'), list):
     sys.exit(4)
 if not isinstance(permissions.get('group_permissions'), dict) or not isinstance(permissions.get('user_permissions'), dict):
     print(f'Invalid structure in {permissions_path}: expected permission objects')
+    sys.exit(4)
+if not isinstance(settings.get('usage_limits'), dict) or not isinstance(settings.get('voice'), dict):
+    print(f'Invalid structure in {settings_path}: expected usage_limits and voice objects')
+    sys.exit(4)
+
+token_ttl_min = settings.get('usage_limits', {}).get('token_ttl_min')
+max_active_tokens = settings.get('usage_limits', {}).get('max_active_tokens')
+if not isinstance(token_ttl_min, int) or token_ttl_min < 1:
+    print(f'Invalid token_ttl_min in {settings_path}: expected integer >= 1')
+    sys.exit(4)
+if not isinstance(max_active_tokens, int) or max_active_tokens < 1:
+    print(f'Invalid max_active_tokens in {settings_path}: expected integer >= 1')
+    sys.exit(4)
+
+voice = settings.get('voice', {})
+wakeword_enabled = voice.get('wakeword_enabled')
+wakeword_phrase = voice.get('wakeword_phrase')
+stt_provider = voice.get('stt_provider')
+if not isinstance(wakeword_enabled, bool):
+    print(f'Invalid wakeword_enabled in {settings_path}: expected boolean')
+    sys.exit(4)
+if not isinstance(wakeword_phrase, str) or not wakeword_phrase.strip():
+    print(f'Invalid wakeword_phrase in {settings_path}: expected non-empty string')
+    sys.exit(4)
+if stt_provider not in {'local', 'gemini'}:
+    print(f'Invalid stt_provider in {settings_path}: expected local or gemini')
     sys.exit(4)
 
 invalid_role_user_ids = [

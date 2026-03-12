@@ -16,6 +16,7 @@ class AdminDataIntegrityScriptTests(unittest.TestCase):
                 "JARVIS_GROUP_STORE_PATH": str(root / "groups.json"),
                 "JARVIS_MEMBERSHIP_STORE_PATH": str(root / "memberships.json"),
                 "JARVIS_PERMISSION_STORE_PATH": str(root / "permissions.json"),
+                "JARVIS_ADMIN_SETTINGS_PATH": str(root / "admin_settings.json"),
             }
         )
         return env
@@ -25,6 +26,15 @@ class AdminDataIntegrityScriptTests(unittest.TestCase):
         (root / "groups.json").write_text(json.dumps({"groups": {}}), encoding="utf-8")
         (root / "memberships.json").write_text(json.dumps({"memberships": []}), encoding="utf-8")
         (root / "permissions.json").write_text(json.dumps({"group_permissions": {}, "user_permissions": {}}), encoding="utf-8")
+        (root / "admin_settings.json").write_text(
+            json.dumps(
+                {
+                    "usage_limits": {"token_ttl_min": 20, "max_active_tokens": 200},
+                    "voice": {"wakeword_enabled": False, "wakeword_phrase": "hey jarvis", "stt_provider": "local"},
+                }
+            ),
+            encoding="utf-8",
+        )
         (root / "audit.log").write_text("", encoding="utf-8")
 
     def test_integrity_script_passes_on_valid_data(self):

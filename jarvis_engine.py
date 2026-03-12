@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import re
+import tempfile
 import time
 from typing import Callable
 
@@ -51,6 +52,19 @@ def has_permission(role: str | None, permission: str, granted_permissions: list[
 
 def emergency_stop_enabled() -> bool:
     return (os.getenv("JARVIS_EMERGENCY_STOP") or "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _default_memory_path() -> Path:
+    preferred = Path("/var/lib/jarvis/memory.json")
+    try:
+        preferred.parent.mkdir(parents=True, exist_ok=True)
+        with preferred.open("a", encoding="utf-8"):
+            pass
+        return preferred
+    except OSError:
+        fallback_dir = Path(tempfile.gettempdir()) / "jarvis"
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        return fallback_dir / "memory.json"
 
 
 @dataclass
@@ -410,7 +424,7 @@ class JarvisEngine:
 class LearningStore:
     def __init__(self) -> None:
         configured = os.getenv("JARVIS_MEMORY_PATH")
-        self.path = Path(configured) if configured else Path("/var/lib/jarvis/memory.json")
+        self.path = Path(configured) if configured else _default_memory_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.data = self._load()
 
@@ -436,7 +450,10 @@ class LearningStore:
             return self._empty()
 
     def _save(self) -> None:
-        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            pass
 
     def apply_aliases(self, text: str) -> str:
         normalized = normalize(text)

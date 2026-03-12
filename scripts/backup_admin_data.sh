@@ -13,6 +13,7 @@ USERS_PATH="${JARVIS_USER_STORE_PATH:-/var/lib/jarvis/users.json}"
 GROUPS_PATH="${JARVIS_GROUP_STORE_PATH:-/var/lib/jarvis/groups.json}"
 MEMBERSHIPS_PATH="${JARVIS_MEMBERSHIP_STORE_PATH:-/var/lib/jarvis/memberships.json}"
 PERMS_PATH="${JARVIS_PERMISSION_STORE_PATH:-/var/lib/jarvis/permissions.json}"
+SETTINGS_PATH="${JARVIS_ADMIN_SETTINGS_PATH:-/var/lib/jarvis/admin_settings.json}"
 
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
@@ -33,6 +34,7 @@ copy_if_exists "$USERS_PATH" "users.json"
 copy_if_exists "$GROUPS_PATH" "groups.json"
 copy_if_exists "$MEMBERSHIPS_PATH" "memberships.json"
 copy_if_exists "$PERMS_PATH" "permissions.json"
+copy_if_exists "$SETTINGS_PATH" "admin_settings.json"
 
 if [ "$COPIED" -eq 0 ]; then
   echo "No admin data files found to back up."

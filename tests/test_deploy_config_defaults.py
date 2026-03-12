@@ -13,9 +13,17 @@ README_DEPLOY_DEFAULTS_SENTENCE: Final[str] = (
 )
 
 DEPLOY_SCRIPT_PATH: Final[Path] = Path("scripts/deploy_local.sh")
+UPDATE_SCRIPT_PATH: Final[Path] = Path("scripts/update_local.sh")
+ROLLBACK_SCRIPT_PATH: Final[Path] = Path("scripts/rollback_local.sh")
 ENV_EXAMPLE_PATH: Final[Path] = Path("config/jarvis.env.example")
 README_PATH: Final[Path] = Path("README.md")
-EXPECTED_FIXTURE_PATHS: Final[tuple[Path, ...]] = (DEPLOY_SCRIPT_PATH, ENV_EXAMPLE_PATH, README_PATH)
+EXPECTED_FIXTURE_PATHS: Final[tuple[Path, ...]] = (
+    DEPLOY_SCRIPT_PATH,
+    UPDATE_SCRIPT_PATH,
+    ROLLBACK_SCRIPT_PATH,
+    ENV_EXAMPLE_PATH,
+    README_PATH,
+)
 
 
 ReadmeSnippetTuple = tuple[str, ...]
@@ -29,7 +37,10 @@ EXPECTED_README_SNIPPETS_SET: Final[set[str]] = {
     "JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS=1",
     "JARVIS_INTEGRITY_FAIL_ON_ORPHANS",
     "JARVIS_INTEGRITY_FAIL_ON_ORPHANS=1",
+    "JARVIS_ADMIN_SETTINGS_PATH",
     "deploy_local.sh",
+    "update_local.sh",
+    "rollback_local.sh",
     "duplicate/malformed membership drift",
     "exit code `8`",
 }
@@ -40,6 +51,7 @@ EXPECTED_README_SNIPPETS_SORTED: Final[ReadmeSnippetTuple] = tuple(sorted(EXPECT
 
 
 README_INTEGRITY_SNIPPETS: Final[ReadmeSnippetTuple] = (
+    "JARVIS_ADMIN_SETTINGS_PATH",
     "JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT",
     "JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT=1",
     "JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS",
@@ -49,6 +61,8 @@ README_INTEGRITY_SNIPPETS: Final[ReadmeSnippetTuple] = (
     "deploy_local.sh",
     "duplicate/malformed membership drift",
     "exit code `8`",
+    "rollback_local.sh",
+    "update_local.sh",
 )
 
 
@@ -79,16 +93,16 @@ class DeployConfigDefaultsTests(unittest.TestCase):
     def test_fixture_paths_order_is_stable(self):
         self.assertEqual(
             EXPECTED_FIXTURE_PATHS,
-            (DEPLOY_SCRIPT_PATH, ENV_EXAMPLE_PATH, README_PATH),
-            msg="EXPECTED_FIXTURE_PATHS order should stay deploy/env/readme for predictable subTest output",
+            (DEPLOY_SCRIPT_PATH, UPDATE_SCRIPT_PATH, ROLLBACK_SCRIPT_PATH, ENV_EXAMPLE_PATH, README_PATH),
+            msg="EXPECTED_FIXTURE_PATHS order should stay deploy/update/rollback/env/readme for predictable subTest output",
         )
 
     def test_fixture_paths_match_expected_set(self):
-        expected_paths = {DEPLOY_SCRIPT_PATH, ENV_EXAMPLE_PATH, README_PATH}
+        expected_paths = {DEPLOY_SCRIPT_PATH, UPDATE_SCRIPT_PATH, ROLLBACK_SCRIPT_PATH, ENV_EXAMPLE_PATH, README_PATH}
         self.assertEqual(
             set(EXPECTED_FIXTURE_PATHS),
             expected_paths,
-            msg="EXPECTED_FIXTURE_PATHS must include exactly deploy script, env example, and README",
+            msg="EXPECTED_FIXTURE_PATHS must include deploy/update/rollback scripts, env example, and README",
         )
 
     def test_fixture_paths_do_not_use_parent_traversal(self):
@@ -118,12 +132,22 @@ class DeployConfigDefaultsTests(unittest.TestCase):
         self.assertIn('ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_ORPHANS" "0"', script)
         self.assertIn('ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT" "0"', script)
         self.assertIn('ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS" "0"', script)
+        self.assertIn('ensure_env_default "JARVIS_ADMIN_SETTINGS_PATH" "/var/lib/jarvis/admin_settings.json"', script)
+
+    def test_update_and_rollback_scripts_exist_with_snapshot_logic(self):
+        update_script = UPDATE_SCRIPT_PATH.read_text(encoding="utf-8")
+        rollback_script = ROLLBACK_SCRIPT_PATH.read_text(encoding="utf-8")
+        self.assertIn('scripts/deploy_local.sh', update_script)
+        self.assertIn('backup_admin_data.sh', update_script)
+        self.assertIn('restore_admin_data.sh', rollback_script)
+        self.assertIn('check_admin_data_integrity.sh', rollback_script)
 
     def test_env_example_documents_integrity_strictness_flags(self):
         env_example = ENV_EXAMPLE_PATH.read_text(encoding="utf-8")
         self.assertIn("# JARVIS_INTEGRITY_FAIL_ON_ORPHANS=0", env_example)
         self.assertIn("# JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT=0", env_example)
         self.assertIn("# JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS=0", env_example)
+        self.assertIn("# JARVIS_ADMIN_SETTINGS_PATH=/var/lib/jarvis/admin_settings.json", env_example)
 
 
     def test_readme_defaults_sentence_is_non_empty_and_trimmed(self):

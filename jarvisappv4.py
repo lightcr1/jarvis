@@ -37,6 +37,7 @@ from user_store import UserStore
 from group_store import GroupStore
 from membership_store import MembershipStore
 from permission_store import PermissionStore, KNOWN_PERMISSIONS
+from admin_settings_store import AdminSettingsStore
 from jarvis_engine import (
     JarvisEngine,
     build_registry,
@@ -154,10 +155,39 @@ class AdminPermissionSetIn(BaseModel):
     permissions: list[str] = Field(default_factory=list)
 
 
+class AdminUsageLimitsIn(BaseModel):
+    token_ttl_min: int = Field(default=20, ge=1)
+    max_active_tokens: int = Field(default=200, ge=1)
+
+
+class AdminVoiceSettingsIn(BaseModel):
+    wakeword_enabled: bool = False
+    wakeword_phrase: str = Field(default="hey jarvis", min_length=1)
+    stt_provider: str = Field(default="local", pattern="^(local|gemini)$")
+
+
+class AdminSettingsIn(BaseModel):
+    usage_limits: AdminUsageLimitsIn = Field(default_factory=AdminUsageLimitsIn)
+    voice: AdminVoiceSettingsIn = Field(default_factory=AdminVoiceSettingsIn)
+
+
+def _default_writable_path(filename: str) -> Path:
+    preferred = Path("/var/lib/jarvis") / filename
+    try:
+        preferred.parent.mkdir(parents=True, exist_ok=True)
+        with preferred.open("a", encoding="utf-8"):
+            pass
+        return preferred
+    except OSError:
+        fallback_dir = Path(tempfile.gettempdir()) / "jarvis"
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        return fallback_dir / filename
+
+
 class ChatHistoryStore:
     def __init__(self) -> None:
         configured = os.getenv("JARVIS_CHAT_HISTORY_PATH")
-        self.path = Path(configured) if configured else Path("/var/lib/jarvis/chat_history.json")
+        self.path = Path(configured) if configured else _default_writable_path("chat_history.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.data = self._load()
 
@@ -174,7 +204,10 @@ class ChatHistoryStore:
             return self._empty()
 
     def _save(self) -> None:
-        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            pass
 
     def create_session(self, title: str | None = None) -> dict:
         now = int(time.time())
@@ -233,7 +266,7 @@ class ChatHistoryStore:
 class RagStore:
     def __init__(self) -> None:
         configured = os.getenv("JARVIS_RAG_CACHE_PATH")
-        self.path = Path(configured) if configured else Path("/var/lib/jarvis/rag_cache.json")
+        self.path = Path(configured) if configured else _default_writable_path("rag_cache.json")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.data = self._load()
 
@@ -250,7 +283,61 @@ class RagStore:
             return self._empty()
 
     def _save(self) -> None:
-        self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+        try:
+            self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            pass
+
+    @staticmethod
+    def _env_int(name: str, default: int, minimum: int = 1) -> int:
+        raw = os.getenv(name)
+        try:
+            value = int(raw) if raw is not None else default
+        except (TypeError, ValueError):
+            value = default
+        return max(minimum, value)
+
+    @staticmethod
+    def _allowed_github_extensions() -> set[str]:
+        configured = (os.getenv("GITHUB_RAG_INCLUDE_EXTENSIONS") or "").strip()
+        if configured:
+            values = configured.split(",")
+        else:
+            values = [
+                ".md", ".txt", ".rst",
+                ".py", ".json", ".toml", ".yaml", ".yml", ".ini", ".cfg", ".env",
+                ".js", ".ts", ".tsx", ".jsx", ".html", ".css",
+                ".sh",
+            ]
+        return {
+            value.strip().lower() if value.strip().startswith(".") else f".{value.strip().lower()}"
+            for value in values
+            if value.strip()
+        }
+
+    @staticmethod
+    def _is_github_text_path(path: str) -> bool:
+        suffix = Path(path).suffix.lower()
+        return suffix in RagStore._allowed_github_extensions()
+
+    @staticmethod
+    def _normalize_github_text(content: str, max_chars: int) -> str:
+        normalized = re.sub(r"\s+", " ", (content or "").strip())
+        return normalized[:max_chars].strip()
+
+    def _decode_github_blob_text(self, blob: dict) -> str:
+        if not isinstance(blob, dict):
+            return ""
+        if blob.get("encoding") == "base64":
+            raw = (blob.get("content") or "").encode("utf-8")
+            try:
+                decoded = base64.b64decode(raw, validate=False).decode("utf-8", errors="ignore")
+            except Exception:
+                return ""
+            return decoded
+        if isinstance(blob.get("content"), str):
+            return blob["content"]
+        return ""
 
     def _http_json(self, url: str, method: str = "GET", headers: dict | None = None, payload: dict | None = None) -> dict:
         body = None
@@ -298,14 +385,35 @@ class RagStore:
                 headers = {"User-Agent": "jarvis-rag"}
                 if gh_pat:
                     headers["Authorization"] = f"Bearer {gh_pat}"
+                max_files = self._env_int("GITHUB_RAG_MAX_FILES", default=40, minimum=1)
+                max_blob_chars = self._env_int("GITHUB_RAG_MAX_BLOB_CHARS", default=12000, minimum=20)
                 tree_url = f"https://api.github.com/repos/{gh_repo}/git/trees/{gh_branch}?recursive=1"
                 tree = self._http_json(tree_url, headers=headers)
-                files = [i for i in tree.get("tree", []) if i.get("type") == "blob"][:80]
+                files = [i for i in tree.get("tree", []) if i.get("type") == "blob"]
                 for f in files:
                     path = f.get("path", "")
-                    if not path or path.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg", ".pdf", ".zip")):
+                    if not path or not self._is_github_text_path(path):
                         continue
-                    sources["github"].append({"title": path, "text": path, "url": f.get("url", "")})
+                    blob_url = (f.get("url") or "").strip()
+                    if not blob_url:
+                        continue
+                    blob = self._http_json(blob_url, headers=headers)
+                    text = self._normalize_github_text(self._decode_github_blob_text(blob), max_blob_chars)
+                    if not text:
+                        continue
+                    sources["github"].append(
+                        {
+                            "title": path,
+                            "text": text,
+                            "url": f"https://github.com/{gh_repo}/blob/{gh_branch}/{path}",
+                            "path": path,
+                            "repo": gh_repo,
+                            "branch": gh_branch,
+                            "sha": (blob.get("sha") or f.get("sha") or "").strip(),
+                        }
+                    )
+                    if len(sources["github"]) >= max_files:
+                        break
                 report["github"] = f"ok ({len(sources['github'])})"
             except Exception as e:
                 report["github"] = f"error: {type(e).__name__}"
@@ -339,6 +447,7 @@ user_store = UserStore()
 group_store = GroupStore()
 membership_store = MembershipStore()
 permission_store = PermissionStore()
+admin_settings_store = AdminSettingsStore()
 
 
 @app.get("/health")
@@ -402,7 +511,10 @@ def build_context_reply(text: str) -> str:
 
 
 def get_stt_provider() -> str:
-    return (os.getenv("STT_PROVIDER") or "local").lower().strip()  # local|gemini
+    configured = (os.getenv("STT_PROVIDER") or "").lower().strip()
+    if configured:
+        return configured
+    return admin_settings_store.get().get("voice", {}).get("stt_provider", "local")
 
 
 def get_openai() -> OpenAI:
@@ -457,16 +569,65 @@ def _env_int(name: str, default: int, minimum: int | None = None) -> int:
     return value
 
 
+def _settings_env_summary() -> dict[str, object]:
+    settings = admin_settings_store.get()
+    ttl_value = _env_int(
+        "JARVIS_TOKEN_TTL_MIN",
+        default=settings["usage_limits"]["token_ttl_min"],
+        minimum=1,
+    )
+    max_active_value = _env_int(
+        "JARVIS_MAX_ACTIVE_TOKENS",
+        default=settings["usage_limits"]["max_active_tokens"],
+        minimum=1,
+    )
+    return {
+        "usage_limits": {
+            "token_ttl_min": {
+                "value": ttl_value,
+                "source": "env" if os.getenv("JARVIS_TOKEN_TTL_MIN") is not None else "settings",
+            },
+            "max_active_tokens": {
+                "value": max_active_value,
+                "source": "env" if os.getenv("JARVIS_MAX_ACTIVE_TOKENS") is not None else "settings",
+            },
+        },
+        "voice": {
+            "wakeword_enabled": {
+                "value": wakeword_enabled(),
+                "source": "env" if os.getenv("JARVIS_WAKEWORD_ENABLED") is not None else "settings",
+            },
+            "wakeword_phrase": {
+                "value": wakeword_phrase(),
+                "source": "env" if os.getenv("JARVIS_WAKEWORD_PHRASE") is not None else "settings",
+            },
+            "stt_provider": {
+                "value": get_stt_provider(),
+                "source": "env" if os.getenv("STT_PROVIDER") is not None else "settings",
+            },
+        },
+    }
+
+
 # ---------------------------
 # Unlock / Token
 # ---------------------------
 def _issue_token() -> UnlockOut:
     prune_expired_tokens(_tokens)
-    ttl_min = _env_int("JARVIS_TOKEN_TTL_MIN", default=20, minimum=1)
+    settings = admin_settings_store.get()
+    ttl_min = _env_int(
+        "JARVIS_TOKEN_TTL_MIN",
+        default=settings["usage_limits"]["token_ttl_min"],
+        minimum=1,
+    )
     token = secrets.token_urlsafe(32)
     _tokens[token] = time.time() + ttl_min * 60
 
-    max_active = _env_int("JARVIS_MAX_ACTIVE_TOKENS", default=200, minimum=1)
+    max_active = _env_int(
+        "JARVIS_MAX_ACTIVE_TOKENS",
+        default=settings["usage_limits"]["max_active_tokens"],
+        minimum=1,
+    )
     enforce_token_capacity(_tokens, max_active)
 
     return UnlockOut(token=token, expires_in_sec=ttl_min * 60)
@@ -680,11 +841,17 @@ def tts_preprocess_text(text: str) -> str:
 
 
 def wakeword_enabled() -> bool:
-    return (os.getenv("JARVIS_WAKEWORD_ENABLED") or "0").strip().lower() not in {"0", "false", "no", "off"}
+    configured = os.getenv("JARVIS_WAKEWORD_ENABLED")
+    if configured is not None:
+        return configured.strip().lower() not in {"0", "false", "no", "off"}
+    return bool(admin_settings_store.get().get("voice", {}).get("wakeword_enabled", False))
 
 
 def wakeword_phrase() -> str:
-    return (os.getenv("JARVIS_WAKEWORD_PHRASE") or "hey jarvis").strip().lower()
+    configured = (os.getenv("JARVIS_WAKEWORD_PHRASE") or "").strip().lower()
+    if configured:
+        return configured
+    return admin_settings_store.get().get("voice", {}).get("wakeword_phrase", "hey jarvis")
 
 
 def strip_wakeword(text: str) -> tuple[str, bool]:
@@ -1787,8 +1954,43 @@ def admin_status_summary(x_jarvis_user_id: str | None = Header(default=None), x_
             "memberships": orphan_memberships,
             "group_permission_sets": orphan_group_permission_sets,
             "user_permission_sets": orphan_user_permission_sets,
-        }
+        },
+        "settings": _settings_env_summary(),
     }
+
+
+@app.get("/admin/settings")
+def admin_get_settings(
+    x_jarvis_user_id: str | None = Header(default=None),
+    x_jarvis_role: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+):
+    require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    return {"settings": admin_settings_store.get(), "effective": _settings_env_summary()}
+
+
+@app.put("/admin/settings")
+def admin_update_settings(
+    payload: AdminSettingsIn,
+    x_jarvis_user_id: str | None = Header(default=None),
+    x_jarvis_role: str | None = Header(default=None),
+    authorization: str | None = Header(default=None),
+):
+    actor_user_id, caller_role = require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+    updated = admin_settings_store.update(payload.model_dump())
+    _audit_admin_event(
+        "admin_settings_updated",
+        actor_user_id,
+        caller_role,
+        {
+            "token_ttl_min": updated["usage_limits"]["token_ttl_min"],
+            "max_active_tokens": updated["usage_limits"]["max_active_tokens"],
+            "wakeword_enabled": updated["voice"]["wakeword_enabled"],
+            "wakeword_phrase": updated["voice"]["wakeword_phrase"],
+            "stt_provider": updated["voice"]["stt_provider"],
+        },
+    )
+    return {"settings": updated, "effective": _settings_env_summary()}
 
 @app.get("/chat/sessions")
 def list_chat_sessions():

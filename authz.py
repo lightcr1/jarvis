@@ -1,6 +1,35 @@
 from __future__ import annotations
 
 from jarvis_engine import ROLE_PERMISSIONS, normalize_role
+from permission_store import KNOWN_PERMISSIONS
+
+
+def _normalized_permissions(values: list[str] | None) -> list[str]:
+    seen = set()
+    normalized: list[str] = []
+    for value in values or []:
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if not cleaned or cleaned not in KNOWN_PERMISSIONS or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        normalized.append(cleaned)
+    return normalized
+
+
+def _normalized_group_ids(values: list[str] | None) -> list[str]:
+    seen = set()
+    normalized: list[str] = []
+    for value in values or []:
+        if not isinstance(value, str):
+            continue
+        cleaned = value.strip()
+        if not cleaned or cleaned in seen:
+            continue
+        seen.add(cleaned)
+        normalized.append(cleaned)
+    return normalized
 
 
 def resolve_effective_permissions(
@@ -15,12 +44,12 @@ def resolve_effective_permissions(
     if not user_id:
         return effective
 
-    user_permissions = permission_store.list_user_permissions().get(user_id, [])
+    user_permissions = _normalized_permissions(permission_store.list_user_permissions().get(user_id, []))
     effective.update(user_permissions)
 
     group_permissions = permission_store.list_group_permissions()
-    for gid in membership_store.list_user_groups(user_id):
-        effective.update(group_permissions.get(gid, []))
+    for gid in _normalized_group_ids(membership_store.list_user_groups(user_id)):
+        effective.update(_normalized_permissions(group_permissions.get(gid, [])))
 
     return effective
 
@@ -45,10 +74,10 @@ def build_permission_context(
             "effective_permissions": role_permissions,
         }
 
-    user_permissions = sorted(permission_store.list_user_permissions().get(user_id, []))
-    group_ids = membership_store.list_user_groups(user_id)
+    user_permissions = sorted(_normalized_permissions(permission_store.list_user_permissions().get(user_id, [])))
+    group_ids = _normalized_group_ids(membership_store.list_user_groups(user_id))
     group_permissions_map = permission_store.list_group_permissions()
-    group_permissions = {gid: sorted(group_permissions_map.get(gid, [])) for gid in group_ids}
+    group_permissions = {gid: sorted(_normalized_permissions(group_permissions_map.get(gid, []))) for gid in group_ids}
 
     effective = set(role_permissions)
     effective.update(user_permissions)

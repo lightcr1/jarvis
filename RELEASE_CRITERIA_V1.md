@@ -77,6 +77,7 @@ V1 is releasable only if **all P0 criteria pass** and no open blocker defects re
 ## Exit Artifacts Required Before Launch
 
 - Signed release checklist (`EXECUTION_CHECKLIST_V1.md`).
+- Completed manual acceptance pack (`MANUAL_ACCEPTANCE_V1.md` or dated copy).
 - Security sign-off (RBAC + audit + emergency stop).
 - Performance sign-off on target hardware class.
 - Operations sign-off for deploy/update/rollback/backup/restore.

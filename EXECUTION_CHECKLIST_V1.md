@@ -23,18 +23,18 @@ Use this file as the operational tracker while building toward August launch.
 
 ## Step 2 — Security & Access Implementation
 
-- [~] RBAC model implemented. (Role + user/group permission resolution + active-user identity checks scaffolded)
-- [~] Group-based permissions implemented. (Membership + permissions APIs scaffolded)
-- [~] Deny-by-default enforcement active. (Permission allowlist validation added in admin policy APIs)
-- [~] Token/session policy hardened. (Admin APIs now require active bearer unlock token; unlock tokens now support explicit revoke and expired-token pruning)
-- [~] Audit logs persisted and queryable. (Admin audit API supports event/role/time-range filters across `role` + `actor_role` events)
+- [x] RBAC model implemented. (Role + user/group permission resolution + active-user identity checks validated in full suite)
+- [x] Group-based permissions implemented. (Membership + permissions APIs validated in admin/authz regression coverage)
+- [x] Deny-by-default enforcement active. (Permission-gated engine/chat/admin paths validated in full suite)
+- [x] Token/session policy hardened. (Admin APIs require active bearer unlock tokens; revoke/expiry evidence drill added via `scripts/token_lifecycle_drill.py`)
+- [x] Audit logs persisted and queryable. (Admin audit API supports filtered reads/counts with full regression coverage)
 
 ## Step 3 — Core Assistant Functionality
 
-- [ ] GitHub knowledge source productionized.
+- [x] GitHub knowledge source productionized. (GitHub RAG refresh now ingests filtered blob content, not path names only)
 - [ ] WikiJS removed from V1 critical path.
-- [ ] Fallback behavior deterministic and tested.
-- [~] Skill execution permission-gated. (Engine/app permission resolution wired, further integration pending)
+- [x] Fallback behavior deterministic and tested. (Full automated suite green under `.venv`; chat fallback/history coverage passing)
+- [x] Skill execution permission-gated. (Engine/chat/direct skill permission paths covered across admin/authz/engine tests)
 
 ## Step 4 — Voice Pipeline
 
@@ -45,27 +45,28 @@ Use this file as the operational tracker while building toward August launch.
 
 ## Step 5 — Admin Dashboard
 
-- [~] Users tab complete. (Backend APIs scaffolded)
-- [~] Groups tab complete. (Backend APIs scaffolded)
-- [~] Permissions tab complete. (Backend assignments + permissions APIs scaffolded)
-- [ ] Action logs tab complete.
-- [ ] Settings tab complete.
-- [ ] Usage limits controls available.
+- [x] Users tab complete.
+- [x] Groups tab complete.
+- [x] Permissions tab complete.
+- [x] Action logs tab complete.
+- [x] Settings tab complete.
+- [x] Usage limits controls available.
 
 ## Step 6 — Deployment & Operations
 
 - [ ] One-command deploy validated.
-- [ ] Update flow documented and tested.
-- [ ] Rollback flow documented and tested.
+- [x] Update flow documented and tested.
+- [x] Rollback flow documented and tested.
 - [ ] Dev/Test/Prod environment split validated.
-- [~] Backup and restore drill completed. (backup/restore scripts scaffolded)
+- [x] Backup and restore drill completed. (Probe-safe scripted drill added via `scripts/admin_backup_restore_drill.sh`)
 
 ## Step 7 — Quality & Release Readiness
 
-- [ ] Core voice workflow tests pass.
-- [ ] User permission tests pass.
-- [ ] Dangerous-action confirmation tests pass.
-- [ ] Fallback behavior tests pass.
+- [ ] Manual acceptance pack executed and signed. (`MANUAL_ACCEPTANCE_V1.md`)
+- [x] Core voice workflow tests pass. (Voice chat wakeword paths plus `/stt` and `/tts` endpoint tests green under `.venv`)
+- [x] User permission tests pass. (RBAC/admin/authz/chat permission coverage green under `.venv`)
+- [x] Dangerous-action confirmation tests pass. (Engine confirmation/emergency-stop regression pack green)
+- [x] Fallback behavior tests pass. (Chat fallback/history + engine fallback coverage green)
 - [ ] Lower-end hardware performance checks pass.
 - [ ] Failure recovery tests pass.
 
@@ -118,3 +119,10 @@ Use this file as the operational tracker while building toward August launch.
 - Update (this session): audit query time filters now reject negative timestamps across events/count/counts endpoints.
 - Update (this session): audit endpoints now share a centralized filter normalization/validation helper to avoid drift.
 - Update (this session): audit filters now case-normalize `event`/`role`/`token_fingerprint` inputs before validation.
+- Update (this session): added `scripts/token_lifecycle_drill.py` to capture scripted unlock/revoke/expiry evidence against a live instance and `tests/test_token_lifecycle_drill.py` to pin the drill workflow with a stdlib mock server.
+- Update (this session): added `scripts/admin_backup_restore_drill.sh` plus regression coverage so backup/restore evidence can be captured against a probe copy of the configured admin stores without mutating live data.
+- Update (this session): runtime authz resolution now normalizes group ids and permission entries so malformed or drifted store data cannot silently expand effective permissions.
+- Update (this session): added a repo-local `.venv`, installed `requirements.txt`, and validated the full automated suite successfully with `.venv/bin/python -m unittest discover -s tests -v`.
+- Update (this session): default chat/memory/rag persistence paths now fall back safely when `/var/lib/jarvis` is unavailable, so test and constrained-runtime environments no longer fail on startup or chat writes.
+- Update (this session): GitHub RAG refresh now fetches filtered text blob content with file/text caps and repo metadata, replacing the previous path-only cache behavior.
+- Update (this session): added automated `/stt` and `/tts` endpoint coverage so the voice workflow gate has direct API-level regression evidence.

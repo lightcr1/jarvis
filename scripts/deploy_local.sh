@@ -87,6 +87,7 @@ ensure_env_default "JARVIS_USER_STORE_PATH" "/var/lib/jarvis/users.json"
 ensure_env_default "JARVIS_GROUP_STORE_PATH" "/var/lib/jarvis/groups.json"
 ensure_env_default "JARVIS_MEMBERSHIP_STORE_PATH" "/var/lib/jarvis/memberships.json"
 ensure_env_default "JARVIS_PERMISSION_STORE_PATH" "/var/lib/jarvis/permissions.json"
+ensure_env_default "JARVIS_ADMIN_SETTINGS_PATH" "/var/lib/jarvis/admin_settings.json"
 ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_ORPHANS" "0"
 ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT" "0"
 ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS" "0"
@@ -103,6 +104,7 @@ ADMIN_DATA_PATHS=(
   "${JARVIS_GROUP_STORE_PATH}"
   "${JARVIS_MEMBERSHIP_STORE_PATH}"
   "${JARVIS_PERMISSION_STORE_PATH}"
+  "${JARVIS_ADMIN_SETTINGS_PATH}"
 )
 
 seed_admin_data_file() {
@@ -122,6 +124,9 @@ seed_admin_data_file() {
     permissions.json)
       printf '%s\n' '{"group_permissions": {}, "user_permissions": {}}' > "${path}"
       ;;
+    admin_settings.json)
+      printf '%s\n' '{"usage_limits": {"token_ttl_min": 20, "max_active_tokens": 200}, "voice": {"wakeword_enabled": false, "wakeword_phrase": "hey jarvis", "stt_provider": "local"}}' > "${path}"
+      ;;
     audit.log)
       : > "${path}"
       ;;
@@ -139,7 +144,7 @@ for p in "${ADMIN_DATA_PATHS[@]}"; do
   fi
 done
 
-chmod 640 "${JARVIS_AUDIT_LOG_PATH}" "${JARVIS_USER_STORE_PATH}" "${JARVIS_GROUP_STORE_PATH}" "${JARVIS_MEMBERSHIP_STORE_PATH}" "${JARVIS_PERMISSION_STORE_PATH}" || fail "Failed to set permissions on admin data files"
+chmod 640 "${JARVIS_AUDIT_LOG_PATH}" "${JARVIS_USER_STORE_PATH}" "${JARVIS_GROUP_STORE_PATH}" "${JARVIS_MEMBERSHIP_STORE_PATH}" "${JARVIS_PERMISSION_STORE_PATH}" "${JARVIS_ADMIN_SETTINGS_PATH}" || fail "Failed to set permissions on admin data files"
 
 TLS_CERT="${JARVIS_TLS_CERT_FILE:-}"
 TLS_KEY="${JARVIS_TLS_KEY_FILE:-}"
