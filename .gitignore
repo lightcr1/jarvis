@@ -3,3 +3,6 @@ proxmox_hosts.json
 venv/
 __pycache__/
 *.pyc
+__pycache__/
+*.pyo
+*.pyd
