@@ -1,0 +1,12 @@
+[Unit]
+Description=Jarvis Kiosk Preparation
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/jarvis-setup-kiosk
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,11 @@
+proxmox_hosts.json
+.venv/
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+dist/
+build/
