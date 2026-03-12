@@ -14,10 +14,36 @@ def bearer_token_from_header(auth_header: str | None) -> str | None:
 
 
 def is_token_active(tokens: dict[str, float], token: str | None, now: float | None = None) -> bool:
-    if not token:
+    if token is None:
         return False
     exp = tokens.get(token)
-    if not exp:
+    if exp is None:
         return False
     now_ts = time.time() if now is None else now
     return now_ts <= exp
+
+
+def prune_expired_tokens(tokens: dict[str, float], now: float | None = None) -> int:
+    now_ts = time.time() if now is None else now
+    expired = [token for token, exp in tokens.items() if exp < now_ts]
+    for token in expired:
+        tokens.pop(token, None)
+    return len(expired)
+
+
+
+def enforce_token_capacity(tokens: dict[str, float], max_active: int) -> int:
+    if max_active < 1:
+        removed = len(tokens)
+        tokens.clear()
+        return removed
+
+    overflow = len(tokens) - max_active
+    if overflow <= 0:
+        return 0
+
+    # Deterministic eviction: remove earliest-expiring tokens first, then token id.
+    ordered = sorted(tokens.items(), key=lambda item: (item[1], item[0]))
+    for token, _ in ordered[:overflow]:
+        tokens.pop(token, None)
+    return overflow

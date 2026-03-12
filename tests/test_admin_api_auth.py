@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
@@ -35,6 +36,100 @@ class AdminApiAuthTests(unittest.TestCase):
         res = self.client.post("/unlock", json={"passphrase": "test-pass"})
         self.assertEqual(res.status_code, 200)
         return res.json()["token"]
+
+
+
+
+    def test_unlock_and_revoke_emit_audit_events(self):
+        token = self._unlock()
+
+        issued_events = jarvisappv4.audit_log.read_events(event="unlock_issued", limit=5)
+        self.assertGreaterEqual(len(issued_events), 1)
+        self.assertIn("expires_in_sec", issued_events[0])
+        self.assertIn("token_fingerprint", issued_events[0])
+
+        revoke = self.client.post(
+            "/unlock/revoke",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(revoke.status_code, 200)
+
+        revoked_events = jarvisappv4.audit_log.read_events(event="unlock_revoked", limit=5)
+        self.assertGreaterEqual(len(revoked_events), 1)
+        self.assertIn("active_token_count", revoked_events[0])
+        self.assertIn("token_fingerprint", revoked_events[0])
+
+    def test_unlock_failure_and_revoke_denied_emit_audit_events(self):
+        wrong = self.client.post("/unlock", json={"passphrase": "wrong"})
+        self.assertEqual(wrong.status_code, 401)
+
+        denied = self.client.post("/unlock/revoke")
+        self.assertEqual(denied.status_code, 401)
+
+        unlock_failed = jarvisappv4.audit_log.read_events(event="unlock_failed", limit=5)
+        self.assertGreaterEqual(len(unlock_failed), 1)
+        self.assertEqual(unlock_failed[0].get("reason"), "wrong_passphrase")
+
+        revoke_denied = jarvisappv4.audit_log.read_events(event="unlock_revoke_denied", limit=5)
+        self.assertGreaterEqual(len(revoke_denied), 1)
+        self.assertEqual(revoke_denied[0].get("reason"), "missing_token")
+
+    def test_unlock_uses_safe_defaults_for_invalid_token_env_values(self):
+        with patch.dict(
+            os.environ,
+            {"JARVIS_TOKEN_TTL_MIN": "not-an-int", "JARVIS_MAX_ACTIVE_TOKENS": "invalid"},
+            clear=False,
+        ):
+            token = self._unlock()
+
+        create = self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {token}", "X-Jarvis-Role": "admin"},
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(create.status_code, 200)
+
+    def test_unlock_clamps_low_token_env_values_to_minimum(self):
+        with patch.dict(
+            os.environ,
+            {"JARVIS_TOKEN_TTL_MIN": "0", "JARVIS_MAX_ACTIVE_TOKENS": "0"},
+            clear=False,
+        ):
+            first = self._unlock()
+            second = self._unlock()
+
+        blocked = self.client.get(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {first}", "X-Jarvis-Role": "admin"},
+        )
+        self.assertEqual(blocked.status_code, 401)
+
+        allowed = self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {second}", "X-Jarvis-Role": "admin"},
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(allowed.status_code, 200)
+
+    def test_unlock_honors_max_active_token_capacity(self):
+        with patch.dict(os.environ, {"JARVIS_MAX_ACTIVE_TOKENS": "1"}, clear=False):
+            first = self._unlock()
+            second = self._unlock()
+
+        # First token should be evicted once the second token is issued.
+        blocked = self.client.get(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {first}", "X-Jarvis-Role": "admin"},
+        )
+        self.assertEqual(blocked.status_code, 401)
+        self.assertIn("admin token required", blocked.text)
+
+        allowed = self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {second}", "X-Jarvis-Role": "admin"},
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(allowed.status_code, 200)
 
     def test_admin_endpoint_requires_active_token(self):
         res = self.client.get(
@@ -146,6 +241,243 @@ class AdminApiAuthTests(unittest.TestCase):
         )
         self.assertEqual(listing.status_code, 200)
         self.assertGreaterEqual(len(listing.json().get("users", [])), 1)
+
+    def test_revoked_token_is_rejected_by_admin_endpoints(self):
+        token = self._unlock()
+
+        first = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+            },
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(first.status_code, 200)
+        admin_id = first.json()["id"]
+
+        revoke = self.client.post(
+            "/unlock/revoke",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        self.assertEqual(revoke.status_code, 200)
+        self.assertTrue(revoke.json().get("ok"))
+
+        listing = self.client.get(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(listing.status_code, 401)
+        self.assertIn("admin token required", listing.text)
+
+
+    def test_unlock_revoke_rejects_falsy_epoch_token_entry(self):
+        jarvisappv4._tokens["epoch-zero"] = 0.0
+
+        res = self.client.post(
+            "/unlock/revoke",
+            headers={"Authorization": "Bearer epoch-zero"},
+        )
+        self.assertEqual(res.status_code, 401)
+        self.assertIn("Token expired or invalid", res.text)
+        self.assertNotIn("epoch-zero", jarvisappv4._tokens)
+
+    def test_unlock_revoke_requires_valid_token(self):
+        missing = self.client.post("/unlock/revoke")
+        self.assertEqual(missing.status_code, 401)
+        self.assertIn("Missing token", missing.text)
+
+        invalid = self.client.post(
+            "/unlock/revoke",
+            headers={"Authorization": "Bearer not-a-real-token"},
+        )
+        self.assertEqual(invalid.status_code, 401)
+        self.assertIn("Token expired or invalid", invalid.text)
+
+
+    def test_inactive_revoke_audit_event_contains_token_fingerprint(self):
+        jarvisappv4._tokens["expired-token"] = 1.0
+
+        self.client.post(
+            "/unlock/revoke",
+            headers={"Authorization": "Bearer expired-token"},
+        )
+
+        denied = jarvisappv4.audit_log.read_events(event="unlock_revoke_denied", limit=5)
+        inactive = next((e for e in denied if e.get("reason") == "inactive_token"), None)
+        self.assertIsNotNone(inactive)
+        self.assertIn("token_fingerprint", inactive)
+
+    def test_unlock_revoke_rejects_expired_token_and_prunes_it(self):
+        jarvisappv4._tokens["expired-token"] = 1.0
+
+        expired = self.client.post(
+            "/unlock/revoke",
+            headers={"Authorization": "Bearer expired-token"},
+        )
+        self.assertEqual(expired.status_code, 401)
+        self.assertIn("Token expired or invalid", expired.text)
+        self.assertNotIn("expired-token", jarvisappv4._tokens)
+
+
+
+
+
+    def test_admin_audit_filters_are_case_normalized(self):
+        token = self._unlock()
+
+        bootstrap = self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {token}", "X-Jarvis-Role": "admin"},
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(bootstrap.status_code, 200)
+        admin_id = bootstrap.json()["id"]
+
+        self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+            json={"username": "member", "role": "standard_user", "enabled": True},
+        )
+
+        issued = jarvisappv4.audit_log.read_events(event="unlock_issued", limit=1)
+        self.assertEqual(len(issued), 1)
+        fp_upper = str(issued[0].get("token_fingerprint", "")).upper()
+
+        events = self.client.get(
+            f"/admin/audit/events?event=ADMIN_USER_CREATED&role=ADMIN&token_fingerprint={fp_upper}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(events.status_code, 200)
+        filters = events.json().get("filters", {})
+        self.assertEqual(filters.get("event"), "admin_user_created")
+        self.assertEqual(filters.get("role"), "admin")
+        self.assertEqual(filters.get("token_fingerprint"), fp_upper.lower())
+
+    def test_admin_audit_endpoints_support_token_fingerprint_filter(self):
+        token = self._unlock()
+
+        issued_events = jarvisappv4.audit_log.read_events(event="unlock_issued", limit=1)
+        self.assertEqual(len(issued_events), 1)
+        fingerprint = issued_events[0].get("token_fingerprint")
+        self.assertTrue(fingerprint)
+
+        bootstrap = self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {token}", "X-Jarvis-Role": "admin"},
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(bootstrap.status_code, 200)
+        admin_id = bootstrap.json()["id"]
+
+        events = self.client.get(
+            f"/admin/audit/events?event=unlock_issued&token_fingerprint={fingerprint}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(events.status_code, 200)
+        body = events.json()
+        self.assertGreaterEqual(body.get("count", 0), 1)
+        self.assertEqual(body.get("filters", {}).get("token_fingerprint"), fingerprint)
+
+        counts = self.client.get(
+            f"/admin/audit/counts?token_fingerprint={fingerprint}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(counts.status_code, 200)
+        self.assertEqual(counts.json().get("filters", {}).get("token_fingerprint"), fingerprint)
+
+    def test_admin_audit_endpoints_support_actor_user_filter(self):
+        token = self._unlock()
+
+        bootstrap = self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {token}", "X-Jarvis-Role": "admin"},
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(bootstrap.status_code, 200)
+        admin_id = bootstrap.json()["id"]
+
+        self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+            json={"username": "member", "role": "standard_user", "enabled": True},
+        )
+
+        events = self.client.get(
+            f"/admin/audit/events?event=admin_user_created&actor_user_id={admin_id}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(events.status_code, 200)
+        body = events.json()
+        self.assertGreaterEqual(body.get("count", 0), 1)
+        self.assertEqual(body.get("filters", {}).get("actor_user_id"), admin_id)
+
+        counts = self.client.get(
+            f"/admin/audit/counts?actor_user_id={admin_id}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(counts.status_code, 200)
+        self.assertEqual(counts.json().get("filters", {}).get("actor_user_id"), admin_id)
+
+    def test_admin_audit_event_includes_actor_user_id(self):
+        token = self._unlock()
+
+        bootstrap = self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {token}", "X-Jarvis-Role": "admin"},
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(bootstrap.status_code, 200)
+        admin_id = bootstrap.json()["id"]
+
+        created = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+            json={"username": "member", "role": "standard_user", "enabled": True},
+        )
+        self.assertEqual(created.status_code, 200)
+
+        events = jarvisappv4.audit_log.read_events(event="admin_user_created", limit=5)
+        self.assertGreaterEqual(len(events), 2)
+        non_bootstrap = next((e for e in events if e.get("username") == "member"), None)
+        self.assertIsNotNone(non_bootstrap)
+        self.assertEqual(non_bootstrap.get("actor_user_id"), admin_id)
 
     def test_admin_create_user_rejects_duplicate_username(self):
         token = self._unlock()
@@ -397,6 +729,354 @@ class AdminApiAuthTests(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 400)
         self.assertIn("limit must be between 1 and 500", res.text)
+
+
+
+
+
+    def test_admin_audit_events_reject_invalid_event_filter(self):
+        token = self._unlock()
+
+        first_user = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+            },
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(first_user.status_code, 200)
+        admin_id = first_user.json()["id"]
+
+        events = self.client.get(
+            "/admin/audit/events?event=Bad-Event!",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(events.status_code, 400)
+        self.assertIn("event must match [a-z0-9_]{1,64}", events.text)
+
+        counts = self.client.get(
+            "/admin/audit/counts?event=Bad-Event!",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(counts.status_code, 400)
+        self.assertIn("event must match [a-z0-9_]{1,64}", counts.text)
+
+    def test_admin_audit_endpoints_reject_invalid_role_filter(self):
+        token = self._unlock()
+
+        first_user = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+            },
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(first_user.status_code, 200)
+        admin_id = first_user.json()["id"]
+
+        events = self.client.get(
+            "/admin/audit/events?role=totally_invalid",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(events.status_code, 400)
+        self.assertIn("role must be one of", events.text)
+
+        counts = self.client.get(
+            "/admin/audit/counts?role=not_a_role",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(counts.status_code, 400)
+        self.assertIn("role must be one of", counts.text)
+
+    def test_admin_audit_endpoints_reject_invalid_actor_user_filter(self):
+        token = self._unlock()
+
+        first_user = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+            },
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(first_user.status_code, 200)
+        admin_id = first_user.json()["id"]
+
+        events = self.client.get(
+            "/admin/audit/events?actor_user_id=not-a-user-id",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(events.status_code, 400)
+        self.assertIn("actor_user_id must be 'bootstrap' or match usr-[0-9a-f]{12}", events.text)
+
+        counts = self.client.get(
+            "/admin/audit/counts?actor_user_id=bad",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(counts.status_code, 400)
+        self.assertIn("actor_user_id must be 'bootstrap' or match usr-[0-9a-f]{12}", counts.text)
+
+    def test_admin_audit_endpoints_reject_invalid_token_fingerprint_filter(self):
+        token = self._unlock()
+
+        first_user = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+            },
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(first_user.status_code, 200)
+        admin_id = first_user.json()["id"]
+
+        events = self.client.get(
+            "/admin/audit/events?token_fingerprint=INVALID",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(events.status_code, 400)
+        self.assertIn("token_fingerprint must be 16 lowercase hex characters", events.text)
+
+        counts = self.client.get(
+            "/admin/audit/counts?token_fingerprint=short",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(counts.status_code, 400)
+        self.assertIn("token_fingerprint must be 16 lowercase hex characters", counts.text)
+
+
+
+
+    def test_admin_audit_count_normalizes_blank_filters(self):
+        token = self._unlock()
+
+        first_user = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+            },
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(first_user.status_code, 200)
+        admin_id = first_user.json()["id"]
+
+        res = self.client.get(
+            "/admin/audit/count?event=%20%20&role=%20%20&actor_user_id=%20%20&token_fingerprint=%20%20",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(res.status_code, 200)
+        filters = res.json().get("filters", {})
+        self.assertIsNone(filters.get("event"))
+        self.assertIsNone(filters.get("role"))
+        self.assertIsNone(filters.get("actor_user_id"))
+        self.assertIsNone(filters.get("token_fingerprint"))
+
+
+    def test_admin_audit_count_accepts_uppercase_token_fingerprint(self):
+        token = self._unlock()
+
+        bootstrap = self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {token}", "X-Jarvis-Role": "admin"},
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(bootstrap.status_code, 200)
+        admin_id = bootstrap.json()["id"]
+
+        issued = jarvisappv4.audit_log.read_events(event="unlock_issued", limit=1)
+        self.assertEqual(len(issued), 1)
+        fp_upper = str(issued[0].get("token_fingerprint", "")).upper()
+
+        count = self.client.get(
+            f"/admin/audit/count?event=UNLOCK_ISSUED&token_fingerprint={fp_upper}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(count.status_code, 200)
+        body = count.json()
+        self.assertGreaterEqual(body.get("count", 0), 1)
+        self.assertEqual(body.get("filters", {}).get("event"), "unlock_issued")
+        self.assertEqual(body.get("filters", {}).get("token_fingerprint"), fp_upper.lower())
+
+    def test_admin_audit_count_endpoint_supports_filters(self):
+        token = self._unlock()
+
+        first_user = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+            },
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(first_user.status_code, 200)
+        admin_id = first_user.json()["id"]
+
+        count_res = self.client.get(
+            "/admin/audit/count?event=admin_user_created",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(count_res.status_code, 200)
+        body = count_res.json()
+        self.assertGreaterEqual(body.get("count", 0), 1)
+        self.assertEqual(body.get("filters", {}).get("event"), "admin_user_created")
+
+    def test_admin_audit_count_rejects_invalid_token_fingerprint_filter(self):
+        token = self._unlock()
+
+        first_user = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+            },
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(first_user.status_code, 200)
+        admin_id = first_user.json()["id"]
+
+        bad = self.client.get(
+            "/admin/audit/count?token_fingerprint=INVALID",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(bad.status_code, 400)
+        self.assertIn("token_fingerprint must be 16 lowercase hex characters", bad.text)
+
+    def test_admin_audit_counts_supports_event_filter(self):
+        token = self._unlock()
+
+        first_user = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+            },
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(first_user.status_code, 200)
+        admin_id = first_user.json()["id"]
+
+        counts = self.client.get(
+            "/admin/audit/counts?event=admin_user_created",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(counts.status_code, 200)
+        body = counts.json()
+        self.assertEqual(body.get("filters", {}).get("event"), "admin_user_created")
+        self.assertEqual(set(body.get("counts", {}).keys()), {"admin_user_created"})
+
+
+    def test_admin_audit_endpoints_reject_negative_timestamps(self):
+        token = self._unlock()
+
+        first_user = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+            },
+            json={"username": "owner", "role": "admin", "enabled": True},
+        )
+        self.assertEqual(first_user.status_code, 200)
+        admin_id = first_user.json()["id"]
+
+        events_since = self.client.get(
+            "/admin/audit/events?since_ts=-1",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(events_since.status_code, 400)
+        self.assertIn("since_ts must be >= 0", events_since.text)
+
+        events_until = self.client.get(
+            "/admin/audit/events?until_ts=-1",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(events_until.status_code, 400)
+        self.assertIn("until_ts must be >= 0", events_until.text)
+
+        count_single = self.client.get(
+            "/admin/audit/count?since_ts=-5",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(count_single.status_code, 400)
+        self.assertIn("since_ts must be >= 0", count_single.text)
+
+        counts = self.client.get(
+            "/admin/audit/counts?until_ts=-5",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin_id,
+            },
+        )
+        self.assertEqual(counts.status_code, 400)
+        self.assertIn("until_ts must be >= 0", counts.text)
 
     def test_admin_audit_endpoints_reject_invalid_time_range(self):
         token = self._unlock()

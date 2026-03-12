@@ -132,6 +132,48 @@
 - ✅ Ops docs hardening: collapsed fixture-path guards to a single `EXPECTED_FIXTURE_PATHS` source-of-truth constant.
 - ✅ Ops docs hardening: added shared fixture-path iteration helper to reduce repeated subTest loops in path guard checks.
 - ✅ Ops docs hardening: fixture-path iteration helper now uses an explicit callable type alias for clearer typing intent.
+- ✅ Security+Access hardening: audit role filters now match both `role` and `actor_role` so admin-operation events are included in role-scoped audit reads/counts.
+- ✅ Security+Access hardening: added audit-store regression coverage to pin `actor_role` filtering behavior across read/count/aggregate APIs.
+- ✅ Security+Access hardening: unlock tokens now support explicit revocation (`POST /unlock/revoke`) to tighten session invalidation workflows.
+- ✅ Security+Access hardening: expired unlock tokens are now pruned in shared auth paths to keep in-memory session state bounded and deterministic.
+- ✅ Security+Access hardening: added regression tests for revoke semantics and token-pruning utility behavior.
+- ✅ Security+Access hardening: fixed falsy-expiry token edge case (`exp=0`) by switching auth checks to `is None` semantics.
+- ✅ Security+Access hardening: added regression tests covering epoch-zero token activity and revoke behavior for falsy token entries.
+- ✅ Security+Access hardening: revoke endpoint now enforces active-token semantics (expired entries are pruned + rejected).
+- ✅ Security+Access hardening: `/chat` token parsing now validates active token state (expired/revoked tokens are downgraded to missing token).
+- ✅ Security+Access hardening: added chat regression proving revoked token cannot authorize dangerous skill execution.
+- ✅ Security+Access hardening: unlock flow now enforces `JARVIS_MAX_ACTIVE_TOKENS` capacity with deterministic oldest-expiry token eviction.
+- ✅ Security+Access hardening: added regression tests for token-capacity helper and unlock max-capacity behavior.
+- ✅ Security+Access hardening: unlock env parsing now safely handles invalid token TTL/capacity values with sane defaults + minimum clamps.
+- ✅ Security+Access hardening: added regression coverage for invalid/low token env configuration values in unlock flows.
+- ✅ Security+Access hardening: unlock and revoke operations now emit explicit token-lifecycle audit events (`unlock_issued`, `unlock_failed`, `unlock_revoked`, `unlock_revoke_denied`).
+- ✅ Security+Access hardening: added regression coverage for token-lifecycle audit emission on success and denial paths.
+- ✅ Security+Access hardening: admin operation audit events now carry `actor_user_id` for per-admin attribution across user/group/permission mutations.
+- ✅ Security+Access hardening: added regression test pinning `actor_user_id` presence in admin audit events.
+- ✅ Security+Access hardening: admin audit APIs now support `actor_user_id` filtering for event lists and aggregate counts.
+- ✅ Security+Access hardening: added regression coverage for actor-user filtered admin audit endpoints and store filtering.
+- ✅ Security+Access hardening: token lifecycle audit events now include `token_fingerprint` to correlate issue/revoke/deny flows without storing raw tokens.
+- ✅ Security+Access hardening: added regression coverage for token fingerprint presence on unlock/revoke audit paths.
+- ✅ Security+Access hardening: admin audit APIs/store now support `token_fingerprint` filtering for lifecycle-correlation queries.
+- ✅ Security+Access hardening: added regression coverage for token-fingerprint filtered audit reads/counts/aggregates.
+- ✅ Security+Access hardening: admin audit endpoints now validate token fingerprint filter format and reject malformed values early.
+- ✅ Security+Access hardening: added regression coverage for invalid token-fingerprint filter rejection on events/counts endpoints.
+- ✅ Security+Access hardening: admin audit endpoints now validate `actor_user_id` filter format to prevent malformed principal filters.
+- ✅ Security+Access hardening: added regression coverage for invalid actor-user filter rejection on events/counts endpoints.
+- ✅ Security+Access hardening: admin audit endpoints now validate `role` filter values against the runtime RBAC role set.
+- ✅ Security+Access hardening: added regression coverage for invalid role filter rejection on events/counts endpoints.
+- ✅ Security+Access hardening: admin audit events endpoint now validates `event` filter format to reject malformed event selectors.
+- ✅ Security+Access hardening: added regression coverage for invalid event filter rejection on the events endpoint.
+- ✅ Security+Access hardening: admin audit counts endpoint now supports `event` filter to scope aggregation to a specific event key.
+- ✅ Security+Access hardening: added regression coverage for event-scoped counts and invalid event filter rejection on counts endpoint.
+- ✅ Security+Access hardening: added `/admin/audit/count` endpoint for focused filtered count retrieval without full distribution payloads.
+- ✅ Security+Access hardening: added regression coverage for `/admin/audit/count` success and validation rejection paths.
+- ✅ Security+Access hardening: audit query validator now rejects negative timestamp bounds for `since_ts`/`until_ts`.
+- ✅ Security+Access hardening: added regression coverage for negative timestamp rejection on events/count/counts endpoints.
+- ✅ Security+Access hardening: centralized audit filter preparation (`event`/`role`/`actor_user_id`/`token_fingerprint`) to keep endpoint behavior aligned.
+- ✅ Security+Access hardening: added regression coverage proving blank audit filters normalize to `None` on `/admin/audit/count`.
+- ✅ Security+Access hardening: centralized audit filter prep now normalizes `event`, `role`, and `token_fingerprint` to lowercase for resilient query UX.
+- ✅ Security+Access hardening: added regression coverage for uppercase audit filter inputs on events/count endpoints.
 
 ## Handoff Notes (2026-03-11)
 
@@ -139,4 +181,4 @@
 - Latest commit before this handoff update: `b4f8418`
 - Regression hardening area: `tests/test_deploy_config_defaults.py` (fixture/source-of-truth + assertion diagnostics/maintainability improvements).
 - Full validation command repeatedly green in this phase: `python -m unittest discover -s tests`
-- Recommended next step: shift from docs-regression hardening to closing Security+Access `[~]` checklist items with concrete production acceptance evidence and remaining admin/ops polish.
+- Recommended next step: attach scripted ops evidence for revoke/expiry drills and then push remaining Step 2 items from `[~]` to fully done acceptance state.

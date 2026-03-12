@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import HTTPException
 
 from jarvis_engine import normalize_role
-from session_auth import bearer_token_from_header, is_token_active
+from session_auth import bearer_token_from_header, is_token_active, prune_expired_tokens
 
 
 def require_admin_access(
@@ -15,6 +15,7 @@ def require_admin_access(
     *,
     allow_bootstrap: bool = False,
 ) -> tuple[str, str]:
+    prune_expired_tokens(tokens)
     token = bearer_token_from_header(authorization)
     if not is_token_active(tokens, token):
         raise HTTPException(401, "admin token required")
