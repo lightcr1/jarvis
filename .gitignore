@@ -1,1 +1,6 @@
 proxmox_hosts.json
+.venv/
+venv/
+__pycache__/
+*.pyc
+.venv/
