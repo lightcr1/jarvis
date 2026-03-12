@@ -1,0 +1,7 @@
+fastapi
+uvicorn[standard]
+pydantic
+openai
+google-genai
+faster-whisper
+python-multipart

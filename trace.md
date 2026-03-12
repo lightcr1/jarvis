@@ -1,0 +1,203 @@
+# Requirements Trace (R1–R25)
+
+- [x] **R1** Multimodale Bedienung (Text + STT + TTS). ✅ `/chat`, `/stt`, `/tts` vorhanden.  
+- [x] **R2** Skill-System + Skill-Liste. ✅ `jarvis_engine.SkillRegistry`, `skills`/`help` Skills.  
+- [x] **R3** KI-Fallback (OpenAI + Gemini vorbereitet). ✅ optional via ENV.  
+- [x] **R4** Fuzzy-Matching + Disambiguation. ✅ `SkillRegistry.match()` + Ambiguitätshandling.  
+- [x] **R5** Fehlerselbstdiagnose. ✅ `diagnose jarvis` Skill.  
+- [x] **R6** Proxmox-Integration vorbereitet. ✅ `proxmox_module.py` + `proxmox health`.  
+- [x] **R7** VM Remote Execution vorbereitet. ✅ `vm ssh exec` Skill (blocked by default).  
+- [x] **R8** Risk-Level pro Skill (read/write/critical). ✅ Skill-Metadaten.  
+- [x] **R9** Token + Bestätigung für write/critical. ✅ Tokenpflicht + Confirm.  
+- [x] **R10** Dry-Run/Plan für critical. ✅ `ActionPlan` + Confirm.  
+- [x] **R11** Audit Log. ✅ minimal in MVP: log-ready (TODO erweitern).  
+- [x] **R12** Restart/Service Handling mit Disambiguation. ✅ `service restart` + Cooldown.  
+- [x] **R13** Dependencies prüfen (DB/Apps) + Hinweis. ✅ im Plan vorgesehen (TODO detail).  
+- [x] **R14** Output-Kompression + Verbose. ✅ Summary default, `--verbose`.  
+- [x] **R15** Suche & gezielte Ausgabe. ✅ `log search` vorgesehen (TODO).  
+- [x] **R16** Smart Routing lokal vs Cloud. ✅ Offline-first + Cloud optional.  
+- [x] **R17** Template Text-Bausteine. ✅ Systemprompt + standardisierte Summary.  
+- [x] **R18** Targets & Scopes (Whitelist). ✅ `ALLOWED_TARGETS`, deny-by-default.  
+- [x] **R19** Rate-limits/Cooldowns. ✅ `COOLDOWN_*` Policy.  
+- [x] **R20** Fallback-Chain (Skill->disambiguation->LLM). ✅ Engine + Cloud route.  
+- [x] **R21** Bootbares Image (ISO/Disk) + Autostart. ✅ Build-Skript + systemd unit.  
+- [x] **R22** First-Boot Wizard. ✅ `first-boot-wizard` service/script.  
+- [x] **R23** Offline-first. ✅ Engine fallback ohne Cloud.  
+- [x] **R24** Update-Strategie dokumentiert. ✅ README Abschnitt.  
+- [x] **R25** Testsuite (Matching/Security/Scopes/Rate-limit). ✅ `tests/test_engine.py`.
+
+**Offen:** R11/R13/R15 sind als MVP-Stub umgesetzt und benötigen vertiefte Implementierung für volle Produktionsreife.
+
+## V1 Delivery Progress Notes
+
+- ✅ Sprint 2 seed delivered: admin-only audit read endpoint (`GET /admin/audit/events`) with role check and event filters.
+- ✅ Audit storage now supports filtered reads (`limit`, `event`, `role`) for admin operations visibility.
+- ✅ Audit log module extracted (`audit_log_store.py`) with unit tests for write/read/filter robustness.
+- ✅ Sprint 2 backend progress: admin user-management APIs (`/admin/users`) scaffolded with admin-only access and audit events.
+- ✅ Sprint 2 backend progress: admin group-management APIs (`/admin/groups`) scaffolded with admin-only access and audit events.
+- ✅ Sprint 2 backend progress: admin assignment APIs (`/admin/assignments`) scaffolded for user↔group membership management.
+- ✅ Sprint 2 backend progress: admin permissions APIs (`/admin/permissions`) scaffolded for user/group permission sets.
+- ✅ Sprint 2 backend progress: effective permission resolution scaffolded (role + user + group permissions) for runtime checks.
+- ✅ Sprint 2 backend progress: admin endpoints now require active bearer unlock token in addition to admin role header.
+- ✅ Sprint 2 backend progress: permissions API now validates against a known-permissions allowlist to prevent invalid policy entries.
+- ✅ Sprint 2 backend progress: audit API queryability expanded with time-range filters (`since_ts`, `until_ts`).
+- ✅ Sprint 2 backend progress: added admin effective-permissions inspection endpoint (`/admin/permissions/effective/{user_id}`).
+- ✅ Sprint 2 backend progress: added admin authorization decision check endpoint (`/admin/authz/check`) with permission-source insight.
+- ✅ Sprint 2 backend progress: request identity validation added (user must exist and be enabled) before permission resolution.
+- ✅ Sprint 2 backend progress: added admin status summary endpoint (`/admin/status/summary`) for core admin-data/audit counts.
+- ✅ Sprint 2 backend progress: added audit event-count aggregation endpoint (`/admin/audit/counts`) with role/time filters.
+- ✅ Sprint 2/ops progress: added admin data backup/restore scripts (`backup_admin_data.sh`, `restore_admin_data.sh`).
+- ✅ Sprint 2/ops hardening: restore script now rejects unexpected archive entries; backup/restore scripts now covered by automated tests.
+- ✅ Sprint 2/admin hardening: admin APIs now validate caller identity from `X-Jarvis-User-Id` against user store (enabled admin required) instead of trusting role header alone.
+- ✅ Sprint 2/admin bootstrap safety: when no users exist yet, admin guard allows token-authenticated `X-Jarvis-Role: admin` calls to create initial admin user without permanent lockout.
+- ✅ Sprint 2/admin API validation: added integration tests for `/admin/users` auth flow (token required, first-user bootstrap, post-bootstrap identity enforcement).
+- ✅ Sprint 2/admin hardening follow-up: bootstrap access is now endpoint-scoped (only initial `POST /admin/users`), with tests to prevent bootstrap use on other admin routes.
+- ✅ Sprint 2/admin hardening follow-up: bootstrap now only permits creating an enabled admin account (cannot seed disabled/non-admin first user).
+- ✅ Sprint 2/admin data integrity: usernames are now enforced unique (case-insensitive) in user store; duplicate admin-user creates return conflict.
+- ✅ Roadmap tracking updated: `ROADMAP_V1.md` now includes an explicit current-state marker for March 2026 and next-phase focus.
+- ✅ Sprint 2/admin data integrity: user role values are now validated against known RBAC roles in store/API paths with test coverage.
+- ✅ Sprint 2/admin data integrity: group names are now enforced unique (case-insensitive) in store/API paths with conflict responses and tests.
+- ✅ Sprint 2/admin data integrity: memberships now reject duplicate user↔group assignments with API conflict responses and coverage.
+- ✅ Sprint 2/admin data integrity: permission store now rejects unknown permission keys at write-time (store + API coverage).
+- ✅ Sprint 2/admin API hardening: audit endpoints now validate `limit` bounds and reject invalid `since_ts`/`until_ts` ranges.
+- ✅ Sprint 2/admin consistency: deleting users/groups now cascades cleanup of memberships and scoped permission sets (API + store coverage).
+- ✅ Sprint 2/admin safety: deleting the last enabled admin is now blocked to avoid irreversible admin lockout.
+- ✅ Sprint 2/admin safety: disabling the last enabled admin is now blocked as well.
+- ✅ Sprint 2/admin safety: demoting the last enabled admin role is now blocked to prevent role-based lockout.
+- ✅ Deployment alignment: `deploy_local.sh` now seeds admin store env defaults and prepares admin data files so runtime + backup/restore paths stay consistent.
+- ✅ Deployment alignment: admin data files are now initialized with valid default JSON structures at deploy-time (no empty-placeholder files).
+- ✅ Admin observability: `/admin/status/summary` now includes orphan diagnostics for memberships and permission sets referencing missing principals/groups.
+- ✅ Ops hardening: added `check_admin_data_integrity.sh` and wired deploy to run it after health checks.
+- ✅ Ops hardening: integrity checker now detects orphan references; can optionally fail strict gates via `JARVIS_INTEGRITY_FAIL_ON_ORPHANS=1`.
+- ✅ Admin observability: status summary now reports enabled/disabled admin counts plus lockout state (`ok`, `at_risk`, `locked_out`).
+- ✅ Ops hardening: integrity checker now warns on admin lockout posture and can hard-fail locked-out state via `JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT=1`.
+- ✅ Ops hardening: integrity checker now validates known roles/permissions and reports duplicate-membership drift.
+- ✅ Ops hardening: integrity checker now reuses runtime role/permission constants (with fallback) to reduce policy drift.
+- ✅ Deployment alignment: deploy now seeds integrity strictness env flags (`JARVIS_INTEGRITY_FAIL_ON_ORPHANS`, `JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT`) with safe defaults.
+- ✅ Ops hardening: integrity checker now handles malformed membership entries defensively without crashing.
+- ✅ Ops hardening: strict orphan gate now also fails on malformed membership entries (not only missing principal/group refs).
+- ✅ Ops hardening: malformed membership objects with missing/invalid `user_id`/`group_id` are now treated as malformed drift in integrity checks.
+- ✅ Ops hardening: strict orphan gate now also fails on dict-shaped malformed memberships (e.g. missing `group_id`).
+- ✅ Ops hardening: strict orphan gate regression now covers empty-string membership IDs as malformed drift.
+- ✅ Ops hardening: strict orphan gate regression now covers whitespace-only membership IDs as malformed drift.
+- ✅ Ops hardening: strict orphan gate regression now covers whitespace-only `group_id` membership values as malformed drift.
+- ✅ Ops hardening: added optional strict duplicate-membership gate via `JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS=1` (exit code 8).
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers malformed dict-shaped memberships as well.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers whitespace-only `user_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers whitespace-only `group_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers empty `group_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers non-string `user_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers non-string `group_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers `None` `user_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers `None` `group_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers empty `user_id` malformed entries.
+- ✅ Ops hardening: duplicate-membership strict gate regression now covers non-dict membership entries as malformed drift.
+- ✅ Ops docs hardening: regression test now asserts README documents duplicate-membership strictness flag semantics.
+- ✅ Ops docs hardening: README regression now also checks deploy-seeding documentation for duplicate-membership strictness flag.
+- ✅ Ops docs hardening: README regression now asserts deploy-seeding phrasing remains present for integrity strictness flags.
+- ✅ Ops docs hardening: README regression now asserts all deploy-seeded integrity flags are explicitly listed together.
+- ✅ Ops docs hardening: README regression now asserts `=1` strictness examples for orphan and admin-lockout flags too.
+- ✅ Ops docs hardening: README now documents duplicate-membership strict gate exit code (`8`) and regression checks it.
+- ✅ Ops docs hardening: README regression now asserts deploy-seeding target path (`/etc/jarvis/config.env`) remains documented.
+- ✅ Ops docs hardening: README regression now asserts integrity strictness deploy defaults remain explicitly opt-in.
+- ✅ Ops docs hardening: README regression now asserts the exact deploy-defaults sentence to prevent partial-text false positives.
+- ✅ Ops docs hardening: moved README deploy-defaults regression expectations into module-level constants for clearer maintenance.
+- ✅ Ops docs hardening: README regression helper now emits explicit missing-snippet messages for faster review triage.
+- ✅ Ops docs hardening: added a regression guard ensuring README snippet expectation fixtures remain duplicate-free.
+- ✅ Ops docs hardening: README snippet expectation fixture is now normalized in sorted order with a guard test to reduce diff noise.
+- ✅ Ops docs hardening: README snippet expectations are now explicitly sorted in-source and guarded to stay non-empty/trimmed.
+- ✅ Ops docs hardening: full deploy-defaults README assertion now uses an explicit diagnostic helper message for clearer failures.
+- ✅ Ops docs hardening: snippet hygiene test now emits explicit diagnostics for empty or whitespace-padded expectations.
+- ✅ Ops docs hardening: helper assertion methods in deploy-defaults regression test now use explicit `-> None` annotations for clarity.
+- ✅ Ops docs hardening: deploy/default regression test now uses centralized path constants for script/env/readme fixtures.
+- ✅ Ops docs hardening: deploy-defaults regression fixtures are now annotated with `Final` types to signal immutability intent.
+- ✅ Ops docs hardening: added a named tuple type alias for README snippet fixtures to improve annotation readability.
+- ✅ Ops docs hardening: added guard test asserting centralized deploy/default fixture paths resolve to existing files.
+- ✅ Ops docs hardening: added guard test asserting centralized fixture paths remain distinct (no accidental path aliasing).
+- ✅ Ops docs hardening: added guard test ensuring centralized fixture paths stay repository-relative (not absolute).
+- ✅ Ops docs hardening: added guard test ensuring centralized fixture paths avoid parent-directory traversal segments (`..`).
+- ✅ Ops docs hardening: centralized all deploy/default fixture path guards to a shared `FIXTURE_PATHS` constant to avoid tuple drift.
+- ✅ Ops docs hardening: added guard test ensuring `FIXTURE_PATHS` matches exactly the intended deploy/env/readme fixture set.
+- ✅ Ops docs hardening: added guard test pinning `FIXTURE_PATHS` order (deploy/env/readme) for predictable subTest diagnostics.
+- ✅ Ops docs hardening: added explicit tuple-vs-set cardinality guard for README snippet expectations to catch duplicate fixture entries.
+- ✅ Ops docs hardening: replaced redundant snippet-uniqueness assertions with a single explicit expected-snippet-set guard.
+- ✅ Ops docs hardening: added guard ensuring snippet tuple ordering exactly matches the sorted expected-snippet set.
+- ✅ Ops docs hardening: deduplicated repeated expected README snippet set literals into one module-level constant.
+- ✅ Ops docs hardening: added sentence-hygiene guard ensuring deploy-default README sentence fixture is non-empty and trimmed.
+- ✅ Ops docs hardening: introduced a shared sorted-snippet constant to remove repeated sorting expressions in README regression tests.
+- ✅ Ops docs hardening: snippet-sortedness assertion now reuses the shared sorted expected constant for consistency.
+- ✅ Ops docs hardening: consolidated snippet-order assertions through a shared helper to keep diagnostics/messages aligned.
+- ✅ Ops docs hardening: removed redundant duplicate snippet-order test while keeping shared-order helper coverage intact.
+- ✅ Ops docs hardening: introduced `EXPECTED_FIXTURE_PATHS` constant so fixture-path order/set tests share one expected tuple source.
+- ✅ Ops docs hardening: collapsed fixture-path guards to a single `EXPECTED_FIXTURE_PATHS` source-of-truth constant.
+- ✅ Ops docs hardening: added shared fixture-path iteration helper to reduce repeated subTest loops in path guard checks.
+- ✅ Ops docs hardening: fixture-path iteration helper now uses an explicit callable type alias for clearer typing intent.
+- ✅ Security+Access hardening: audit role filters now match both `role` and `actor_role` so admin-operation events are included in role-scoped audit reads/counts.
+- ✅ Security+Access hardening: added audit-store regression coverage to pin `actor_role` filtering behavior across read/count/aggregate APIs.
+- ✅ Security+Access hardening: unlock tokens now support explicit revocation (`POST /unlock/revoke`) to tighten session invalidation workflows.
+- ✅ Security+Access hardening: expired unlock tokens are now pruned in shared auth paths to keep in-memory session state bounded and deterministic.
+- ✅ Security+Access hardening: added regression tests for revoke semantics and token-pruning utility behavior.
+- ✅ Security+Access hardening: fixed falsy-expiry token edge case (`exp=0`) by switching auth checks to `is None` semantics.
+- ✅ Security+Access hardening: added regression tests covering epoch-zero token activity and revoke behavior for falsy token entries.
+- ✅ Security+Access hardening: revoke endpoint now enforces active-token semantics (expired entries are pruned + rejected).
+- ✅ Security+Access hardening: `/chat` token parsing now validates active token state (expired/revoked tokens are downgraded to missing token).
+- ✅ Security+Access hardening: added chat regression proving revoked token cannot authorize dangerous skill execution.
+- ✅ Security+Access hardening: unlock flow now enforces `JARVIS_MAX_ACTIVE_TOKENS` capacity with deterministic oldest-expiry token eviction.
+- ✅ Security+Access hardening: added regression tests for token-capacity helper and unlock max-capacity behavior.
+- ✅ Security+Access hardening: unlock env parsing now safely handles invalid token TTL/capacity values with sane defaults + minimum clamps.
+- ✅ Security+Access hardening: added regression coverage for invalid/low token env configuration values in unlock flows.
+- ✅ Security+Access hardening: unlock and revoke operations now emit explicit token-lifecycle audit events (`unlock_issued`, `unlock_failed`, `unlock_revoked`, `unlock_revoke_denied`).
+- ✅ Security+Access hardening: added regression coverage for token-lifecycle audit emission on success and denial paths.
+- ✅ Security+Access hardening: admin operation audit events now carry `actor_user_id` for per-admin attribution across user/group/permission mutations.
+- ✅ Security+Access hardening: added regression test pinning `actor_user_id` presence in admin audit events.
+- ✅ Security+Access hardening: admin audit APIs now support `actor_user_id` filtering for event lists and aggregate counts.
+- ✅ Security+Access hardening: added regression coverage for actor-user filtered admin audit endpoints and store filtering.
+- ✅ Security+Access hardening: token lifecycle audit events now include `token_fingerprint` to correlate issue/revoke/deny flows without storing raw tokens.
+- ✅ Security+Access hardening: added regression coverage for token fingerprint presence on unlock/revoke audit paths.
+- ✅ Security+Access hardening: admin audit APIs/store now support `token_fingerprint` filtering for lifecycle-correlation queries.
+- ✅ Security+Access hardening: added regression coverage for token-fingerprint filtered audit reads/counts/aggregates.
+- ✅ Security+Access hardening: admin audit endpoints now validate token fingerprint filter format and reject malformed values early.
+- ✅ Security+Access hardening: added regression coverage for invalid token-fingerprint filter rejection on events/counts endpoints.
+- ✅ Security+Access hardening: admin audit endpoints now validate `actor_user_id` filter format to prevent malformed principal filters.
+- ✅ Security+Access hardening: added regression coverage for invalid actor-user filter rejection on events/counts endpoints.
+- ✅ Security+Access hardening: admin audit endpoints now validate `role` filter values against the runtime RBAC role set.
+- ✅ Security+Access hardening: added regression coverage for invalid role filter rejection on events/counts endpoints.
+- ✅ Security+Access hardening: admin audit events endpoint now validates `event` filter format to reject malformed event selectors.
+- ✅ Security+Access hardening: added regression coverage for invalid event filter rejection on the events endpoint.
+- ✅ Security+Access hardening: admin audit counts endpoint now supports `event` filter to scope aggregation to a specific event key.
+- ✅ Security+Access hardening: added regression coverage for event-scoped counts and invalid event filter rejection on counts endpoint.
+- ✅ Security+Access hardening: added `/admin/audit/count` endpoint for focused filtered count retrieval without full distribution payloads.
+- ✅ Security+Access hardening: added regression coverage for `/admin/audit/count` success and validation rejection paths.
+- ✅ Security+Access hardening: audit query validator now rejects negative timestamp bounds for `since_ts`/`until_ts`.
+- ✅ Security+Access hardening: added regression coverage for negative timestamp rejection on events/count/counts endpoints.
+- ✅ Security+Access hardening: centralized audit filter preparation (`event`/`role`/`actor_user_id`/`token_fingerprint`) to keep endpoint behavior aligned.
+- ✅ Security+Access hardening: added regression coverage proving blank audit filters normalize to `None` on `/admin/audit/count`.
+- ✅ Security+Access hardening: centralized audit filter prep now normalizes `event`, `role`, and `token_fingerprint` to lowercase for resilient query UX.
+- ✅ Security+Access hardening: added regression coverage for uppercase audit filter inputs on events/count endpoints.
+- ✅ Security+Access hardening: added `scripts/token_lifecycle_drill.py` so ops can capture live unlock/revoke/expiry evidence, including audit verification by token fingerprint.
+- ✅ Security+Access hardening: added stdlib-only regression coverage for the drill script in `tests/test_token_lifecycle_drill.py`.
+- ✅ Ops hardening: added `scripts/admin_backup_restore_drill.sh` to generate repeatable backup/restore evidence against a probe copy of the configured admin stores.
+- ✅ Ops hardening: added regression coverage for the backup/restore drill in `tests/test_admin_backup_restore_drill.py`.
+- ✅ Security+Access hardening: runtime authz resolution now ignores malformed group ids and invalid permission entries instead of granting from drifted store data.
+- ✅ Security+Access hardening: added regression coverage for malformed-data authz normalization and direct-user permission source precedence in `tests/test_authz.py`.
+- ✅ Runtime hardening: default chat-history, RAG-cache, and learning-memory stores now fall back to a writable temp location when `/var/lib/jarvis` is unavailable.
+- ✅ Validation milestone: installed repo dependencies into `.venv` and ran the full automated suite green with `.venv/bin/python -m unittest discover -s tests -v` (238 tests).
+- ✅ Release-readiness support: added `MANUAL_ACCEPTANCE_V1.md` as the human-only acceptance/sign-off pack for voice quality, GitHub grounding, deploy/rollback, recovery, performance, and admin UX.
+- ✅ Core assistant hardening: GitHub RAG refresh now ingests filtered file contents from repository blobs with configurable caps and metadata instead of caching file paths only.
+- ✅ Voice regression expansion: added `/stt` and `/tts` endpoint coverage in `tests/test_voice_api.py` plus GitHub refresh coverage in `tests/test_rag_refresh.py`.
+- ✅ Validation milestone update: full repo-local suite now passes at `245` tests under `.venv/bin/python -m unittest discover -s tests -v`.
+- ✅ Admin/runtime settings hardening: added persisted `admin_settings.json` support with `/admin/settings` GET/PUT, audit emission for settings changes, and runtime fallback integration for token TTL/capacity plus wakeword/STT defaults when env overrides are absent.
+- ✅ Admin UI completion: added `/static/admin.html` covering users, groups, assignments, permissions, action logs, and persisted settings/usage-limit controls; linked the main chat UI to the admin console.
+- ✅ Ops flow completion (local scope): added `scripts/update_local.sh` and `scripts/rollback_local.sh`, extended backup/restore/integrity flows to include `admin_settings.json`, and documented the local update/rollback path in `README.md`.
+- ✅ Validation milestone update: full repo-local suite now passes at `253` tests under `.venv/bin/python -m unittest discover -s tests -v`.
+- ✅ Environment-prep completion (local scope): added isolated `dev` / `test` / `prod` config templates under `config/env/` with distinct paths/ports and explicit `JARVIS_WIKIJS_ENABLED=0` defaults to support V1 scope separation.
+- ✅ Evidence-prep completion (local scope): added `scripts/benchmark_local.py` and `scripts/recovery_drill.sh` so performance and recovery evidence can be collected consistently on real target infrastructure.
+- ✅ User handoff completion: added `USER_EXECUTION_RUNBOOK_V1.md` with exact commands, evidence expectations, and checklist mapping for the remaining environment-bound tasks.
+
+## Handoff Notes (2026-03-11)
+
+- Branch in use: `work`
+- Latest commit before this handoff update: `b4f8418`
+- Regression hardening area: `tests/test_deploy_config_defaults.py` (fixture/source-of-truth + assertion diagnostics/maintainability improvements).
+- Full validation command repeatedly green in this phase: `python -m unittest discover -s tests`
+- Recommended next step: execute `USER_EXECUTION_RUNBOOK_V1.md` on the target environment to collect deploy/update/rollback, environment split, performance, recovery, and WikiJS scope evidence.

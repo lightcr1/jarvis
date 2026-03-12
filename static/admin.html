@@ -1,0 +1,1022 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>J.A.R.V.I.S. Admin</title>
+  <style>
+    :root{
+      --bg:#f3ede2;
+      --paper:#fffaf1;
+      --ink:#1f1c18;
+      --muted:#6f675b;
+      --line:#d5c5ad;
+      --accent:#0f766e;
+      --accent-2:#b45309;
+      --danger:#b91c1c;
+      --good:#166534;
+      --shadow:0 20px 60px rgba(48,34,10,.14);
+      --radius:20px;
+    }
+    *{box-sizing:border-box}
+    body{
+      margin:0;
+      font-family: Georgia, "Times New Roman", serif;
+      color:var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(15,118,110,.18), transparent 30%),
+        radial-gradient(circle at bottom left, rgba(180,83,9,.16), transparent 28%),
+        linear-gradient(180deg, #efe5d3 0%, var(--bg) 100%);
+      min-height:100vh;
+    }
+    .shell{
+      max-width:1400px;
+      margin:0 auto;
+      padding:28px 20px 40px;
+    }
+    .hero{
+      display:flex;
+      justify-content:space-between;
+      gap:18px;
+      align-items:flex-start;
+      margin-bottom:18px;
+    }
+    .hero h1{
+      margin:0;
+      font-size:42px;
+      letter-spacing:.06em;
+      text-transform:uppercase;
+    }
+    .hero p{
+      margin:8px 0 0;
+      color:var(--muted);
+      max-width:780px;
+      line-height:1.45;
+    }
+    .heroActions{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      justify-content:flex-end;
+    }
+    .panel{
+      background:rgba(255,250,241,.9);
+      border:1px solid var(--line);
+      border-radius:var(--radius);
+      box-shadow:var(--shadow);
+    }
+    .topbar{
+      display:grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap:16px;
+      margin-bottom:18px;
+    }
+    .section{
+      padding:18px;
+    }
+    .section h2, .section h3{
+      margin:0 0 12px;
+      text-transform:uppercase;
+      letter-spacing:.06em;
+      font-size:14px;
+    }
+    .grid{
+      display:grid;
+      gap:14px;
+    }
+    .grid.kpi{ grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); }
+    .kpiCard{
+      padding:14px;
+      border:1px solid var(--line);
+      border-radius:16px;
+      background:#fffdf7;
+    }
+    .kpiCard .label{
+      color:var(--muted);
+      font-size:12px;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+    }
+    .kpiCard .value{
+      margin-top:6px;
+      font-size:28px;
+      font-weight:700;
+    }
+    .statusLine{
+      display:flex;
+      flex-wrap:wrap;
+      gap:10px;
+      margin-top:10px;
+    }
+    .pill{
+      border:1px solid var(--line);
+      border-radius:999px;
+      padding:7px 12px;
+      background:#fffdf7;
+      font-size:12px;
+    }
+    .pill.good{ color:var(--good); border-color:rgba(22,101,52,.35); }
+    .pill.warn{ color:var(--accent-2); border-color:rgba(180,83,9,.35); }
+    .pill.bad{ color:var(--danger); border-color:rgba(185,28,28,.35); }
+    .fieldGrid{
+      display:grid;
+      gap:10px;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    }
+    label{
+      display:block;
+      font-size:12px;
+      text-transform:uppercase;
+      letter-spacing:.08em;
+      color:var(--muted);
+      margin-bottom:6px;
+    }
+    input, select, textarea, button{
+      font:inherit;
+    }
+    input, select, textarea{
+      width:100%;
+      border:1px solid var(--line);
+      border-radius:14px;
+      padding:11px 12px;
+      background:#fffdf7;
+      color:var(--ink);
+    }
+    textarea{ min-height:110px; resize:vertical; }
+    button{
+      border:1px solid var(--line);
+      border-radius:999px;
+      padding:11px 16px;
+      background:#fffdf7;
+      color:var(--ink);
+      cursor:pointer;
+      font-weight:700;
+    }
+    button.primary{
+      background:var(--accent);
+      color:#f4fffc;
+      border-color:transparent;
+    }
+    button.warn{
+      background:var(--accent-2);
+      color:#fff9ed;
+      border-color:transparent;
+    }
+    button.danger{
+      background:var(--danger);
+      color:#fff5f5;
+      border-color:transparent;
+    }
+    .tabs{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-bottom:16px;
+    }
+    .tabBtn.active{
+      background:var(--ink);
+      color:#fffaf1;
+      border-color:transparent;
+    }
+    .tab{
+      display:none;
+    }
+    .tab.active{
+      display:block;
+    }
+    table{
+      width:100%;
+      border-collapse:collapse;
+      font-size:14px;
+    }
+    th, td{
+      padding:10px 8px;
+      border-bottom:1px solid rgba(213,197,173,.8);
+      text-align:left;
+      vertical-align:top;
+    }
+    th{
+      color:var(--muted);
+      text-transform:uppercase;
+      font-size:11px;
+      letter-spacing:.08em;
+    }
+    .toolbar{
+      display:flex;
+      gap:10px;
+      flex-wrap:wrap;
+      margin-bottom:12px;
+      align-items:end;
+    }
+    .stack{
+      display:grid;
+      gap:16px;
+    }
+    .split{
+      display:grid;
+      grid-template-columns: 1.2fr .8fr;
+      gap:16px;
+    }
+    .note{
+      color:var(--muted);
+      font-size:13px;
+      line-height:1.45;
+    }
+    .mono{
+      font-family: "SFMono-Regular", Consolas, monospace;
+      font-size:12px;
+    }
+    #flash{
+      margin-bottom:16px;
+      padding:12px 14px;
+      border-radius:14px;
+      display:none;
+    }
+    #flash.ok{
+      display:block;
+      background:rgba(22,101,52,.1);
+      color:var(--good);
+      border:1px solid rgba(22,101,52,.25);
+    }
+    #flash.error{
+      display:block;
+      background:rgba(185,28,28,.08);
+      color:var(--danger);
+      border:1px solid rgba(185,28,28,.2);
+    }
+    @media (max-width:960px){
+      .topbar, .split{ grid-template-columns: 1fr; }
+      .hero{ flex-direction:column; }
+      .heroActions{ justify-content:flex-start; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="hero">
+      <div>
+        <h1>J.A.R.V.I.S. Admin</h1>
+        <p>Operational control surface for identities, groups, permissions, audit visibility, and persisted runtime defaults. Environment variables still win over saved settings and are shown as effective overrides.</p>
+      </div>
+      <div class="heroActions">
+        <button id="refreshAll" class="primary">Refresh</button>
+        <button id="unlockBtn" class="warn">Unlock</button>
+        <button id="revokeBtn" class="danger">Revoke Token</button>
+        <button id="chatBtn">Chat UI</button>
+      </div>
+    </div>
+
+    <div id="flash"></div>
+
+    <div class="topbar">
+      <div class="panel section">
+        <h2>Access</h2>
+        <div class="fieldGrid">
+          <div>
+            <label for="passphrase">Passphrase</label>
+            <input id="passphrase" type="password" placeholder="Unlock passphrase" autocomplete="current-password" />
+          </div>
+          <div>
+            <label for="actorUserId">Admin User ID</label>
+            <input id="actorUserId" type="text" placeholder="usr-..." />
+          </div>
+        </div>
+        <div class="statusLine">
+          <span class="pill" id="tokenState">Token: locked</span>
+          <span class="pill" id="actorState">Actor: unset</span>
+        </div>
+        <p class="note">Bootstrap actions work without an actor only for initial admin creation. After that, set an enabled admin user id here or click “Use as actor” in the Users table.</p>
+      </div>
+      <div class="panel section">
+        <h2>Environment Precedence</h2>
+        <p class="note">Saved settings are fallback defaults. If `JARVIS_TOKEN_TTL_MIN`, `JARVIS_MAX_ACTIVE_TOKENS`, `JARVIS_WAKEWORD_ENABLED`, `JARVIS_WAKEWORD_PHRASE`, or `STT_PROVIDER` are set in the service environment, those values remain effective.</p>
+        <div class="statusLine" id="effectiveBadges"></div>
+      </div>
+    </div>
+
+    <div class="tabs">
+      <button class="tabBtn active" data-tab="overview">Overview</button>
+      <button class="tabBtn" data-tab="users">Users</button>
+      <button class="tabBtn" data-tab="groups">Groups</button>
+      <button class="tabBtn" data-tab="permissions">Permissions</button>
+      <button class="tabBtn" data-tab="audit">Action Logs</button>
+      <button class="tabBtn" data-tab="settings">Settings</button>
+    </div>
+
+    <section class="tab active stack" id="tab-overview">
+      <div class="panel section">
+        <h2>System Summary</h2>
+        <div class="grid kpi" id="kpis"></div>
+      </div>
+      <div class="split">
+        <div class="panel section">
+          <h2>Orphan Diagnostics</h2>
+          <pre class="mono" id="orphansBox">No data loaded yet.</pre>
+        </div>
+        <div class="panel section">
+          <h2>Recent Audit Counts</h2>
+          <pre class="mono" id="auditCountsBox">No data loaded yet.</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab" id="tab-users">
+      <div class="panel section stack">
+        <div>
+          <h2>Users</h2>
+          <div class="toolbar">
+            <div>
+              <label for="newUsername">Username</label>
+              <input id="newUsername" type="text" placeholder="owner" />
+            </div>
+            <div>
+              <label for="newUserRole">Role</label>
+              <select id="newUserRole">
+                <option value="admin">admin</option>
+                <option value="standard_user">standard_user</option>
+                <option value="guest_restricted">guest_restricted</option>
+                <option value="service_system">service_system</option>
+              </select>
+            </div>
+            <div>
+              <label for="newUserEnabled">Enabled</label>
+              <select id="newUserEnabled">
+                <option value="true">true</option>
+                <option value="false">false</option>
+              </select>
+            </div>
+            <button id="createUserBtn" class="primary">Create User</button>
+          </div>
+        </div>
+        <div style="overflow:auto">
+          <table id="usersTable"></table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab" id="tab-groups">
+      <div class="split">
+        <div class="panel section stack">
+          <div>
+            <h2>Groups</h2>
+            <div class="toolbar">
+              <div>
+                <label for="newGroupName">Name</label>
+                <input id="newGroupName" type="text" placeholder="ops" />
+              </div>
+              <div style="min-width:320px; flex:1">
+                <label for="newGroupDescription">Description</label>
+                <input id="newGroupDescription" type="text" placeholder="Operations team" />
+              </div>
+              <button id="createGroupBtn" class="primary">Create Group</button>
+            </div>
+          </div>
+          <div style="overflow:auto">
+            <table id="groupsTable"></table>
+          </div>
+        </div>
+        <div class="panel section stack">
+          <div>
+            <h2>Assignments</h2>
+            <div class="fieldGrid">
+              <div>
+                <label for="assignmentUserId">User</label>
+                <select id="assignmentUserId"></select>
+              </div>
+              <div>
+                <label for="assignmentGroupId">Group</label>
+                <select id="assignmentGroupId"></select>
+              </div>
+            </div>
+            <div class="statusLine">
+              <button id="addAssignmentBtn" class="primary">Add Assignment</button>
+            </div>
+          </div>
+          <div style="overflow:auto">
+            <table id="assignmentsTable"></table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab" id="tab-permissions">
+      <div class="split">
+        <div class="panel section stack">
+          <div>
+            <h2>Permission Sets</h2>
+            <div class="fieldGrid">
+              <div>
+                <label for="permissionScope">Scope</label>
+                <select id="permissionScope">
+                  <option value="users">User</option>
+                  <option value="groups">Group</option>
+                </select>
+              </div>
+              <div>
+                <label for="permissionTarget">Target</label>
+                <select id="permissionTarget"></select>
+              </div>
+            </div>
+            <label for="permissionEditor">Permissions (one per line)</label>
+            <textarea id="permissionEditor" placeholder="assistant.chat&#10;settings.manage"></textarea>
+            <div class="statusLine">
+              <button id="savePermissionsBtn" class="primary">Save Permissions</button>
+              <button id="clearPermissionsBtn" class="danger">Clear Permissions</button>
+              <button id="loadEffectiveBtn">Load Effective</button>
+            </div>
+          </div>
+          <pre class="mono" id="effectivePermissionsBox">Select a user and load effective permissions.</pre>
+        </div>
+        <div class="panel section stack">
+          <div>
+            <h2>Known Permissions</h2>
+            <pre class="mono" id="knownPermissionsBox">No data loaded yet.</pre>
+          </div>
+          <div>
+            <h2>Current Permission Maps</h2>
+            <pre class="mono" id="permissionMapsBox">No data loaded yet.</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab" id="tab-audit">
+      <div class="panel section stack">
+        <div>
+          <h2>Action Logs</h2>
+          <div class="toolbar">
+            <div>
+              <label for="auditEvent">Event Filter</label>
+              <input id="auditEvent" type="text" placeholder="admin_settings_updated" />
+            </div>
+            <div>
+              <label for="auditRole">Role Filter</label>
+              <select id="auditRole">
+                <option value="">all</option>
+                <option value="admin">admin</option>
+                <option value="standard_user">standard_user</option>
+                <option value="guest_restricted">guest_restricted</option>
+                <option value="service_system">service_system</option>
+              </select>
+            </div>
+            <div>
+              <label for="auditLimit">Limit</label>
+              <input id="auditLimit" type="number" min="1" max="200" value="25" />
+            </div>
+            <button id="loadAuditBtn" class="primary">Load Events</button>
+          </div>
+        </div>
+        <div style="overflow:auto">
+          <table id="auditTable"></table>
+        </div>
+      </div>
+    </section>
+
+    <section class="tab" id="tab-settings">
+      <div class="split">
+        <div class="panel section stack">
+          <div>
+            <h2>Runtime Defaults</h2>
+            <div class="fieldGrid">
+              <div>
+                <label for="tokenTtlMin">Token TTL Minutes</label>
+                <input id="tokenTtlMin" type="number" min="1" value="20" />
+              </div>
+              <div>
+                <label for="maxActiveTokens">Max Active Tokens</label>
+                <input id="maxActiveTokens" type="number" min="1" value="200" />
+              </div>
+              <div>
+                <label for="sttProvider">STT Provider</label>
+                <select id="sttProvider">
+                  <option value="local">local</option>
+                  <option value="gemini">gemini</option>
+                </select>
+              </div>
+              <div>
+                <label for="wakewordEnabled">Wakeword Enabled</label>
+                <select id="wakewordEnabled">
+                  <option value="false">false</option>
+                  <option value="true">true</option>
+                </select>
+              </div>
+            </div>
+            <div style="margin-top:10px">
+              <label for="wakewordPhrase">Wakeword Phrase</label>
+              <input id="wakewordPhrase" type="text" value="hey jarvis" />
+            </div>
+            <div class="statusLine">
+              <button id="saveSettingsBtn" class="primary">Save Settings</button>
+              <button id="reloadSettingsBtn">Reload Settings</button>
+            </div>
+          </div>
+        </div>
+        <div class="panel section stack">
+          <div>
+            <h2>Effective Values</h2>
+            <pre class="mono" id="effectiveSettingsBox">No data loaded yet.</pre>
+          </div>
+          <div>
+            <h2>Saved Settings</h2>
+            <pre class="mono" id="storedSettingsBox">No data loaded yet.</pre>
+          </div>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    const TOKEN_KEY = "jarvis_token";
+    const TOKEN_EXP = "jarvis_token_exp_ms";
+    const ACTOR_KEY = "jarvis_admin_user_id";
+
+    const state = {
+      users: [],
+      groups: [],
+      memberships: [],
+      permissions: { known_permissions: [], group_permissions: {}, user_permissions: {} },
+      settings: null,
+      effective: null,
+      summary: null,
+    };
+
+    function el(id){ return document.getElementById(id); }
+    function getToken(){
+      const token = sessionStorage.getItem(TOKEN_KEY);
+      const exp = Number(sessionStorage.getItem(TOKEN_EXP) || "0");
+      if(!token){ return null; }
+      if(exp && Date.now() > exp){
+        sessionStorage.removeItem(TOKEN_KEY);
+        sessionStorage.removeItem(TOKEN_EXP);
+        return null;
+      }
+      return token;
+    }
+    function setToken(token, expiresInSec){
+      sessionStorage.setItem(TOKEN_KEY, token);
+      sessionStorage.setItem(TOKEN_EXP, String(Date.now() + (expiresInSec * 1000)));
+      renderAccessState();
+    }
+    function clearToken(){
+      sessionStorage.removeItem(TOKEN_KEY);
+      sessionStorage.removeItem(TOKEN_EXP);
+      renderAccessState();
+    }
+    function getActorUserId(){
+      const current = (el("actorUserId").value || "").trim();
+      if(current){ return current; }
+      return sessionStorage.getItem(ACTOR_KEY) || "";
+    }
+    function setActorUserId(userId){
+      const value = userId || "";
+      sessionStorage.setItem(ACTOR_KEY, value);
+      el("actorUserId").value = value;
+      renderAccessState();
+    }
+    function authHeaders(json=true){
+      const headers = {};
+      if(json){ headers["Content-Type"] = "application/json"; }
+      const token = getToken();
+      const actorUserId = getActorUserId();
+      if(token){ headers["Authorization"] = "Bearer " + token; }
+      headers["X-Jarvis-Role"] = "admin";
+      if(actorUserId){ headers["X-Jarvis-User-Id"] = actorUserId; }
+      return headers;
+    }
+    function showFlash(kind, text){
+      const flash = el("flash");
+      flash.className = kind;
+      flash.textContent = text;
+      if(!text){
+        flash.style.display = "none";
+        return;
+      }
+      flash.style.display = "block";
+    }
+    async function request(path, options={}){
+      const response = await fetch(path, options);
+      const text = await response.text();
+      let data = {};
+      try { data = text ? JSON.parse(text) : {}; } catch {}
+      if(!response.ok){
+        throw new Error(data.detail || text || ("HTTP " + response.status));
+      }
+      return data;
+    }
+    async function getJson(path){
+      return request(path, { headers: authHeaders(false) });
+    }
+    async function sendJson(method, path, body){
+      return request(path, { method, headers: authHeaders(true), body: JSON.stringify(body) });
+    }
+    function renderAccessState(){
+      const token = getToken();
+      const exp = Number(sessionStorage.getItem(TOKEN_EXP) || "0");
+      const mins = token ? Math.max(0, Math.round((exp - Date.now()) / 60000)) : 0;
+      el("tokenState").textContent = token ? `Token: unlocked (~${mins}m)` : "Token: locked";
+      el("actorState").textContent = getActorUserId() ? `Actor: ${getActorUserId()}` : "Actor: unset";
+    }
+    function renderTabs(){
+      document.querySelectorAll(".tabBtn").forEach((btn)=>{
+        btn.addEventListener("click", ()=>{
+          document.querySelectorAll(".tabBtn").forEach((item)=> item.classList.remove("active"));
+          document.querySelectorAll(".tab").forEach((item)=> item.classList.remove("active"));
+          btn.classList.add("active");
+          el("tab-" + btn.dataset.tab).classList.add("active");
+        });
+      });
+    }
+    function escapeHtml(value){
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;");
+    }
+    function renderKpis(){
+      const counts = (state.summary && state.summary.counts) || {};
+      const lockoutState = counts.admin_lockout_state || "unknown";
+      const badges = [
+        { label: "Users", value: counts.users ?? 0 },
+        { label: "Groups", value: counts.groups ?? 0 },
+        { label: "Memberships", value: counts.memberships ?? 0 },
+        { label: "Audit Events", value: counts.audit_events ?? 0 },
+        { label: "Enabled Admins", value: counts.enabled_admins ?? 0 },
+        { label: "Admin Lockout", value: lockoutState },
+      ];
+      el("kpis").innerHTML = badges.map((item)=> `
+        <div class="kpiCard">
+          <div class="label">${escapeHtml(item.label)}</div>
+          <div class="value">${escapeHtml(item.value)}</div>
+        </div>
+      `).join("");
+      el("orphansBox").textContent = JSON.stringify((state.summary && state.summary.orphans) || {}, null, 2);
+      el("auditCountsBox").textContent = JSON.stringify(state.auditCounts || {}, null, 2);
+    }
+    function renderEffectiveBadges(){
+      const effective = state.effective || {};
+      const badges = [];
+      for(const domain of ["usage_limits", "voice"]){
+        const values = effective[domain] || {};
+        for(const [key, meta] of Object.entries(values)){
+          const source = meta.source === "env" ? "warn" : "good";
+          badges.push(`<span class="pill ${source}">${escapeHtml(key)} = ${escapeHtml(meta.value)} (${escapeHtml(meta.source)})</span>`);
+        }
+      }
+      el("effectiveBadges").innerHTML = badges.join("");
+      el("effectiveSettingsBox").textContent = JSON.stringify(effective, null, 2);
+    }
+    function renderUsers(){
+      const rows = state.users.map((user)=> `
+        <tr>
+          <td class="mono">${escapeHtml(user.id)}</td>
+          <td>${escapeHtml(user.username)}</td>
+          <td>${escapeHtml(user.role)}</td>
+          <td>${escapeHtml(String(Boolean(user.enabled)))}</td>
+          <td class="mono">${escapeHtml(user.updated_at)}</td>
+          <td>
+            <button data-action="actor" data-id="${escapeHtml(user.id)}">Use as actor</button>
+            <button data-action="toggle" data-id="${escapeHtml(user.id)}">${user.enabled ? "Disable" : "Enable"}</button>
+            <button data-action="delete" data-id="${escapeHtml(user.id)}" class="danger">Delete</button>
+          </td>
+        </tr>
+      `).join("");
+      el("usersTable").innerHTML = `
+        <thead><tr><th>ID</th><th>Username</th><th>Role</th><th>Enabled</th><th>Updated</th><th>Actions</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="6">No users yet.</td></tr>'}</tbody>
+      `;
+      el("usersTable").querySelectorAll("button").forEach((button)=>{
+        button.addEventListener("click", async ()=>{
+          const userId = button.dataset.id;
+          const action = button.dataset.action;
+          try{
+            if(action === "actor"){
+              setActorUserId(userId);
+              showFlash("ok", `Actor set to ${userId}.`);
+              return;
+            }
+            if(action === "toggle"){
+              const user = state.users.find((item)=> item.id === userId);
+              await sendJson("PATCH", `/admin/users/${encodeURIComponent(userId)}`, { enabled: !user.enabled });
+            }
+            if(action === "delete"){
+              await request(`/admin/users/${encodeURIComponent(userId)}`, { method:"DELETE", headers: authHeaders(false) });
+            }
+            await refreshAdminData();
+            showFlash("ok", `User action completed for ${userId}.`);
+          } catch (error){
+            showFlash("error", error.message);
+          }
+        });
+      });
+      renderSelectOptions("assignmentUserId", state.users, "id", (user)=> `${user.username} (${user.role})`);
+      updatePermissionTargetOptions();
+    }
+    function renderGroups(){
+      const rows = state.groups.map((group)=> `
+        <tr>
+          <td class="mono">${escapeHtml(group.id)}</td>
+          <td>${escapeHtml(group.name)}</td>
+          <td>${escapeHtml(group.description || "")}</td>
+          <td>
+            <button data-action="delete" data-id="${escapeHtml(group.id)}" class="danger">Delete</button>
+          </td>
+        </tr>
+      `).join("");
+      el("groupsTable").innerHTML = `
+        <thead><tr><th>ID</th><th>Name</th><th>Description</th><th>Actions</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="4">No groups yet.</td></tr>'}</tbody>
+      `;
+      el("groupsTable").querySelectorAll("button").forEach((button)=>{
+        button.addEventListener("click", async ()=>{
+          try{
+            await request(`/admin/groups/${encodeURIComponent(button.dataset.id)}`, { method:"DELETE", headers: authHeaders(false) });
+            await refreshAdminData();
+            showFlash("ok", `Group deleted: ${button.dataset.id}.`);
+          } catch (error){
+            showFlash("error", error.message);
+          }
+        });
+      });
+      renderSelectOptions("assignmentGroupId", state.groups, "id", (group)=> group.name);
+      updatePermissionTargetOptions();
+    }
+    function renderAssignments(){
+      const rows = state.memberships.map((membership)=> `
+        <tr>
+          <td class="mono">${escapeHtml(membership.user_id)}</td>
+          <td class="mono">${escapeHtml(membership.group_id)}</td>
+          <td><button data-user="${escapeHtml(membership.user_id)}" data-group="${escapeHtml(membership.group_id)}" class="danger">Remove</button></td>
+        </tr>
+      `).join("");
+      el("assignmentsTable").innerHTML = `
+        <thead><tr><th>User ID</th><th>Group ID</th><th>Actions</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="3">No assignments yet.</td></tr>'}</tbody>
+      `;
+      el("assignmentsTable").querySelectorAll("button").forEach((button)=>{
+        button.addEventListener("click", async ()=>{
+          try{
+            const url = `/admin/assignments?user_id=${encodeURIComponent(button.dataset.user)}&group_id=${encodeURIComponent(button.dataset.group)}`;
+            await request(url, { method:"DELETE", headers: authHeaders(false) });
+            await refreshAdminData();
+            showFlash("ok", "Assignment removed.");
+          } catch (error){
+            showFlash("error", error.message);
+          }
+        });
+      });
+    }
+    function renderSelectOptions(selectId, items, valueKey, labelFn){
+      const select = el(selectId);
+      const current = select.value;
+      select.innerHTML = items.map((item)=> `<option value="${escapeHtml(item[valueKey])}">${escapeHtml(labelFn(item))}</option>`).join("");
+      if(current && [...select.options].some((option)=> option.value === current)){
+        select.value = current;
+      }
+    }
+    function updatePermissionTargetOptions(){
+      const scope = el("permissionScope").value;
+      const items = scope === "users" ? state.users : state.groups;
+      renderSelectOptions("permissionTarget", items, "id", (item)=> scope === "users" ? `${item.username} (${item.role})` : item.name);
+      loadPermissionEditor();
+    }
+    function loadPermissionEditor(){
+      const scope = el("permissionScope").value;
+      const target = el("permissionTarget").value;
+      const source = scope === "users" ? state.permissions.user_permissions : state.permissions.group_permissions;
+      el("permissionEditor").value = ((source && source[target]) || []).join("\n");
+      el("knownPermissionsBox").textContent = JSON.stringify(state.permissions.known_permissions || [], null, 2);
+      el("permissionMapsBox").textContent = JSON.stringify({
+        group_permissions: state.permissions.group_permissions || {},
+        user_permissions: state.permissions.user_permissions || {},
+      }, null, 2);
+    }
+    function renderAudit(events){
+      const rows = (events || []).map((entry)=> `
+        <tr>
+          <td>${escapeHtml(entry.ts)}</td>
+          <td>${escapeHtml(entry.event)}</td>
+          <td>${escapeHtml(entry.actor_role || entry.role || "")}</td>
+          <td class="mono">${escapeHtml(entry.actor_user_id || "")}</td>
+          <td><pre class="mono">${escapeHtml(JSON.stringify(entry, null, 2))}</pre></td>
+        </tr>
+      `).join("");
+      el("auditTable").innerHTML = `
+        <thead><tr><th>TS</th><th>Event</th><th>Role</th><th>Actor</th><th>Payload</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5">No matching audit events.</td></tr>'}</tbody>
+      `;
+    }
+    function renderSettings(){
+      const settings = (state.settings || { usage_limits:{}, voice:{} });
+      el("tokenTtlMin").value = settings.usage_limits.token_ttl_min ?? 20;
+      el("maxActiveTokens").value = settings.usage_limits.max_active_tokens ?? 200;
+      el("sttProvider").value = settings.voice.stt_provider || "local";
+      el("wakewordEnabled").value = String(Boolean(settings.voice.wakeword_enabled));
+      el("wakewordPhrase").value = settings.voice.wakeword_phrase || "hey jarvis";
+      el("storedSettingsBox").textContent = JSON.stringify(settings, null, 2);
+      renderEffectiveBadges();
+    }
+    async function unlock(){
+      try{
+        const passphrase = (el("passphrase").value || "").trim();
+        const res = await request("/unlock", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ passphrase }),
+        });
+        setToken(res.token, res.expires_in_sec);
+        showFlash("ok", "Admin token issued.");
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    }
+    async function revoke(){
+      try{
+        await request("/unlock/revoke", { method:"POST", headers: authHeaders(false) });
+        clearToken();
+        showFlash("ok", "Admin token revoked.");
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    }
+    async function refreshAdminData(){
+      try{
+        const [summary, settingsRes, usersRes, groupsRes, assignmentsRes, permissionsRes, countsRes] = await Promise.all([
+          getJson("/admin/status/summary"),
+          getJson("/admin/settings"),
+          getJson("/admin/users"),
+          getJson("/admin/groups"),
+          getJson("/admin/assignments"),
+          getJson("/admin/permissions"),
+          getJson("/admin/audit/counts"),
+        ]);
+        state.summary = summary;
+        state.settings = settingsRes.settings;
+        state.effective = settingsRes.effective;
+        state.users = usersRes.users || [];
+        state.groups = groupsRes.groups || [];
+        state.memberships = assignmentsRes.memberships || [];
+        state.permissions = permissionsRes;
+        state.auditCounts = countsRes;
+        renderKpis();
+        renderUsers();
+        renderGroups();
+        renderAssignments();
+        renderSettings();
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    }
+
+    el("unlockBtn").addEventListener("click", unlock);
+    el("revokeBtn").addEventListener("click", revoke);
+    el("refreshAll").addEventListener("click", refreshAdminData);
+    el("chatBtn").addEventListener("click", ()=> { location.href = "/static/index.html"; });
+    el("actorUserId").addEventListener("change", ()=> setActorUserId(el("actorUserId").value.trim()));
+
+    el("createUserBtn").addEventListener("click", async ()=>{
+      try{
+        await sendJson("POST", "/admin/users", {
+          username: el("newUsername").value.trim(),
+          role: el("newUserRole").value,
+          enabled: el("newUserEnabled").value === "true",
+        });
+        el("newUsername").value = "";
+        await refreshAdminData();
+        showFlash("ok", "User created.");
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    });
+
+    el("createGroupBtn").addEventListener("click", async ()=>{
+      try{
+        await sendJson("POST", "/admin/groups", {
+          name: el("newGroupName").value.trim(),
+          description: el("newGroupDescription").value.trim(),
+        });
+        el("newGroupName").value = "";
+        el("newGroupDescription").value = "";
+        await refreshAdminData();
+        showFlash("ok", "Group created.");
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    });
+
+    el("addAssignmentBtn").addEventListener("click", async ()=>{
+      try{
+        await sendJson("POST", "/admin/assignments", {
+          user_id: el("assignmentUserId").value,
+          group_id: el("assignmentGroupId").value,
+        });
+        await refreshAdminData();
+        showFlash("ok", "Assignment added.");
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    });
+
+    el("permissionScope").addEventListener("change", updatePermissionTargetOptions);
+    el("permissionTarget").addEventListener("change", loadPermissionEditor);
+
+    el("savePermissionsBtn").addEventListener("click", async ()=>{
+      const scope = el("permissionScope").value;
+      const target = el("permissionTarget").value;
+      const permissions = el("permissionEditor").value
+        .split("\n")
+        .map((item)=> item.trim())
+        .filter(Boolean);
+      try{
+        await sendJson("PUT", `/admin/permissions/${scope}/${encodeURIComponent(target)}`, { permissions });
+        await refreshAdminData();
+        showFlash("ok", "Permissions updated.");
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    });
+
+    el("clearPermissionsBtn").addEventListener("click", async ()=>{
+      const scope = el("permissionScope").value;
+      const target = el("permissionTarget").value;
+      try{
+        await request(`/admin/permissions/${scope}/${encodeURIComponent(target)}`, { method:"DELETE", headers: authHeaders(false) });
+        await refreshAdminData();
+        showFlash("ok", "Permissions cleared.");
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    });
+
+    el("loadEffectiveBtn").addEventListener("click", async ()=>{
+      const userId = el("permissionScope").value === "users"
+        ? el("permissionTarget").value
+        : el("assignmentUserId").value;
+      if(!userId){
+        showFlash("error", "Select a user before loading effective permissions.");
+        return;
+      }
+      try{
+        const data = await getJson(`/admin/permissions/effective/${encodeURIComponent(userId)}`);
+        el("effectivePermissionsBox").textContent = JSON.stringify(data, null, 2);
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    });
+
+    el("loadAuditBtn").addEventListener("click", async ()=>{
+      const params = new URLSearchParams();
+      const event = el("auditEvent").value.trim();
+      const role = el("auditRole").value.trim();
+      const limit = el("auditLimit").value.trim();
+      if(event){ params.set("event", event); }
+      if(role){ params.set("role", role); }
+      if(limit){ params.set("limit", limit); }
+      try{
+        const data = await getJson(`/admin/audit/events?${params.toString()}`);
+        renderAudit(data.events || []);
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    });
+
+    el("saveSettingsBtn").addEventListener("click", async ()=>{
+      try{
+        const data = await sendJson("PUT", "/admin/settings", {
+          usage_limits: {
+            token_ttl_min: Number(el("tokenTtlMin").value || "20"),
+            max_active_tokens: Number(el("maxActiveTokens").value || "200"),
+          },
+          voice: {
+            wakeword_enabled: el("wakewordEnabled").value === "true",
+            wakeword_phrase: el("wakewordPhrase").value.trim(),
+            stt_provider: el("sttProvider").value,
+          },
+        });
+        state.settings = data.settings;
+        state.effective = data.effective;
+        renderSettings();
+        showFlash("ok", "Settings saved.");
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    });
+
+    el("reloadSettingsBtn").addEventListener("click", async ()=>{
+      try{
+        const data = await getJson("/admin/settings");
+        state.settings = data.settings;
+        state.effective = data.effective;
+        renderSettings();
+        showFlash("ok", "Settings reloaded.");
+      } catch (error){
+        showFlash("error", error.message);
+      }
+    });
+
+    renderTabs();
+    renderAccessState();
+    setActorUserId(sessionStorage.getItem(ACTOR_KEY) || "");
+    refreshAdminData();
+  </script>
+</body>
+</html>
