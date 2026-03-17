@@ -39,6 +39,15 @@ class UserStore:
     def get_user(self, user_id: str) -> dict | None:
         return self.data.get("users", {}).get(user_id)
 
+    def find_by_username(self, username: str) -> dict | None:
+        normalized = (username or "").strip().lower()
+        if not normalized:
+            return None
+        for user in self.data.get("users", {}).values():
+            if (user.get("username") or "").strip().lower() == normalized:
+                return user
+        return None
+
     def _username_exists(self, username: str, *, exclude_user_id: str | None = None) -> bool:
         normalized = (username or "").strip().lower()
         for uid, user in self.data.get("users", {}).items():

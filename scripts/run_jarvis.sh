@@ -2,7 +2,7 @@
 set -euo pipefail
 
 HOST="${JARVIS_HOST:-0.0.0.0}"
-PORT="${JARVIS_PORT:-8000}"
+PORT="${JARVIS_PORT:-443}"
 APP="jarvisappv4:app"
 
 ARGS=("${APP}" "--host" "${HOST}" "--port" "${PORT}" "--proxy-headers" "--forwarded-allow-ips" "*")

@@ -1,6 +1,7 @@
 proxmox_hosts.json
 .venv/
 venv/
+.env.local
 __pycache__/
 *.pyc
 *.pyo
@@ -9,3 +10,7 @@ __pycache__/
 .coverage
 dist/
 build/
+frontend/node_modules/
+frontend/dist/
+assets/
+static/assets/

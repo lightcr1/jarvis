@@ -9,7 +9,8 @@ Use it as the human sign-off artifact for the remaining V1 roadmap items.
 1. Run the automated suite first:
 
 ```bash
-.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m unittest
+cd frontend && npm run test:run && npm run build && cd ..
 ```
 
 2. Execute the manual scenarios below on the target environment.

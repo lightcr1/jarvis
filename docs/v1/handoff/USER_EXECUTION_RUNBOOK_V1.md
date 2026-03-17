@@ -24,7 +24,7 @@ What to run:
 ```bash
 sudo cp config/env/prod.env.example /etc/jarvis/config.env
 sudo ./scripts/deploy_local.sh
-curl -k https://localhost:8000/health || curl -fsS http://localhost:8000/health
+curl -k https://localhost/health || curl -k https://localhost:443/health
 ```
 
 How to do it:
@@ -86,7 +86,7 @@ Prepared asset:
 
 What to run:
 ```bash
-python3 scripts/benchmark_local.py --base-url http://127.0.0.1:8000 --iterations 25 --output ./benchmark_report.json
+python3 scripts/benchmark_local.py --base-url https://127.0.0.1 --iterations 25 --output ./benchmark_report.json
 ```
 
 How to do it:
@@ -107,7 +107,7 @@ Prepared asset:
 
 What to run:
 ```bash
-sudo HEALTH_URL=http://127.0.0.1:8000/health RESTART_COMMAND="systemctl restart jarvis.service" ./scripts/recovery_drill.sh ./recovery_drill_report.md
+sudo HEALTH_URL=https://127.0.0.1/health RESTART_COMMAND="systemctl restart jarvis.service" ./scripts/recovery_drill.sh ./recovery_drill_report.md
 ```
 
 How to do it:
@@ -125,7 +125,7 @@ Evidence to keep:
 Token lifecycle:
 ```bash
 python3 scripts/token_lifecycle_drill.py \
-  --base-url https://localhost:8000 \
+  --base-url https://localhost \
   --passphrase "$JARVIS_PASSPHRASE" \
   --admin-user-id <admin_user_id> \
   --audit-log-path /var/lib/jarvis/audit.log \
@@ -139,6 +139,13 @@ bash scripts/admin_backup_restore_drill.sh ./admin_backup_restore_drill_report.m
 ```
 
 Keep both reports as launch evidence.
+
+Optional local summary:
+
+```bash
+python3 scripts/collect_v1_evidence.py --evidence-dir docs/v1/evidence --output docs/v1/evidence/status.md
+python3 scripts/scaffold_v1_evidence.py --output-dir docs/v1/evidence --date 2026-03-15
+```
 
 ## 8. Checklist Items You Can Mark After Running The Above
 

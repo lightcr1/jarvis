@@ -14,6 +14,7 @@ class AppStartupTests(unittest.TestCase):
 
         routes = {getattr(route, "path", "") for route in module.app.routes}
         self.assertIn("/stt", routes)
+        self.assertIn("/admin/login", routes)
 
 
 if __name__ == "__main__":

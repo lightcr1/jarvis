@@ -5,16 +5,18 @@ Lokaler Text- und Voice-Assistant mit Skill-Engine, RBAC/Admin-Bereich, Proxmox-
 ## Status
 
 - Automatischer Repo-Stand ist aktuell konsistent.
-- Der lokale Teststand ist gruen: `257` Tests mit `.venv/bin/python -m unittest discover -s tests`.
+- Der lokale Teststand ist gruen: `87` Python-Tests mit `.venv/bin/python -m unittest`.
+- Zusaetzlich ist das Frontend gruen: `7` Vitest-Tests und ein erfolgreicher Produktions-Build.
 - Die noch offenen V1-Punkte sind keine lokalen Code-Luecken mehr, sondern echte Betriebs- und Qualitaetsnachweise auf Zielhardware.
 
 ## Repo-Struktur
 
 ```text
 .
-|- jarvisappv4.py              FastAPI-App-Entrypoint
-|- jarvis/                     Backend-Paket mit Engine, Stores und Hilfsmodulen
-|- static/                     Chat-, Admin- und Orb-UI
+|- jarvisappv4.py              Schlanker FastAPI-App-Entrypoint
+|- jarvis/                     Backend-Paket mit Routern, Engine, Stores und Hilfsmodulen
+|- frontend/                   React-/TypeScript-SPA fuer Chat, Orb und Dashboard
+|- static/                     Legacy-Static-Dateien und Fallback-Artefakte
 |- scripts/                    Deploy-, Update-, Recovery- und Ops-Skripte
 |- tests/                      Automatisierte Regressionstests
 |- config/                     Beispiel-Konfigurationen
@@ -38,6 +40,25 @@ python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
 cp config/env/dev.env.example .env.local
 ```
+
+Das Frontend lebt in `frontend/`. Fuer lokale UI-Arbeit:
+
+```bash
+cd frontend
+npm install
+npm run build
+cd ..
+```
+
+Die API-Routen sind inzwischen modular im Backend-Paket organisiert:
+
+- `jarvis/frontend_routes.py` fuer SPA-Auslieferung und Legacy-Redirects
+- `jarvis/api_admin.py` fuer Admin-API
+- `jarvis/api_auth_chat.py` fuer Auth, Unlock, Chat, Sessions und RAG
+- `jarvis/api_voice.py` fuer STT/TTS
+- `jarvis/assistant_domain.py` fuer Skill- und RAG-Domaenenlogik
+- `jarvis/runtime_helpers.py` fuer Session-, Token-, Audit- und Seeding-Helfer
+- `jarvis/router_dependencies.py` fuer die Live-Dependency-Schicht zwischen `jarvisappv4.py` und den Routern
 
 Danach mindestens diese Werte setzen:
 
@@ -63,8 +84,9 @@ set +a
 Danach erreichbar unter:
 
 - `http://127.0.0.1:8000/`
-- `http://127.0.0.1:8000/static/admin.html`
-- `http://127.0.0.1:8000/static/orb.html`
+- `http://127.0.0.1:8000/chat`
+- `http://127.0.0.1:8000/orb`
+- `http://127.0.0.1:8000/dashboard/login`
 
 ## Sauberes Setup fuer einen echten Host
 
@@ -89,16 +111,17 @@ Das Deployment erledigt in einem Lauf:
 1. Repo nach `/opt/jarvis` synchronisieren
 2. virtuelle Umgebung unter `/opt/jarvis/.venv` erstellen
 3. Python-Abhaengigkeiten installieren
-4. `/etc/jarvis/config.env` vorbereiten
-5. TLS-Dateien erzeugen, falls noetig
-6. `jarvis.service` installieren und starten
-7. Healthcheck und Admin-Dateninitialisierung ausfuehren
+4. Frontend unter `/opt/jarvis/frontend` bauen
+5. `/etc/jarvis/config.env` vorbereiten
+6. TLS-Dateien erzeugen, falls noetig
+7. `jarvis.service` installieren und starten
+8. Healthcheck und Admin-Dateninitialisierung ausfuehren
 
 Pruefen:
 
 ```bash
 systemctl status jarvis.service
-curl -k https://localhost:8000/health || curl -fsS http://localhost:8000/health
+curl -k https://localhost/health || curl -k https://localhost:443/health
 ```
 
 ## Konfiguration
@@ -155,8 +178,10 @@ sudo systemctl restart jarvis.service
 Wichtige UIs:
 
 - `/` fuer Chat
-- `/static/admin.html` fuer Benutzer, Gruppen, Rechte, Audit und Settings
-- `/static/orb.html` fuer die Orb-Oberflaeche
+- `/chat` fuer Chat
+- `/orb` fuer die Orb-Oberflaeche
+- `/dashboard/login` fuer den getrennten Admin-Login
+- `/dashboard` fuer Benutzer, Gruppen, Rechte, Audit und Settings
 
 Wichtige Skills:
 
@@ -175,6 +200,7 @@ Wichtige Skills:
 - Browser-Mikrofon braucht `https://...` oder `localhost`.
 - Wakeword ist standardmaessig privacy-first deaktiviert.
 - Standardphrase: `hey jarvis`
+- Laufende Runtime-Steuerung fuer Wakeword und STT liegt in `/dashboard/settings`.
 
 Beispiel:
 
@@ -185,6 +211,48 @@ PIPER_LENGTH_SCALE=1.12
 PIPER_NOISE_SCALE=0.55
 PIPER_NOISE_W=0.75
 ```
+
+## HTTPS und Zertifikate
+
+Das Deploy-Skript aktiviert HTTPS standardmaessig. Wenn keine Zertifikate vorhanden sind, erzeugt `scripts/deploy_local.sh` automatisch ein self-signed Zertifikat unter:
+
+- `/etc/jarvis/tls/fullchain.pem`
+- `/etc/jarvis/tls/privkey.pem`
+
+Danach laeuft Jarvis standardmaessig auf:
+
+- `https://<host>/`
+- Standard-Port: `443`
+
+Eigenes Zertifikat manuell erzeugen:
+
+```bash
+sudo mkdir -p /etc/jarvis/tls
+sudo openssl req -x509 -nodes -newkey rsa:2048 \
+  -keyout /etc/jarvis/tls/privkey.pem \
+  -out /etc/jarvis/tls/fullchain.pem \
+  -days 825 \
+  -subj "/CN=jarvis.local"
+sudo chmod 600 /etc/jarvis/tls/privkey.pem
+sudo chmod 644 /etc/jarvis/tls/fullchain.pem
+```
+
+Danach in `/etc/jarvis/config.env` setzen oder pruefen:
+
+```env
+JARVIS_HOST=0.0.0.0
+JARVIS_PORT=443
+JARVIS_TLS_CERT_FILE=/etc/jarvis/tls/fullchain.pem
+JARVIS_TLS_KEY_FILE=/etc/jarvis/tls/privkey.pem
+```
+
+Dann neu starten:
+
+```bash
+sudo systemctl restart jarvis.service
+```
+
+Wenn du spaeter ein richtiges Zertifikat von einer CA oder von Let's Encrypt nutzt, trage einfach diese Pfade dort ein.
 
 ## Betrieb und Wartung
 
@@ -210,9 +278,9 @@ sudo ./scripts/rollback_local.sh
 Vorbereitete Evidenz-Skripte:
 
 ```bash
-python3 scripts/benchmark_local.py --base-url http://127.0.0.1:8000 --iterations 25 --output ./benchmark_report.json
-HEALTH_URL=http://127.0.0.1:8000/health RESTART_COMMAND="systemctl restart jarvis.service" ./scripts/recovery_drill.sh ./recovery_drill_report.md
-python3 scripts/token_lifecycle_drill.py --base-url https://localhost:8000 --passphrase "$JARVIS_PASSPHRASE" --admin-user-id usr-123456abcdef --audit-log-path /var/lib/jarvis/audit.log --insecure --report-path ./token_lifecycle_drill_report.md
+python3 scripts/benchmark_local.py --base-url https://127.0.0.1 --iterations 25 --output ./benchmark_report.json
+HEALTH_URL=https://127.0.0.1/health RESTART_COMMAND="systemctl restart jarvis.service" ./scripts/recovery_drill.sh ./recovery_drill_report.md
+python3 scripts/token_lifecycle_drill.py --base-url https://localhost --passphrase "$JARVIS_PASSPHRASE" --admin-user-id usr-123456abcdef --audit-log-path /var/lib/jarvis/audit.log --insecure --report-path ./token_lifecycle_drill_report.md
 bash scripts/admin_backup_restore_drill.sh ./admin_backup_restore_drill_report.md
 ```
 
@@ -221,7 +289,7 @@ bash scripts/admin_backup_restore_drill.sh ./admin_backup_restore_drill_report.m
 Schnell:
 
 ```bash
-.venv/bin/python -m unittest discover -s tests
+.venv/bin/python -m unittest
 ```
 
 Vollstaendig mit frischer Umgebung:
@@ -229,7 +297,8 @@ Vollstaendig mit frischer Umgebung:
 ```bash
 python3 -m venv .venv
 .venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m unittest discover -s tests -v
+.venv/bin/python -m unittest
+cd frontend && npm run test:run && npm run build && cd ..
 ```
 
 ## Was fuer V1 noch offen ist

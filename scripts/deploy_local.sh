@@ -10,8 +10,6 @@ CONFIG_FILE="${CONFIG_DIR}/config.env"
 SERVICE_SRC="${INSTALL_DIR}/systemd/jarvis.service"
 SERVICE_DST="/etc/systemd/system/jarvis.service"
 RUN_SCRIPT="${INSTALL_DIR}/scripts/run_jarvis.sh"
-HEALTH_URL_HTTP="http://localhost:8000/health"
-HEALTH_URL_HTTPS="https://localhost:8000/health"
 
 fail() {
   echo "ERROR: $*" >&2
@@ -26,6 +24,7 @@ command -v rsync >/dev/null 2>&1 || fail "rsync is required. Install it and retr
 command -v python3 >/dev/null 2>&1 || fail "python3 is required. Install it and retry."
 command -v systemctl >/dev/null 2>&1 || fail "systemctl is required on this host."
 command -v openssl >/dev/null 2>&1 || fail "openssl is required for TLS certificate generation."
+command -v npm >/dev/null 2>&1 || fail "npm is required to build the frontend."
 
 INSTALL_SST="${INSTALL_SST:-0}"
 
@@ -45,6 +44,13 @@ fi
 "${VENV_PYTHON}" -m pip install --upgrade pip || fail "Failed to upgrade pip in venv."
 "${VENV_PYTHON}" -m pip install -r "${INSTALL_DIR}/requirements.txt" || fail "Failed to install requirements.txt"
 "${VENV_PYTHON}" -m pip install "uvicorn[standard]" || fail "Failed to install uvicorn[standard]"
+
+if [[ -f "${INSTALL_DIR}/frontend/package.json" ]]; then
+  pushd "${INSTALL_DIR}/frontend" >/dev/null
+  npm install || fail "Failed to install frontend dependencies"
+  npm run build || fail "Failed to build frontend"
+  popd >/dev/null
+fi
 
 if [[ ! -x "${VENV_DIR}/bin/uvicorn" ]]; then
   fail "uvicorn executable missing at ${VENV_DIR}/bin/uvicorn after install."
@@ -88,6 +94,8 @@ ensure_env_default "JARVIS_GROUP_STORE_PATH" "/var/lib/jarvis/groups.json"
 ensure_env_default "JARVIS_MEMBERSHIP_STORE_PATH" "/var/lib/jarvis/memberships.json"
 ensure_env_default "JARVIS_PERMISSION_STORE_PATH" "/var/lib/jarvis/permissions.json"
 ensure_env_default "JARVIS_ADMIN_SETTINGS_PATH" "/var/lib/jarvis/admin_settings.json"
+ensure_env_default "JARVIS_ADMIN_PASSWORD_STORE_PATH" "/var/lib/jarvis/admin_passwords.json"
+ensure_env_default "JARVIS_USER_PREFERENCES_PATH" "/var/lib/jarvis/user_preferences.json"
 ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_ORPHANS" "0"
 ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_ADMIN_LOCKOUT" "0"
 ensure_env_default "JARVIS_INTEGRITY_FAIL_ON_DUPLICATE_MEMBERSHIPS" "0"
@@ -98,6 +106,10 @@ set -a
 source "${CONFIG_FILE}"
 set +a
 
+HEALTH_PORT="${JARVIS_PORT:-443}"
+HEALTH_URL_HTTP="http://localhost:${HEALTH_PORT}/health"
+HEALTH_URL_HTTPS="https://localhost:${HEALTH_PORT}/health"
+
 ADMIN_DATA_PATHS=(
   "${JARVIS_AUDIT_LOG_PATH}"
   "${JARVIS_USER_STORE_PATH}"
@@ -105,6 +117,8 @@ ADMIN_DATA_PATHS=(
   "${JARVIS_MEMBERSHIP_STORE_PATH}"
   "${JARVIS_PERMISSION_STORE_PATH}"
   "${JARVIS_ADMIN_SETTINGS_PATH}"
+  "${JARVIS_ADMIN_PASSWORD_STORE_PATH}"
+  "${JARVIS_USER_PREFERENCES_PATH}"
 )
 
 seed_admin_data_file() {
@@ -127,6 +141,12 @@ seed_admin_data_file() {
     admin_settings.json)
       printf '%s\n' '{"usage_limits": {"token_ttl_min": 20, "max_active_tokens": 200}, "voice": {"wakeword_enabled": false, "wakeword_phrase": "hey jarvis", "stt_provider": "local"}}' > "${path}"
       ;;
+    admin_passwords.json)
+      printf '%s\n' '{"passwords": {}}' > "${path}"
+      ;;
+    user_preferences.json)
+      printf '%s\n' '{"preferences": {}}' > "${path}"
+      ;;
     audit.log)
       : > "${path}"
       ;;
@@ -144,7 +164,7 @@ for p in "${ADMIN_DATA_PATHS[@]}"; do
   fi
 done
 
-chmod 640 "${JARVIS_AUDIT_LOG_PATH}" "${JARVIS_USER_STORE_PATH}" "${JARVIS_GROUP_STORE_PATH}" "${JARVIS_MEMBERSHIP_STORE_PATH}" "${JARVIS_PERMISSION_STORE_PATH}" "${JARVIS_ADMIN_SETTINGS_PATH}" || fail "Failed to set permissions on admin data files"
+chmod 640 "${JARVIS_AUDIT_LOG_PATH}" "${JARVIS_USER_STORE_PATH}" "${JARVIS_GROUP_STORE_PATH}" "${JARVIS_MEMBERSHIP_STORE_PATH}" "${JARVIS_PERMISSION_STORE_PATH}" "${JARVIS_ADMIN_SETTINGS_PATH}" "${JARVIS_ADMIN_PASSWORD_STORE_PATH}" "${JARVIS_USER_PREFERENCES_PATH}" || fail "Failed to set permissions on admin data files"
 
 TLS_CERT="${JARVIS_TLS_CERT_FILE:-}"
 TLS_KEY="${JARVIS_TLS_KEY_FILE:-}"

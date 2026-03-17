@@ -3,19 +3,26 @@ import unittest
 
 
 class AdminStaticUiTests(unittest.TestCase):
-    def test_admin_page_exists_and_covers_core_tabs(self):
-        content = Path("static/admin.html").read_text(encoding="utf-8")
-        self.assertIn("J.A.R.V.I.S. Admin", content)
-        self.assertIn("Action Logs", content)
-        self.assertIn("Runtime Defaults", content)
-        self.assertIn("/admin/settings", content)
-        self.assertIn("/admin/audit/events", content)
-        self.assertIn("/admin/permissions/effective/", content)
+    def test_admin_spa_routes_cover_core_views(self):
+        router = Path("frontend/src/app/router.tsx").read_text(encoding="utf-8")
+        shell = Path("frontend/src/shared/layout/AdminShell.tsx").read_text(encoding="utf-8")
+        settings = Path("frontend/src/routes/admin/pages/SettingsPage.tsx").read_text(encoding="utf-8")
+        logs = Path("frontend/src/routes/admin/pages/LogsPage.tsx").read_text(encoding="utf-8")
+        permissions = Path("frontend/src/routes/admin/pages/PermissionsPage.tsx").read_text(encoding="utf-8")
+        self.assertIn('path: "/dashboard"', router)
+        self.assertIn('{ path: "logs"', router)
+        self.assertIn('{ path: "settings"', router)
+        self.assertIn('{ path: "permissions"', router)
+        self.assertIn("Back to chat", shell)
+        self.assertIn("Wakeword", settings)
+        self.assertIn("Audit", logs)
+        self.assertIn("permission", permissions.lower())
 
-    def test_chat_ui_links_to_admin_console(self):
-        content = Path("static/index.html").read_text(encoding="utf-8")
-        self.assertIn('id="adminBtn"', content)
-        self.assertIn('window.location.href = "/static/admin.html";', content)
+    def test_chat_ui_links_to_dashboard_via_spa(self):
+        chat = Path("frontend/src/routes/chat/ChatPage.tsx").read_text(encoding="utf-8")
+        self.assertIn('navigate("/dashboard")', chat)
+        self.assertIn("Workspaces", chat)
+        self.assertIn(">Dashboard<", chat)
 
 
 if __name__ == "__main__":

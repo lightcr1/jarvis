@@ -201,3 +201,31 @@
 - Regression hardening area: `tests/test_deploy_config_defaults.py` (fixture/source-of-truth + assertion diagnostics/maintainability improvements).
 - Full validation command repeatedly green in this phase: `python -m unittest discover -s tests`
 - Recommended next step: execute `docs/v1/handoff/USER_EXECUTION_RUNBOOK_V1.md` on the target environment to collect deploy/update/rollback, environment split, performance, recovery, and WikiJS scope evidence.
+
+## Local Architecture Progress Update (2026-03-15)
+
+- ✅ Backend app composition significantly reduced: `jarvisappv4.py` now delegates frontend delivery, admin/auth/chat/voice APIs, assistant-domain logic, and runtime/session helpers to dedicated modules.
+- ✅ Modular backend files now active in runtime:
+  - `jarvis/frontend_routes.py`
+  - `jarvis/api_admin.py`
+  - `jarvis/api_auth_chat.py`
+  - `jarvis/api_voice.py`
+  - `jarvis/assistant_domain.py`
+  - `jarvis/runtime_helpers.py`
+  - `jarvis/router_dependencies.py`
+- ✅ Direct regression coverage added for:
+  - modular router dependency wiring
+  - assistant-domain helper logic
+  - runtime/session helper logic
+  - entrypoint export contract
+  - modular API routers
+- ✅ Current local validation baseline:
+  - `91` Python tests green with `.venv/bin/python -m unittest`
+  - `7` frontend tests green with `cd frontend && npm run test:run`
+  - production frontend build green with `cd frontend && npm run build`
+- ➡️ Remaining V1 work is now primarily environment-bound evidence, not local architecture debt:
+  - deploy/update/rollback execution on target host
+  - dev/test/prod separation proof
+  - wakeword/STT/TTS qualitative sign-off
+  - benchmark and recovery evidence on target hardware
+  - signed manual acceptance artifact

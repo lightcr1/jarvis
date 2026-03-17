@@ -126,3 +126,6 @@ Use this file as the operational tracker while building toward August launch.
 - Update (this session): default chat/memory/rag persistence paths now fall back safely when `/var/lib/jarvis` is unavailable, so test and constrained-runtime environments no longer fail on startup or chat writes.
 - Update (this session): GitHub RAG refresh now fetches filtered text blob content with file/text caps and repo metadata, replacing the previous path-only cache behavior.
 - Update (this session): added automated `/stt` and `/tts` endpoint coverage so the voice workflow gate has direct API-level regression evidence.
+- Update (later local architecture pass): backend routing is now modularized across `jarvis/api_admin.py`, `jarvis/api_auth_chat.py`, `jarvis/api_voice.py`, `jarvis/frontend_routes.py`, `jarvis/assistant_domain.py`, and `jarvis/runtime_helpers.py`, with `jarvisappv4.py` reduced to app composition and stable wrapper exports.
+- Update (later local architecture pass): direct module-level regression coverage now exists for assistant-domain helpers, runtime helpers, router dependency wiring, entrypoint export surface, and modular API routers.
+- Update (later local architecture pass): current local validation baseline is `91` Python tests green plus `7` frontend tests green and a successful production frontend build.

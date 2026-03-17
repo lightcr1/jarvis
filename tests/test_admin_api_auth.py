@@ -19,13 +19,18 @@ class AdminApiAuthTests(unittest.TestCase):
         os.environ["JARVIS_GROUP_STORE_PATH"] = os.path.join(base, "groups.json")
         os.environ["JARVIS_MEMBERSHIP_STORE_PATH"] = os.path.join(base, "memberships.json")
         os.environ["JARVIS_PERMISSION_STORE_PATH"] = os.path.join(base, "permissions.json")
+        os.environ["JARVIS_ADMIN_PASSWORD_STORE_PATH"] = os.path.join(base, "admin_passwords.json")
+        os.environ["JARVIS_USER_PREFERENCES_PATH"] = os.path.join(base, "user_preferences.json")
 
         jarvisappv4.audit_log = jarvisappv4.AuditLogStore()
         jarvisappv4.user_store = jarvisappv4.UserStore()
         jarvisappv4.group_store = jarvisappv4.GroupStore()
         jarvisappv4.membership_store = jarvisappv4.MembershipStore()
         jarvisappv4.permission_store = jarvisappv4.PermissionStore()
+        jarvisappv4.admin_password_store = jarvisappv4.AdminPasswordStore()
+        jarvisappv4.user_preferences_store = jarvisappv4.UserPreferencesStore()
         jarvisappv4._tokens.clear()
+        jarvisappv4._identity_tokens.clear()
 
         self.client = TestClient(jarvisappv4.app)
 
@@ -36,6 +41,57 @@ class AdminApiAuthTests(unittest.TestCase):
         res = self.client.post("/unlock", json={"passphrase": "test-pass"})
         self.assertEqual(res.status_code, 200)
         return res.json()["token"]
+
+    def test_admin_login_seeds_default_admin_and_returns_identity(self):
+        res = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"})
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body["username"], "admin")
+        self.assertEqual(body["role"], "admin")
+        self.assertTrue(body["user_id"].startswith("usr-"))
+        self.assertTrue(body["token"])
+
+        listing = self.client.get(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {body['token']}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": body["user_id"],
+            },
+        )
+        self.assertEqual(listing.status_code, 200)
+        self.assertEqual(listing.json()["users"][0]["username"], "admin")
+
+    def test_user_login_and_preferences_round_trip(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+
+        created = self.client.post(
+            "/admin/users",
+            headers={
+                "Authorization": f"Bearer {admin['token']}",
+                "X-Jarvis-Role": "admin",
+                "X-Jarvis-User-Id": admin["user_id"],
+            },
+            json={"username": "alice", "role": "standard_user", "enabled": True, "password": "alice-pass"},
+        )
+        self.assertEqual(created.status_code, 200)
+
+        login = self.client.post("/auth/login", json={"username": "alice", "password": "alice-pass"})
+        self.assertEqual(login.status_code, 200)
+        session_token = login.json()["session_token"]
+
+        update = self.client.put(
+            "/auth/me/preferences",
+            headers={"X-Jarvis-Session": session_token},
+            json={"display_name": "Alice", "accent_color": "amber", "auto_play_voice": False, "compact_mode": True, "orb_detail": "medium"},
+        )
+        self.assertEqual(update.status_code, 200)
+        self.assertEqual(update.json()["preferences"]["display_name"], "Alice")
+
+        me = self.client.get("/auth/me", headers={"X-Jarvis-Session": session_token})
+        self.assertEqual(me.status_code, 200)
+        self.assertEqual(me.json()["user"]["username"], "alice")
+        self.assertEqual(me.json()["preferences"]["accent_color"], "amber")
 
 
 
