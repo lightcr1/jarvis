@@ -5,7 +5,7 @@ Lokaler Text- und Voice-Assistant mit Skill-Engine, RBAC/Admin-Bereich, Proxmox-
 ## Status
 
 - Automatischer Repo-Stand ist aktuell konsistent.
-- Der lokale Teststand ist gruen: `87` Python-Tests mit `.venv/bin/python -m unittest`.
+- Der lokale Teststand ist gruen: `800+` Python-Tests mit `.venv/bin/python -m pytest tests/`.
 - Zusaetzlich ist das Frontend gruen: `7` Vitest-Tests und ein erfolgreicher Produktions-Build.
 - Die noch offenen V1-Punkte sind keine lokalen Code-Luecken mehr, sondern echte Betriebs- und Qualitaetsnachweise auf Zielhardware.
 
@@ -55,8 +55,10 @@ Die API-Routen sind inzwischen modular im Backend-Paket organisiert:
 - `jarvis/frontend_routes.py` fuer SPA-Auslieferung und Legacy-Redirects
 - `jarvis/api_admin.py` fuer Admin-API
 - `jarvis/api_auth_chat.py` fuer Auth, Unlock, Chat, Sessions und RAG
+- `jarvis/api_home_assistant.py` fuer die dedizierte Home-Assistant-Domaene in Jarvis
 - `jarvis/api_voice.py` fuer STT/TTS
 - `jarvis/assistant_domain.py` fuer Skill- und RAG-Domaenenlogik
+- `jarvis/home_assistant/` fuer Capability-, Discovery-, Store- und Service-Logik rund um Home Assistant
 - `jarvis/runtime_helpers.py` fuer Session-, Token-, Audit- und Seeding-Helfer
 - `jarvis/router_dependencies.py` fuer die Live-Dependency-Schicht zwischen `jarvisappv4.py` und den Routern
 
@@ -180,20 +182,37 @@ Wichtige UIs:
 - `/` fuer Chat
 - `/chat` fuer Chat
 - `/orb` fuer die Orb-Oberflaeche
+- `/home-assistant` fuer den dedizierten Home-Assistant-Arbeitsbereich
 - `/dashboard/login` fuer den getrennten Admin-Login
 - `/dashboard` fuer Benutzer, Gruppen, Rechte, Audit und Settings
 
-Wichtige Skills:
+Planung fuer die naechste groessere Home-Assistant-Erweiterung liegt in:
 
-- `help`
-- `skills`
-- `status jarvis`
-- `diagnose jarvis`
-- `proxmox health`
-- `pve vm status <host_id> <node> <vmid>`
-- `pve lxc status <host_id> <node> <vmid>`
-- `service status <target> <service>`
-- `service restart <target> <service>`
+- `docs/v1/planning/HOME_ASSISTANT_FOUNDATION_PLAN.md`
+
+Wichtige Skills (Auswahl — `skills` fuer vollstaendige Liste):
+
+**System & Infrastruktur**
+- `briefing` / `morning briefing` — Vollstaendiger Status-Ueberblick (Zeit, CPU, RAM, Disk, Uptime, Notizen)
+- `sysinfo`, `system status`, `uptime`, `cpu`, `memory`, `disk`, `load`
+- `docker`, `ports`, `ip`, `who`, `last`, `kernel`, `processes`
+- `ping <host>`, `dns <host>` — Netzwerk-Diagnose
+- `ssl <domain>` — SSL-Zertifikat-Ablauf pruefen
+- `http status <url>` — HTTP-Health-Check
+- `pve vm|lxc status <host> <node> <id>` — Proxmox-Status
+- `reboot`, `shutdown [in <N> min]` — Systemsteuerung (Admin)
+
+**Entwickler-Werkzeuge**
+- `base64 encode/decode <text>`, `sha256/md5 <text>`, `url encode/decode <text>`
+- `hex/bin/oct <zahl>`, `generate password [<laenge>]`
+- `uuid`, `timestamp`, `ascii <char|code>`, `to roman <N>`, `roman <ROMAN>`
+- `sort/average/min/max/sum <zahlen>`, `is <N> prime`, `factorial <N>`, `fibonacci <N>`
+- `morse <text>`, `morse decode <...>`, `hex to rgb`, `rgb to hex`, `word count <text>`
+
+**Konversation & Erinnerungen**
+- `weather [in <city>]`, `days until <event>`, `time in <city>`, `timer for <N> min`
+- `remember that <text>`, `what do you remember`, `forget <keyword>`
+- `flip a coin`, `roll [N]d[S]`
 
 ## Voice und Wakeword
 

@@ -5,9 +5,16 @@ import re
 import subprocess
 import uuid
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import JSONResponse
 
-from jarvis.proxmox_module import build_router, proxmox_lxc_status, proxmox_vm_status
+from jarvis.proxmox_module import (
+    build_router,
+    proxmox_lxc_action,
+    proxmox_lxc_status,
+    proxmox_vm_action,
+    proxmox_vm_status,
+)
 from jarvis.skill_utils import (
     disk_usage,
     ensure_service_allowed,
@@ -20,6 +27,7 @@ from jarvis.skill_utils import (
 from jarvis.audio_services import (
     strip_wakeword as audio_strip_wakeword,
     synthesize_tts as audio_synthesize_tts,
+    tts_preprocess_text as audio_tts_preprocess_text,
     transcribe_gemini as audio_transcribe_gemini,
     transcribe_local as audio_transcribe_local,
     wakeword_enabled as audio_wakeword_enabled,
@@ -32,6 +40,7 @@ from jarvis.ai_clients import (
     get_openai,
     get_provider,
     get_whisper,
+    local_ai_chat_reply,
     local_ai_stub_reply,
 )
 from jarvis.assistant_domain import (
@@ -72,10 +81,16 @@ from jarvis.admin_settings_store import AdminSettingsStore
 from jarvis.user_preferences_store import UserPreferencesStore
 from jarvis.api_admin import build_admin_router
 from jarvis.api_auth_chat import build_auth_chat_router
+from jarvis.api_alerts import build_alerts_router
+from jarvis.api_home_assistant import build_home_assistant_router
+from jarvis.api_status import build_status_router
 from jarvis.api_voice import build_voice_router
 from jarvis.api_models import UnlockOut
 from jarvis.frontend_routes import frontend_router, mount_frontend_assets
-from jarvis.router_dependencies import build_admin_deps, build_auth_chat_deps, build_voice_deps
+from jarvis.home_assistant.client import HomeAssistantClient
+from jarvis.home_assistant.service import HomeAssistantService
+from jarvis.home_assistant.store import HomeAssistantStore
+from jarvis.router_dependencies import build_admin_deps, build_alerts_deps, build_auth_chat_deps, build_home_assistant_deps, build_status_deps, build_voice_deps
 from jarvis.jarvis_engine import (
     JarvisEngine,
     build_registry,
@@ -86,6 +101,7 @@ from jarvis.jarvis_engine import (
     VALID_ROLES,
 )
 from jarvis.runtime_state import ChatHistoryStore, RagStore
+from jarvis.runtime_state import JarvisStatusHub
 from jarvis.session_auth import bearer_token_from_header, enforce_token_capacity, is_token_active, prune_expired_tokens
 
 app = FastAPI(title="Jarvis Backend")
@@ -109,6 +125,9 @@ permission_store = PermissionStore()
 admin_password_store = AdminPasswordStore()
 admin_settings_store = AdminSettingsStore()
 user_preferences_store = UserPreferencesStore()
+status_hub = JarvisStatusHub()
+home_assistant_store = HomeAssistantStore()
+home_assistant_client = HomeAssistantClient()
 
 DEFAULT_ADMIN_USERNAME = (os.getenv("JARVIS_DEFAULT_ADMIN_USERNAME") or "admin").strip() or "admin"
 DEFAULT_ADMIN_PASSWORD = (os.getenv("JARVIS_DEFAULT_ADMIN_PASSWORD") or "admin123").strip() or "admin123"
@@ -131,6 +150,41 @@ ensure_default_admin_seeded()
 @app.get("/health")
 def health():
     return {"ok": True}
+
+
+@app.get("/greeting")
+def greeting(request: Request):
+    """
+    Unauthenticated greeting endpoint — only reachable from localhost/loopback.
+    Returns a plain-text, TTS-ready salutation + briefing for startup scripts.
+    """
+    client_ip = (request.client.host if request.client else "") or ""
+    loopback = {"127.0.0.1", "::1", "localhost"}
+    if client_ip not in loopback:
+        return JSONResponse(status_code=403, content={"error": "local_only"})
+    from datetime import datetime as _dt
+    now = _dt.now().astimezone()
+    hour = now.hour
+    if 5 <= hour < 12:
+        salutation = "Good morning, sir."
+    elif 12 <= hour < 17:
+        salutation = "Good afternoon, sir."
+    elif 17 <= hour < 22:
+        salutation = "Good evening, sir."
+    else:
+        salutation = "Sir, working late again."
+    time_str = now.strftime("%H:%M")
+    date_str = now.strftime("%A, %d %B %Y")
+    load1, _, _ = os.getloadavg()
+    cores = os.cpu_count() or 1
+    load_pct = load1 / cores * 100
+    text = (
+        f"{salutation} "
+        f"It is {time_str} on {date_str}. "
+        f"All systems nominal. Load {load_pct:.0f} percent of {cores} cores. "
+        f"J.A.R.V.I.S. standing by."
+    )
+    return {"text": text, "salutation": salutation, "time": time_str, "date": date_str}
 
 
 # ---------------------------
@@ -275,11 +329,24 @@ def _validate_audit_query(limit: int, since_ts: int | None, until_ts: int | None
     runtime_validate_audit_query(limit, since_ts, until_ts)
 
 engine = JarvisEngine(build_registry(), SecurityPolicy())
+home_assistant_service = HomeAssistantService(
+    store=home_assistant_store,
+    client=home_assistant_client,
+    user_store=user_store,
+    membership_store=membership_store,
+    permission_store=permission_store,
+    resolve_effective_permissions=resolve_effective_permissions,
+    normalize_role=normalize_role,
+    audit_log=audit_log,
+)
 
 # Transitional modular router activation.
 # The admin router now resolves live dependencies against the current module state,
 # so test suites that replace stores on jarvisappv4 keep working.
 app.include_router(build_admin_router(build_admin_deps(sys.modules[__name__])))
+app.include_router(build_alerts_router(build_alerts_deps(sys.modules[__name__])))
+app.include_router(build_home_assistant_router(build_home_assistant_deps(sys.modules[__name__])))
+app.include_router(build_status_router(build_status_deps(sys.modules[__name__])))
 
 # ---------------------------
 # Skills (no LLM)
@@ -296,8 +363,12 @@ def strip_wakeword(text: str) -> tuple[str, bool]:
     return audio_strip_wakeword(text, wakeword_phrase())
 
 
-def synthesize_tts(text: str) -> bytes:
-    return audio_synthesize_tts(text, logger)
+def synthesize_tts(text: str, voice: str | None = None) -> tuple:
+    return audio_synthesize_tts(text, logger, voice=voice or "")
+
+
+def tts_preprocess_text(text: str) -> str:
+    return audio_tts_preprocess_text(text)
 
 
 def transcribe_local(audio_path: str) -> str:
@@ -309,9 +380,10 @@ def transcribe_gemini(audio_bytes: bytes, content_type: str | None) -> str:
 
 
 def block_write_if_unauthorized(role: str, token: str | None, granted_permissions: list[str] | None = None) -> dict[str, object] | None:
+    active_token = token if token and is_token_active(_tokens, token) else None
     return domain_block_write_if_unauthorized(
         role,
-        token,
+        active_token,
         granted_permissions=granted_permissions,
         emergency_stop_enabled=emergency_stop_enabled,
         permission_check=lambda active_role, _active_token, active_permissions: (
@@ -321,11 +393,12 @@ def block_write_if_unauthorized(role: str, token: str | None, granted_permission
     )
 
 
-def try_skill(text: str, role: str = "admin", token: str | None = None, granted_permissions: list[str] | None = None) -> dict[str, object] | None:
+def try_skill(text: str, role: str = "admin", token: str | None = None, granted_permissions: list[str] | None = None, user_prefs: dict | None = None) -> dict[str, object] | None:
+    active_token = token if token and is_token_active(_tokens, token) else None
     return domain_try_skill(
         text,
         role=role,
-        token=token,
+        token=active_token,
         granted_permissions=granted_permissions,
         emergency_stop_enabled=emergency_stop_enabled,
         permission_check=lambda active_role, _active_token, active_permissions: (
@@ -341,6 +414,9 @@ def try_skill(text: str, role: str = "admin", token: str | None = None, granted_
         ensure_service_allowed=ensure_service_allowed,
         proxmox_vm_status=proxmox_vm_status,
         proxmox_lxc_status=proxmox_lxc_status,
+        proxmox_vm_action=proxmox_vm_action,
+        proxmox_lxc_action=proxmox_lxc_action,
+        user_prefs=user_prefs,
     )
 
 

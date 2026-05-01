@@ -17,6 +17,10 @@ class ChatSessionCreateIn(BaseModel):
     title: str | None = None
 
 
+class ChatSessionUpdateIn(BaseModel):
+    title: str
+
+
 class ChatMessage(BaseModel):
     role: str
     text: str
@@ -71,6 +75,8 @@ class UserPreferencesIn(BaseModel):
     compact_mode: bool = False
     orb_detail: str = "high"
     theme: str = "dark"
+    location: str = ""
+    notes: list[str] = []
 
 
 class AdminUserCreateIn(BaseModel):
@@ -115,6 +121,21 @@ class AdminVoiceSettingsIn(BaseModel):
     stt_provider: str = Field(default="local", pattern="^(local|gemini)$")
 
 
+class AdminHomeAssistantSettingsIn(BaseModel):
+    confirmation_ttl_sec: int = Field(default=300, ge=30)
+    remote_allowed_cidrs: list[str] = Field(default_factory=list)
+
+
 class AdminSettingsIn(BaseModel):
     usage_limits: AdminUsageLimitsIn = Field(default_factory=AdminUsageLimitsIn)
     voice: AdminVoiceSettingsIn = Field(default_factory=AdminVoiceSettingsIn)
+    home_assistant: AdminHomeAssistantSettingsIn = Field(default_factory=AdminHomeAssistantSettingsIn)
+
+
+class HomeAssistantDiscoveryCandidateIn(BaseModel):
+    source: str = Field(default="manual")
+    ip_address: str = Field(min_length=1)
+    label: str = Field(min_length=1)
+    suggested_type: str = Field(min_length=1)
+    suggested_area: str = ""
+    metadata: dict[str, object] = Field(default_factory=dict)

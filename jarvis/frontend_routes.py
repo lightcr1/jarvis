@@ -29,6 +29,14 @@ def root():
     return frontend_index_response()
 
 
+@frontend_router.get("/manifest.json")
+def manifest():
+    manifest_path = FRONTEND_DIST_DIR / "manifest.json"
+    if manifest_path.exists():
+        return FileResponse(str(manifest_path), media_type="application/manifest+json")
+    return FileResponse(str(PROJECT_ROOT / "frontend" / "manifest.json"), media_type="application/manifest+json")
+
+
 @frontend_router.get("/static/orb-v2.html")
 def orb_legacy_redirect():
     return RedirectResponse(url="/orb", status_code=307)
@@ -40,10 +48,13 @@ def chat_legacy_redirect():
 
 
 @frontend_router.get("/chat")
+@frontend_router.get("/home-assistant")
 @frontend_router.get("/orb")
 @frontend_router.get("/login")
 @frontend_router.get("/settings")
 @frontend_router.get("/dashboard")
 @frontend_router.get("/dashboard/{path:path}")
+@frontend_router.get("/workspace/home-assistant")
+@frontend_router.get("/workspace/home-assistant/{path:path}")
 def frontend_routes(path: str | None = None):
     return frontend_index_response()

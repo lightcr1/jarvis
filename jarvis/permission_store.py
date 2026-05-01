@@ -4,6 +4,8 @@ import json
 import os
 from pathlib import Path
 
+from .home_assistant.permissions import HOME_ASSISTANT_PERMISSIONS
+
 
 KNOWN_PERMISSIONS = {
     "voice.use",
@@ -24,6 +26,7 @@ KNOWN_PERMISSIONS = {
     "settings.manage",
     "emergency_stop.trigger",
 }
+KNOWN_PERMISSIONS.update(HOME_ASSISTANT_PERMISSIONS)
 
 
 class PermissionStore:

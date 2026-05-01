@@ -49,6 +49,10 @@ export type AdminSettings = {
     wakeword_phrase: string;
     stt_provider: "local" | "gemini";
   };
+  home_assistant: {
+    confirmation_ttl_sec: number;
+    remote_allowed_cidrs: string[];
+  };
 };
 
 export type AdminSettingsPayload = {

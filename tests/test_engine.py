@@ -250,5 +250,218 @@ class EngineTests(unittest.TestCase):
         self.assertNotEqual(response["summary"], "Permission denied.")
 
 
+class LearningStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        os.environ["JARVIS_MEMORY_PATH"] = os.path.join(self.tmpdir.name, "mem.json")
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_remember_vmid_kind(self):
+        from jarvis.jarvis_engine import JarvisEngine, build_registry, SecurityPolicy
+        os.environ["ALLOWED_TARGETS"] = "local"
+        os.environ["COOLDOWN_RESTART_SECONDS"] = "0"
+        os.environ["COOLDOWN_CRITICAL_SECONDS"] = "0"
+        engine = JarvisEngine(build_registry(), SecurityPolicy())
+        resp = engine.process("remember vmid vm101 192.168.1.50", token=None)
+        self.assertEqual(resp["summary"], "Memory updated.")
+        self.assertEqual(resp["data"]["stored"]["type"], "vmid")
+
+        snap = engine.process("memory show", token=None)
+        self.assertEqual(snap["data"]["memory"]["vmids"].get("vm101"), "192.168.1.50")
+
+    def test_remember_default_kind(self):
+        from jarvis.jarvis_engine import JarvisEngine, build_registry, SecurityPolicy
+        os.environ["ALLOWED_TARGETS"] = "local"
+        os.environ["COOLDOWN_RESTART_SECONDS"] = "0"
+        os.environ["COOLDOWN_CRITICAL_SECONDS"] = "0"
+        engine = JarvisEngine(build_registry(), SecurityPolicy())
+        resp = engine.process("remember default timeout 30", token=None)
+        self.assertEqual(resp["summary"], "Memory updated.")
+
+        snap = engine.process("memory show", token=None)
+        self.assertEqual(snap["data"]["memory"]["defaults"].get("timeout"), "30")
+
+    def test_snapshot_counts_feedback_entries(self):
+        from jarvis.jarvis_engine import JarvisEngine, build_registry, SecurityPolicy
+        os.environ["ALLOWED_TARGETS"] = "local"
+        os.environ["COOLDOWN_RESTART_SECONDS"] = "0"
+        os.environ["COOLDOWN_CRITICAL_SECONDS"] = "0"
+        engine = JarvisEngine(build_registry(), SecurityPolicy())
+        engine.process("status jarvis", token=None)
+        snap = engine.process("memory show", token=None)
+        self.assertGreaterEqual(snap["data"]["memory"]["feedback_entries"], 1)
+
+    def test_feedback_ok_verdict_without_correction(self):
+        from jarvis.jarvis_engine import JarvisEngine, build_registry, SecurityPolicy
+        os.environ["ALLOWED_TARGETS"] = "local"
+        os.environ["COOLDOWN_RESTART_SECONDS"] = "0"
+        os.environ["COOLDOWN_CRITICAL_SECONDS"] = "0"
+        engine = JarvisEngine(build_registry(), SecurityPolicy())
+        first = engine.process("status jarvis", token=None)
+        fid = first["data"]["feedback"]["id"]
+        resp = engine.process(f"feedback {fid} ok", token=None)
+        self.assertEqual(resp["summary"], "Feedback gespeichert.")
+        self.assertEqual(resp["data"]["verdict"], "ok")
+
+    def test_feedback_unknown_id_returns_error(self):
+        from jarvis.jarvis_engine import JarvisEngine, build_registry, SecurityPolicy
+        os.environ["ALLOWED_TARGETS"] = "local"
+        os.environ["COOLDOWN_RESTART_SECONDS"] = "0"
+        os.environ["COOLDOWN_CRITICAL_SECONDS"] = "0"
+        engine = JarvisEngine(build_registry(), SecurityPolicy())
+        resp = engine.process("feedback fb-000000 ok", token=None)
+        self.assertEqual(resp["summary"], "Feedback ID unknown.")
+        self.assertEqual(resp["data"]["error"], "feedback_not_found")
+
+    def test_learning_show_alias(self):
+        from jarvis.jarvis_engine import JarvisEngine, build_registry, SecurityPolicy
+        os.environ["ALLOWED_TARGETS"] = "local"
+        os.environ["COOLDOWN_RESTART_SECONDS"] = "0"
+        os.environ["COOLDOWN_CRITICAL_SECONDS"] = "0"
+        engine = JarvisEngine(build_registry(), SecurityPolicy())
+        resp = engine.process("learning show", token=None)
+        self.assertEqual(resp["summary"], "Memory snapshot ready.")
+
+
+class EngineFallbackTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        os.environ.pop("OPENAI_API_KEY", None)
+        os.environ.pop("GEMINI_API_KEY", None)
+        os.environ["ALLOWED_TARGETS"] = "local"
+        os.environ["COOLDOWN_RESTART_SECONDS"] = "0"
+        os.environ["COOLDOWN_CRITICAL_SECONDS"] = "0"
+        os.environ["JARVIS_MEMORY_PATH"] = os.path.join(self.tmpdir.name, "mem.json")
+        self.engine = JarvisEngine(build_registry(), SecurityPolicy())
+
+    def tearDown(self):
+        os.environ.pop("OPENAI_API_KEY", None)
+        os.environ.pop("GEMINI_API_KEY", None)
+        self.tmpdir.cleanup()
+
+    def test_fallback_offline_when_no_cloud(self):
+        resp = self.engine.process("qwerty nonsense phrase xyz123", token=None)
+        self.assertEqual(resp["data"]["route"], "offline")
+        self.assertTrue(resp["data"]["offline"])
+
+    def test_fallback_cloud_routing_when_openai_set(self):
+        os.environ["OPENAI_API_KEY"] = "sk-test-dummy"
+        resp = self.engine.process("qwerty nonsense phrase xyz123", token=None)
+        self.assertEqual(resp["data"]["route"], "cloud")
+        self.assertFalse(resp["data"]["offline"])
+
+    def test_fallback_cloud_routing_when_gemini_set(self):
+        os.environ["GEMINI_API_KEY"] = "gemini-test-key"
+        resp = self.engine.process("qwerty nonsense phrase xyz123", token=None)
+        self.assertEqual(resp["data"]["route"], "cloud")
+
+    def test_handle_confirm_without_token_returns_token_required(self):
+        resp = self.engine.process("YES, proceed", token=None)
+        self.assertEqual(resp["summary"], "Token required.")
+        self.assertEqual(resp["data"]["error"], "missing_token")
+
+    def test_handle_write_confirm_without_token_returns_token_required(self):
+        resp = self.engine.process("YES", token=None)
+        self.assertEqual(resp["summary"], "Token required.")
+
+    def test_confirm_with_no_pending_action(self):
+        resp = self.engine.process("YES, proceed", token="some-token")
+        self.assertEqual(resp["summary"], "Nothing pending.")
+        self.assertEqual(resp["data"]["error"], "no_pending_action")
+
+    def test_verbose_flag_adds_details_to_data(self):
+        resp = self.engine.process("status jarvis --verbose", token=None)
+        self.assertIn("details", resp["data"])
+
+    def test_verbose_flag_dash_v(self):
+        resp = self.engine.process("status jarvis -v", token=None)
+        self.assertIn("details", resp["data"])
+
+    def test_read_plan_executes_without_confirmation(self):
+        registry = SkillRegistry()
+
+        def read_handler(_ctx):
+            return ActionPlan(
+                summary="Read op",
+                steps=["do read"],
+                risk=RiskLevel.READ,
+                target=None,
+                execute=lambda: {"summary": "read done", "data": {"ok": True}},
+            )
+
+        registry.register(
+            Skill(
+                name="read-test",
+                description="read test",
+                risk=RiskLevel.READ,
+                triggers=["read test"],
+                examples=["read test"],
+                handler=read_handler,
+            )
+        )
+        engine = JarvisEngine(registry, SecurityPolicy())
+        resp = engine.process("read test", token=None, role="standard_user")
+        self.assertEqual(resp["summary"], "read done")
+
+    def test_normalize_utility(self):
+        from jarvis.jarvis_engine import normalize
+        self.assertEqual("hello world", normalize("  Hello   World  "))
+        self.assertEqual("abc def", normalize("ABC DEF"))
+
+    def test_strip_verbose_removes_flag(self):
+        from jarvis.jarvis_engine import strip_verbose
+        cleaned, verbose = strip_verbose("status jarvis --verbose")
+        self.assertEqual("status jarvis", cleaned)
+        self.assertTrue(verbose)
+
+    def test_strip_verbose_no_flag(self):
+        from jarvis.jarvis_engine import strip_verbose
+        cleaned, verbose = strip_verbose("status jarvis")
+        self.assertEqual("status jarvis", cleaned)
+        self.assertFalse(verbose)
+
+    def test_masked_utility(self):
+        from jarvis.jarvis_engine import masked
+        self.assertEqual("abcd***", masked("abcdefgh", keep=4))
+        self.assertEqual("****", masked("abcd", keep=4))
+        self.assertEqual("", masked(""))
+
+    def test_wakeword_phrases_includes_custom(self):
+        from jarvis.jarvis_engine import wakeword_phrases
+        os.environ["JARVIS_WAKEWORD_PHRASE"] = "computer"
+        phrases = wakeword_phrases()
+        self.assertIn("computer", phrases)
+        self.assertIn("jarvis", phrases)
+        del os.environ["JARVIS_WAKEWORD_PHRASE"]
+
+    def test_wakeword_not_triggered_when_disabled(self):
+        os.environ.pop("JARVIS_WAKEWORD_ENABLED", None)
+        engine = JarvisEngine(build_registry(), SecurityPolicy())
+        resp = engine.process("jarvis", token=None)
+        self.assertNotIn("wakeword", resp.get("data", {}))
+
+    def test_closest_learned_phrase_gives_clarification(self):
+        from jarvis.jarvis_engine import LearningStore
+        import difflib
+        store = LearningStore()
+        store.data["learned_replies"]["proxmox health check"] = {
+            "summary": "Proxmox healthy.",
+            "skill": "proxmox-health",
+            "confidence": 3,
+            "updated_at": 1,
+        }
+        # find a query that scores 0.62–0.80 against "proxmox health check"
+        query = "check proxmox health"
+        ratio = difflib.SequenceMatcher(None, query, "proxmox health check").ratio()
+        # verify the test assumption holds
+        self.assertGreater(ratio, 0.62)
+        self.assertLess(ratio, 0.80)
+        result = store.closest_learned_phrase(query)
+        self.assertIsNotNone(result)
+        self.assertEqual("proxmox health check", result["source"])
+
+
 if __name__ == "__main__":
     unittest.main()

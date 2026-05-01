@@ -1,4 +1,7 @@
 import os
+import json
+import urllib.error
+import urllib.request
 
 from fastapi import HTTPException
 from google import genai
@@ -10,11 +13,37 @@ _gemini_client: genai.Client | None = None
 _whisper: WhisperModel | None = None
 
 SYSTEM_PROMPT = (
-    "You are J.A.R.V.I.S from Iron Man. "
-    "Speak concise, confident, technical. "
-    "Start responses like 'On it.' or 'Understood.' (vary it). "
-    "Then ONE short sentence. No explanations unless explicitly asked or necessary."
+    "You are J.A.R.V.I.S. — Just A Rather Very Intelligent System — "
+    "the AI backbone of a private smart home and infrastructure network. "
+    "Speak with calm authority and dry wit. Be concise and precise."
 )
+
+
+def build_system_prompt(user_name: str | None = None, voice_mode: bool = False) -> str:
+    name_line = f" Address the user as '{user_name}'." if user_name else ""
+    voice_line = (
+        "\n\nVOICE MODE: This response will be spoken aloud by text-to-speech. "
+        "Use absolutely NO markdown formatting — no asterisks, no hashtags, no backticks, no bullet points, no numbered lists. "
+        "Write for speech only. Keep to one or two sentences maximum."
+    ) if voice_mode else ""
+    return (
+        "You are J.A.R.V.I.S. — Just A Rather Very Intelligent System — the AI backbone of a private "
+        "smart home and infrastructure network. You embody the JARVIS from the Iron Man films: calm, "
+        "precise, efficient, with a subtle dry wit. You are never surprised, never confused, never verbose."
+        f"{name_line}\n\n"
+        "TONE: Confident and brief. Open with a varied acknowledgment ('Understood.', 'On it.', "
+        "'Of course.', 'Naturally.', 'Consider it done.', 'Right away.') — never repeat the same "
+        "opener twice in a row. Deliver the answer directly. No padding, no filler, no apologies.\n\n"
+        "FORMAT: Default to one or two sentences. For technical data (status, metrics, lists), use "
+        "compact formatting. Only expand when the user explicitly asks for detail.\n\n"
+        "CAPABILITIES: You have access to home automation (lights, climate, sensors), server "
+        "infrastructure (Proxmox VMs and LXC containers), knowledge bases (GitHub repos, Wiki), "
+        "and system controls. Be specific about what you can and cannot do.\n\n"
+        "CONSTRAINTS: Never identify yourself as an AI assistant or language model. "
+        "Never say 'I cannot' — instead state what you need or suggest an alternative. "
+        "Never break character."
+        f"{voice_line}"
+    )
 
 
 def get_provider() -> str:
@@ -34,17 +63,202 @@ def get_local_model_dir() -> str:
     return os.getenv("LOCAL_LLM_MODEL_DIR") or "/var/lib/jarvis/local-ai/models"
 
 
-def local_ai_stub_reply(text: str) -> str:
-    model_dir = get_local_model_dir()
-    model_hint = os.getenv("LOCAL_LLM_DEFAULT_MODEL") or "future-local-model"
-    model_exists = os.path.isdir(model_dir) and any(os.scandir(model_dir))
+def get_local_base_url() -> str:
+    return (
+        os.getenv("LOCAL_LLM_BASE_URL")
+        or os.getenv("OLLAMA_HOST")
+        or "http://127.0.0.1:11434"
+    ).rstrip("/")
 
-    if not model_exists:
-        return (
-            "Understood. Local AI prep is active, but no local model is installed yet "
-            f"(expected in {model_dir}, default={model_hint})."
-        )
-    return "On it. Local AI mode is enabled and model files are available."
+
+def get_local_default_model() -> str:
+    return (os.getenv("LOCAL_LLM_DEFAULT_MODEL") or "").strip()
+
+
+def get_local_backend() -> str:
+    configured = (os.getenv("LOCAL_LLM_BACKEND") or "").strip().lower()
+    if configured in {"ollama", "llama_cpp", "auto"}:
+        return configured
+    return "auto"
+
+
+def _local_http_json(url: str, payload: dict) -> dict:
+    body = json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        url,
+        data=body,
+        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            raw = resp.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        details = exc.read().decode("utf-8", errors="ignore") if exc.fp else exc.reason
+        raise HTTPException(exc.code, f"Local AI HTTP error: {details or exc.reason}") from exc
+    except urllib.error.URLError as exc:
+        raise HTTPException(502, f"Local AI unreachable: {exc.reason}") from exc
+    try:
+        return json.loads(raw or "{}")
+    except json.JSONDecodeError as exc:
+        raise HTTPException(502, f"Local AI invalid JSON: {exc}") from exc
+
+
+def _flatten_messages(messages: list[dict[str, str]], system_prompt: str) -> str:
+    lines = [system_prompt.strip(), ""]
+    for item in messages:
+        role = str(item.get("role") or "user").strip().lower()
+        content = str(item.get("content") or "").strip()
+        if not content:
+            continue
+        speaker = "Assistant" if role == "assistant" else "User"
+        lines.append(f"{speaker}: {content}")
+    lines.append("Assistant:")
+    return "\n".join(lines)
+
+
+def _call_ollama(base_url: str, model: str, text: str) -> str:
+    payload = {
+        "model": model,
+        "prompt": text,
+        "system": SYSTEM_PROMPT,
+        "stream": False,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": int(os.getenv("OPENAI_MAX_TOKENS") or "120"),
+        },
+    }
+    data = _local_http_json(f"{base_url}/api/generate", payload)
+    reply = (data.get("response") or "").strip()
+    if not reply:
+        raise HTTPException(502, "Local AI returned an empty Ollama response")
+    return reply
+
+
+def _call_ollama_chat(base_url: str, model: str, messages: list[dict[str, str]], system_prompt: str) -> str:
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": system_prompt}] + messages,
+        "stream": False,
+        "options": {
+            "temperature": 0.3,
+            "num_predict": int(os.getenv("OPENAI_MAX_TOKENS") or "120"),
+        },
+    }
+    data = _local_http_json(f"{base_url}/api/chat", payload)
+    message = data.get("message") or {}
+    reply = (message.get("content") or "").strip()
+    if not reply:
+        raise HTTPException(502, "Local AI returned an empty Ollama chat response")
+    return reply
+
+
+def _call_llama_cpp_openai(base_url: str, model: str, text: str) -> str:
+    payload = {
+        "model": model,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": text},
+        ],
+        "temperature": 0.3,
+        "max_tokens": int(os.getenv("OPENAI_MAX_TOKENS") or "120"),
+        "stream": False,
+    }
+    data = _local_http_json(f"{base_url}/v1/chat/completions", payload)
+    choices = data.get("choices") or []
+    if not choices:
+        raise HTTPException(502, "Local AI returned no choices")
+    message = choices[0].get("message") or {}
+    reply = (message.get("content") or "").strip()
+    if not reply:
+        raise HTTPException(502, "Local AI returned an empty chat completion")
+    return reply
+
+
+def _call_llama_cpp_openai_chat(base_url: str, model: str, messages: list[dict[str, str]], system_prompt: str) -> str:
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": system_prompt}] + messages,
+        "temperature": 0.3,
+        "max_tokens": int(os.getenv("OPENAI_MAX_TOKENS") or "120"),
+        "stream": False,
+    }
+    data = _local_http_json(f"{base_url}/v1/chat/completions", payload)
+    choices = data.get("choices") or []
+    if not choices:
+        raise HTTPException(502, "Local AI returned no choices")
+    message = choices[0].get("message") or {}
+    reply = (message.get("content") or "").strip()
+    if not reply:
+        raise HTTPException(502, "Local AI returned an empty chat completion")
+    return reply
+
+
+def _call_llama_cpp_completion(base_url: str, text: str) -> str:
+    prompt = f"{SYSTEM_PROMPT}\n\nUser: {text}\nAssistant:"
+    payload = {
+        "prompt": prompt,
+        "temperature": 0.3,
+        "n_predict": int(os.getenv("OPENAI_MAX_TOKENS") or "120"),
+        "stop": ["User:"],
+    }
+    data = _local_http_json(f"{base_url}/completion", payload)
+    reply = (data.get("content") or "").strip()
+    if not reply:
+        raise HTTPException(502, "Local AI returned an empty completion")
+    return reply
+
+
+def _call_llama_cpp_completion_chat(base_url: str, messages: list[dict[str, str]], system_prompt: str) -> str:
+    prompt = _flatten_messages(messages, system_prompt)
+    payload = {
+        "prompt": prompt,
+        "temperature": 0.3,
+        "n_predict": int(os.getenv("OPENAI_MAX_TOKENS") or "120"),
+        "stop": ["User:"],
+    }
+    data = _local_http_json(f"{base_url}/completion", payload)
+    reply = (data.get("content") or "").strip()
+    if not reply:
+        raise HTTPException(502, "Local AI returned an empty completion")
+    return reply
+
+
+def local_ai_chat_reply(messages: list[dict[str, str]], system_prompt: str = SYSTEM_PROMPT) -> str:
+    model_dir = get_local_model_dir()
+    model_hint = get_local_default_model()
+    model_exists = os.path.isdir(model_dir) and any(os.scandir(model_dir))
+    base_url = get_local_base_url()
+    backend = get_local_backend()
+
+    if not model_hint:
+        return "Understood. Local AI is enabled, but LOCAL_LLM_DEFAULT_MODEL is not set."
+
+    if backend == "auto":
+        backend = "ollama" if ("11434" in base_url or "ollama" in base_url.lower()) else "llama_cpp"
+
+    try:
+        if backend == "ollama":
+            return _call_ollama_chat(base_url, model_hint, messages, system_prompt)
+        if backend == "llama_cpp":
+            if model_exists:
+                try:
+                    return _call_llama_cpp_openai_chat(base_url, model_hint, messages, system_prompt)
+                except HTTPException:
+                    return _call_llama_cpp_completion_chat(base_url, messages, system_prompt)
+            return _call_llama_cpp_openai_chat(base_url, model_hint, messages, system_prompt)
+        return f"Understood. Unsupported local backend '{backend}'."
+    except HTTPException as exc:
+        if not model_exists and backend == "llama_cpp":
+            return (
+                "Understood. Local AI could not reach the llama.cpp server, and no local model files were "
+                f"found in {model_dir} (default={model_hint}). Detail: {exc.detail}"
+            )
+        return f"Understood. Local AI request failed. Detail: {exc.detail}"
+
+
+def local_ai_stub_reply(text: str) -> str:
+    return local_ai_chat_reply([{"role": "user", "content": text}], SYSTEM_PROMPT)
 
 
 def build_context_reply(text: str) -> str:

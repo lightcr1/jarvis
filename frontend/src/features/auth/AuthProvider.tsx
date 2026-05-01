@@ -1,6 +1,7 @@
 /* eslint-disable react-refresh/only-export-components */
-import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import {
+  UserCapabilities,
   UserPreferences,
   UserProfile,
   clearAdminToken,
@@ -14,6 +15,7 @@ import {
   savePreferences as savePreferencesRequest,
   setAdminToken,
   setStoredIdentity,
+  setStoredPreferences,
 } from "../../shared/api/client";
 
 type AuthContextValue = {
@@ -21,6 +23,7 @@ type AuthContextValue = {
   preferences: UserPreferences;
   loading: boolean;
   isAdmin: boolean;
+  hasHomeAssistantAccess: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -30,36 +33,49 @@ type AuthContextValue = {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+function mergeThemePreference(nextPreferences: UserPreferences, fallbackPreferences?: UserPreferences): UserPreferences {
+  const fallbackTheme = fallbackPreferences?.theme === "light" ? "light" : fallbackPreferences?.theme === "dark" ? "dark" : undefined;
+  const nextTheme = nextPreferences.theme === "light" ? "light" : nextPreferences.theme === "dark" ? "dark" : undefined;
+  return {
+    ...nextPreferences,
+    theme: nextTheme || fallbackTheme || "light",
+  };
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserProfile | null>(getStoredUser());
-  const [preferences, setPreferences] = useState<UserPreferences>(getStoredPreferences());
+  const [preferences, setPreferences] = useState<UserPreferences>(() => mergeThemePreference(getStoredPreferences()));
+  const [capabilities, setCapabilities] = useState<UserCapabilities>({});
   const [loading, setLoading] = useState(true);
 
-  const refresh = async () => {
+  const refresh = useCallback(async () => {
     if (!getStoredUser()) {
       setLoading(false);
       return;
     }
     try {
       const me = await fetchMe();
+      const mergedPreferences = mergeThemePreference(me.preferences || { theme: "light" }, getStoredPreferences());
       setUser(me.user);
-      setPreferences(me.preferences || {});
-      setStoredIdentity(localStorage.getItem("jarvis_user_session") || "", me.user, me.preferences || {});
+      setPreferences(mergedPreferences);
+      setCapabilities(me.capabilities || {});
+      setStoredIdentity(localStorage.getItem("jarvis_user_session") || "", me.user, mergedPreferences);
     } catch {
       clearStoredIdentity();
       setUser(null);
-      setPreferences({});
+      setPreferences(getStoredPreferences());
+      setCapabilities({});
     } finally {
       setLoading(false);
     }
-  };
-
-  useEffect(() => {
-    refresh().catch(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    document.documentElement.dataset.theme = preferences.theme === "light" ? "light" : "dark";
+    refresh().catch(() => setLoading(false));
+  }, [refresh]);
+
+  useEffect(() => {
+    document.documentElement.dataset.theme = preferences.theme === "dark" ? "dark" : "light";
   }, [preferences.theme]);
 
   const value = useMemo<AuthContextValue>(() => ({
@@ -67,24 +83,37 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     preferences,
     loading,
     isAdmin: user?.role === "admin",
+    hasHomeAssistantAccess: Boolean(capabilities.home_assistant_access),
     login: async (username, password) => {
       const payload = await loginRequest(username, password);
-      setStoredIdentity(payload.session_token, payload.user, payload.preferences || {});
+      const mergedPreferences = mergeThemePreference(payload.preferences || {}, getStoredPreferences());
+      setStoredIdentity(payload.session_token, payload.user, mergedPreferences);
       setUser(payload.user);
-      setPreferences(payload.preferences || {});
+      setPreferences(mergedPreferences);
+      setCapabilities(payload.capabilities || {});
     },
     logout: async () => {
+      const lastPreferences = preferences;
       await logoutRequest();
       clearAdminToken();
       setUser(null);
-      setPreferences({});
+      setPreferences(lastPreferences);
+      setCapabilities({});
+      setStoredPreferences(lastPreferences);
     },
     refresh,
     savePreferences: async (nextPreferences) => {
+      if (!user) {
+        const mergedPreferences = mergeThemePreference(nextPreferences, preferences);
+        setPreferences(mergedPreferences);
+        setStoredPreferences(mergedPreferences);
+        return;
+      }
       const result = await savePreferencesRequest(nextPreferences);
-      setPreferences(result.preferences || {});
+      const mergedPreferences = mergeThemePreference(result.preferences || nextPreferences, nextPreferences);
+      setPreferences(mergedPreferences);
       if (user) {
-        setStoredIdentity(localStorage.getItem("jarvis_user_session") || "", user, result.preferences || {});
+        setStoredIdentity(localStorage.getItem("jarvis_user_session") || "", user, mergedPreferences);
       }
     },
     ensureAdminAccess: async () => {
@@ -92,7 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const payload = await issueAdminSession();
       setAdminToken(payload.token, payload.expires_in_sec);
     },
-  }), [loading, preferences, user]);
+  }), [capabilities.home_assistant_access, loading, preferences, refresh, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

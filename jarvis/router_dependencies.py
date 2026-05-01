@@ -41,6 +41,8 @@ def build_auth_chat_deps(state: object) -> dict:
         "resolve_effective_permissions": state.resolve_effective_permissions,
         "membership_store": live_attr(state, "membership_store"),
         "permission_store": live_attr(state, "permission_store"),
+        "home_assistant_service": live_attr(state, "home_assistant_service"),
+        "status_hub": live_attr(state, "status_hub"),
         "try_skill": state.try_skill,
         "rag_query_from_prompt": state.rag_query_from_prompt,
         "select_rag_hits": state.select_rag_hits,
@@ -51,6 +53,7 @@ def build_auth_chat_deps(state: object) -> dict:
         "engine": LiveRef(lambda: state.engine),
         "build_context_reply": state.build_context_reply,
         "get_provider": state.get_provider,
+        "local_ai_chat_reply": state.local_ai_chat_reply,
         "local_ai_stub_reply": state.local_ai_stub_reply,
         "get_gemini": state.get_gemini,
         "get_openai": state.get_openai,
@@ -91,11 +94,34 @@ def build_admin_deps(state: object) -> dict:
 def build_voice_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,
+        "get_identity_session": state._get_identity_session,
         "get_stt_provider": state.get_stt_provider,
         "transcribe_local": live_attr(state, "transcribe_local"),
         "transcribe_gemini": live_attr(state, "transcribe_gemini"),
         "synthesize_tts": live_attr(state, "synthesize_tts"),
+        "user_preferences_store": live_attr(state, "user_preferences_store"),
+        "status_hub": live_attr(state, "status_hub"),
         "logger": live_attr(state, "logger"),
         "subprocess": live_attr(state, "subprocess"),
         "uuid4_hex": lambda: state.uuid.uuid4().hex,
+    }
+
+
+def build_home_assistant_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "home_assistant_service": live_attr(state, "home_assistant_service"),
+    }
+
+
+def build_status_deps(state: object) -> dict:
+    return {
+        "status_hub": live_attr(state, "status_hub"),
+    }
+
+
+def build_alerts_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "home_assistant_service": live_attr(state, "home_assistant_service"),
     }

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import os
 import re
@@ -59,54 +60,97 @@ def strip_wakeword(text: str, phrase: str) -> tuple[str, bool]:
     return raw, False
 
 
-def synthesize_tts(text: str, logger) -> bytes:
+def _synthesize_piper(speak_text: str, logger) -> bytes:
     piper_bin = os.getenv("PIPER_BIN") or "/usr/local/bin/piper"
     model = os.getenv("PIPER_MODEL") or os.getenv("PIPER_VOICE_MODEL") or ""
     if not model:
-        raise HTTPException(500, "PIPER_MODEL not set")
+        raise HTTPException(500, "PIPER_MODEL not set — set PIPER_MODEL in config.env")
 
     length_scale = os.getenv("PIPER_LENGTH_SCALE") or "1.12"
-    noise_scale = os.getenv("PIPER_NOISE_SCALE") or "0.55"
-    noise_w = os.getenv("PIPER_NOISE_W") or "0.75"
-
-    speak_text = tts_preprocess_text(text)
+    noise_scale  = os.getenv("PIPER_NOISE_SCALE")  or "0.55"
+    noise_w      = os.getenv("PIPER_NOISE_W")       or "0.75"
 
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
         out_wav = tmp.name
-
     try:
         subprocess.run(
-            [
-                piper_bin,
-                "--model", model,
-                "--output_file", out_wav,
-                "--length_scale", str(length_scale),
-                "--noise_scale", str(noise_scale),
-                "--noise_w", str(noise_w),
-            ],
-            input=speak_text,
-            text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            check=True,
-            timeout=20,
+            [piper_bin, "--model", model, "--output_file", out_wav,
+             "--length_scale", str(length_scale),
+             "--noise_scale",  str(noise_scale),
+             "--noise_w",       str(noise_w)],
+            input=speak_text, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            check=True, timeout=20,
         )
-        with open(out_wav, "rb") as handle:
-            return handle.read()
+        with open(out_wav, "rb") as fh:
+            return fh.read()
     except subprocess.CalledProcessError as exc:
-        logger.exception("TTS process failed")
-        raise HTTPException(502, f"TTS error: {exc.stderr}") from exc
+        logger.exception("Piper TTS failed")
+        raise HTTPException(502, f"Piper TTS error: {exc.stderr}") from exc
     except FileNotFoundError as exc:
-        logger.exception("TTS binary not found")
-        raise HTTPException(500, "TTS binary not found") from exc
+        logger.exception("Piper binary not found")
+        raise HTTPException(500, "Piper binary not found") from exc
     except Exception as exc:
-        logger.exception("TTS failed")
-        raise HTTPException(502, f"TTS error: {type(exc).__name__}: {exc}") from exc
+        logger.exception("Piper TTS error")
+        raise HTTPException(502, f"Piper TTS error: {type(exc).__name__}: {exc}") from exc
     finally:
+        try: os.remove(out_wav)
+        except Exception: pass
+
+
+def _synthesize_edge(speak_text: str, logger, voice: str = "") -> tuple[bytes, str]:
+    """Returns (audio_bytes, media_type). Uses edge-tts (Microsoft neural TTS, free)."""
+    try:
+        import edge_tts  # type: ignore[import]
+    except ImportError as exc:
+        raise HTTPException(500, "edge-tts not installed — run: pip install edge-tts") from exc
+
+    voice = voice.strip() or os.getenv("EDGE_TTS_VOICE") or "en-GB-RyanNeural"
+    rate  = os.getenv("EDGE_TTS_RATE")  or "-5%"
+    pitch = os.getenv("EDGE_TTS_PITCH") or "-2Hz"
+
+    with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp:
+        out_mp3 = tmp.name
+    try:
+        async def _run():
+            comm = edge_tts.Communicate(speak_text, voice, rate=rate, pitch=pitch)
+            await comm.save(out_mp3)
+
+        asyncio.run(_run())
+
+        # Convert to WAV via ffmpeg if available (keeps media_type consistent)
+        out_wav = out_mp3.replace(".mp3", ".wav")
         try:
-            os.remove(out_wav)
+            subprocess.run(
+                ["ffmpeg", "-y", "-i", out_mp3, out_wav],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True, timeout=10,
+            )
+            with open(out_wav, "rb") as fh:
+                return fh.read(), "audio/wav"
         except Exception:
-            pass
+            # ffmpeg not available — return MP3 directly
+            with open(out_mp3, "rb") as fh:
+                return fh.read(), "audio/mpeg"
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("edge-tts failed")
+        raise HTTPException(502, f"edge-tts error: {type(exc).__name__}: {exc}") from exc
+    finally:
+        for p in (out_mp3, out_mp3.replace(".mp3", ".wav")):
+            try: os.remove(p)
+            except Exception: pass
+
+
+def synthesize_tts(text: str, logger, voice: str = "") -> tuple[bytes, str]:
+    """Returns (audio_bytes, media_type). Provider selected by TTS_PROVIDER env var."""
+    provider = (os.getenv("TTS_PROVIDER") or "piper").strip().lower()
+    speak_text = tts_preprocess_text(text)
+
+    if provider == "edge":
+        return _synthesize_edge(speak_text, logger, voice=voice)
+    # default: piper (voice param ignored — piper uses model file)
+    return _synthesize_piper(speak_text, logger), "audio/wav"
 
 
 def transcribe_local(audio_path: str, whisper_getter) -> str:

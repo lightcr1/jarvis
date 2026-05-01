@@ -72,6 +72,17 @@ def settings_env_summary(*, admin_settings_store, wakeword_enabled, wakeword_phr
         default=settings["usage_limits"]["max_active_tokens"],
         minimum=1,
     )
+    confirmation_ttl_value = env_int(
+        "JARVIS_HOME_ASSISTANT_CONFIRMATION_TTL_SEC",
+        default=settings["home_assistant"]["confirmation_ttl_sec"],
+        minimum=30,
+    )
+    remote_allowed_cidrs_env = os.getenv("JARVIS_HOME_ASSISTANT_REMOTE_ALLOWED_CIDRS")
+    remote_allowed_cidrs = (
+        [item.strip() for item in remote_allowed_cidrs_env.split(",") if item.strip()]
+        if remote_allowed_cidrs_env is not None
+        else settings["home_assistant"]["remote_allowed_cidrs"]
+    )
     return {
         "usage_limits": {
             "token_ttl_min": {
@@ -95,6 +106,16 @@ def settings_env_summary(*, admin_settings_store, wakeword_enabled, wakeword_phr
             "stt_provider": {
                 "value": get_stt_provider(),
                 "source": "env" if os.getenv("STT_PROVIDER") is not None else "settings",
+            },
+        },
+        "home_assistant": {
+            "confirmation_ttl_sec": {
+                "value": confirmation_ttl_value,
+                "source": "env" if os.getenv("JARVIS_HOME_ASSISTANT_CONFIRMATION_TTL_SEC") is not None else "settings",
+            },
+            "remote_allowed_cidrs": {
+                "value": remote_allowed_cidrs,
+                "source": "env" if remote_allowed_cidrs_env is not None else "settings",
             },
         },
     }

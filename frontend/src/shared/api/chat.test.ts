@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { createChatSession, getChatSession } from "./chat";
+import { createChatSession, getChatSession, renameChatSession } from "./chat";
 
 describe("chat api wrappers", () => {
   afterEach(() => {
@@ -27,7 +27,7 @@ describe("chat api wrappers", () => {
       "fetch",
       vi.fn().mockResolvedValue({
         ok: true,
-        text: async () => JSON.stringify({ id: "chat-123", messages: [{ role: "user", text: "hi", ts: 1 }] }),
+        text: async () => JSON.stringify({ id: "chat-123", messages: [{ role: "user", text: "hi", ts: 1 }], pending_home_assistant_action: null }),
       }),
     );
 
@@ -37,6 +37,29 @@ describe("chat api wrappers", () => {
       session: {
         id: "chat-123",
         messages: [{ role: "user", text: "hi", ts: 1 }],
+        pending_home_assistant_action: null,
+      },
+    });
+  });
+
+  it("renames a session via patch wrapper", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({
+        ok: true,
+        text: async () => JSON.stringify({ id: "chat-123", title: "New Title", updated_at: 2, created_at: 1, messages: [] }),
+      }),
+    );
+
+    const data = await renameChatSession("chat-123", "New Title");
+
+    expect(data).toEqual({
+      session: {
+        id: "chat-123",
+        title: "New Title",
+        updated_at: 2,
+        created_at: 1,
+        messages: [],
       },
     });
   });

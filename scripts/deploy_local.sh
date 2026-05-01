@@ -223,3 +223,23 @@ fi
 if [[ -x "${INSTALL_DIR}/scripts/check_admin_data_integrity.sh" ]]; then
   "${INSTALL_DIR}/scripts/check_admin_data_integrity.sh" || fail "Admin data integrity check failed"
 fi
+
+chmod +x "${INSTALL_DIR}/scripts/startup_greeting.sh" \
+         "${INSTALL_DIR}/scripts/install_greeting.sh" \
+         "${INSTALL_DIR}/scripts/setup_autologin.sh" \
+         "${INSTALL_DIR}/scripts/setup_tailscale.sh" 2>/dev/null || true
+
+echo ""
+echo "======================================================"
+echo "J.A.R.V.I.S. deployed successfully."
+echo ""
+echo "Next steps:"
+echo "  Access from any device (Tailscale):"
+echo "    sudo bash ${INSTALL_DIR}/scripts/setup_tailscale.sh"
+echo ""
+echo "  Startup greeting at login (run as your user, not root):"
+echo "    bash ${INSTALL_DIR}/scripts/install_greeting.sh"
+echo ""
+echo "  Auto-login on boot (optional, run as root):"
+echo "    sudo bash ${INSTALL_DIR}/scripts/setup_autologin.sh \$USER"
+echo "======================================================"

@@ -45,6 +45,8 @@ class AdminSettingsTests(unittest.TestCase):
             "JARVIS_WAKEWORD_ENABLED",
             "JARVIS_WAKEWORD_PHRASE",
             "STT_PROVIDER",
+            "JARVIS_HOME_ASSISTANT_CONFIRMATION_TTL_SEC",
+            "JARVIS_HOME_ASSISTANT_REMOTE_ALLOWED_CIDRS",
         ]:
             os.environ.pop(key, None)
 
@@ -74,6 +76,7 @@ class AdminSettingsTests(unittest.TestCase):
         self.assertEqual(body["settings"]["usage_limits"]["token_ttl_min"], 20)
         self.assertEqual(body["settings"]["usage_limits"]["max_active_tokens"], 200)
         self.assertEqual(body["settings"]["voice"]["stt_provider"], "local")
+        self.assertEqual(body["settings"]["home_assistant"]["confirmation_ttl_sec"], 300)
         self.assertEqual(body["effective"]["voice"]["wakeword_phrase"]["source"], "settings")
 
     def test_admin_settings_update_persists_and_audits(self):
@@ -84,15 +87,18 @@ class AdminSettingsTests(unittest.TestCase):
             json={
                 "usage_limits": {"token_ttl_min": 45, "max_active_tokens": 7},
                 "voice": {"wakeword_enabled": True, "wakeword_phrase": "jarvis now", "stt_provider": "gemini"},
+                "home_assistant": {"confirmation_ttl_sec": 420, "remote_allowed_cidrs": ["10.0.0.0/24"]},
             },
         )
         self.assertEqual(res.status_code, 200)
         body = res.json()
         self.assertEqual(body["settings"]["usage_limits"]["token_ttl_min"], 45)
         self.assertEqual(body["settings"]["voice"]["wakeword_phrase"], "jarvis now")
+        self.assertEqual(body["settings"]["home_assistant"]["confirmation_ttl_sec"], 420)
         reloaded = jarvisappv4.AdminSettingsStore().get()
         self.assertEqual(reloaded["usage_limits"]["max_active_tokens"], 7)
         self.assertTrue(reloaded["voice"]["wakeword_enabled"])
+        self.assertEqual(["10.0.0.0/24"], reloaded["home_assistant"]["remote_allowed_cidrs"])
 
         events = jarvisappv4.audit_log.read_events(event="admin_settings_updated", actor_user_id=admin_id, limit=5)
         self.assertEqual(len(events), 1)
@@ -127,6 +133,7 @@ class AdminSettingsTests(unittest.TestCase):
             {
                 "usage_limits": {"token_ttl_min": 9, "max_active_tokens": 4},
                 "voice": {"wakeword_enabled": False, "wakeword_phrase": "jarvis local", "stt_provider": "local"},
+                "home_assistant": {"confirmation_ttl_sec": 360, "remote_allowed_cidrs": ["192.168.1.0/24"]},
             }
         )
 
@@ -138,6 +145,8 @@ class AdminSettingsTests(unittest.TestCase):
                 "JARVIS_WAKEWORD_ENABLED": "1",
                 "JARVIS_WAKEWORD_PHRASE": "env jarvis",
                 "STT_PROVIDER": "gemini",
+                "JARVIS_HOME_ASSISTANT_CONFIRMATION_TTL_SEC": "900",
+                "JARVIS_HOME_ASSISTANT_REMOTE_ALLOWED_CIDRS": "10.0.0.0/24,10.0.1.0/24",
             },
             clear=False,
         ):
@@ -149,6 +158,8 @@ class AdminSettingsTests(unittest.TestCase):
             effective = res.json()["effective"]
             self.assertEqual(effective["usage_limits"]["token_ttl_min"]["source"], "env")
             self.assertEqual(effective["voice"]["stt_provider"]["value"], "gemini")
+            self.assertEqual(effective["home_assistant"]["confirmation_ttl_sec"]["value"], 900)
+            self.assertEqual(effective["home_assistant"]["remote_allowed_cidrs"]["source"], "env")
             self.assertEqual(jarvisappv4.get_stt_provider(), "gemini")
             self.assertTrue(jarvisappv4.wakeword_enabled())
             self.assertEqual(jarvisappv4.wakeword_phrase(), "env jarvis")

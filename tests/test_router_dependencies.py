@@ -193,6 +193,7 @@ class RouterDependencyTests(unittest.TestCase):
             engine=_NoopEngine(),
             build_context_reply=lambda text: "fallback",
             get_provider=lambda: "local",
+            local_ai_chat_reply=lambda messages, system_prompt: "reply",
             local_ai_stub_reply=lambda text: "reply",
             get_gemini=lambda: None,
             get_openai=lambda: None,

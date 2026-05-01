@@ -4,6 +4,10 @@ export type UserProfile = {
   role: string;
 };
 
+export type UserCapabilities = {
+  home_assistant_access?: boolean;
+};
+
 export type UserPreferences = {
   display_name?: string;
   accent_color?: string;
@@ -11,6 +15,9 @@ export type UserPreferences = {
   compact_mode?: boolean;
   orb_detail?: string;
   theme?: "dark" | "light";
+  location?: string;
+  notes?: string[];
+  tts_voice?: string;
 };
 
 export type RequestOptions = {
@@ -21,6 +28,8 @@ export type RequestOptions = {
   includeAdmin?: boolean;
   mode?: "orb" | "chat";
 };
+
+const DEFAULT_THEME: NonNullable<UserPreferences["theme"]> = "dark";
 
 const STORAGE_KEYS = {
   unlockToken: "jarvis_unlock_token",
@@ -79,18 +88,26 @@ export function getStoredUser(): UserProfile | null {
 
 export function getStoredPreferences(): UserPreferences {
   const raw = localStorage.getItem(STORAGE_KEYS.prefs);
-  if (!raw) return {};
+  if (!raw) return { theme: DEFAULT_THEME };
   try {
-    return JSON.parse(raw) as UserPreferences;
+    const parsed = JSON.parse(raw) as UserPreferences;
+    return { ...parsed, theme: parsed.theme === "light" ? "light" : DEFAULT_THEME };
   } catch {
-    return {};
+    return { theme: DEFAULT_THEME };
   }
+}
+
+export function setStoredPreferences(preferences: UserPreferences): void {
+  localStorage.setItem(STORAGE_KEYS.prefs, JSON.stringify({
+    ...preferences,
+    theme: preferences.theme === "light" ? "light" : DEFAULT_THEME,
+  }));
 }
 
 export function setStoredIdentity(sessionToken: string, user: UserProfile, preferences: UserPreferences): void {
   localStorage.setItem(STORAGE_KEYS.sessionToken, sessionToken);
   localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(user));
-  localStorage.setItem(STORAGE_KEYS.prefs, JSON.stringify(preferences || {}));
+  setStoredPreferences(preferences || {});
 }
 
 export function clearStoredIdentity(): void {
@@ -160,7 +177,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
 }
 
 export async function login(username: string, password: string) {
-  return apiRequest<{ session_token: string; user: UserProfile; preferences: UserPreferences }>("/auth/login", {
+  return apiRequest<{ session_token: string; user: UserProfile; preferences: UserPreferences; capabilities?: UserCapabilities }>("/auth/login", {
     method: "POST",
     body: { username, password },
   });
@@ -175,7 +192,7 @@ export async function logout() {
 }
 
 export async function fetchMe() {
-  return apiRequest<{ user: UserProfile; preferences: UserPreferences }>("/auth/me", { includeUser: true });
+  return apiRequest<{ user: UserProfile; preferences: UserPreferences; capabilities?: UserCapabilities }>("/auth/me", { includeUser: true });
 }
 
 export async function savePreferences(preferences: UserPreferences) {

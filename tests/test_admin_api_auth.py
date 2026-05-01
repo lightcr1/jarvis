@@ -83,15 +83,95 @@ class AdminApiAuthTests(unittest.TestCase):
         update = self.client.put(
             "/auth/me/preferences",
             headers={"X-Jarvis-Session": session_token},
-            json={"display_name": "Alice", "accent_color": "amber", "auto_play_voice": False, "compact_mode": True, "orb_detail": "medium"},
+            json={
+                "display_name": "Alice",
+                "auto_play_voice": False,
+                "compact_mode": True,
+                "orb_detail": "medium",
+                "theme": "light",
+                "location": "Munich",
+                "notes": ["buy milk", "call doctor"],
+            },
         )
         self.assertEqual(update.status_code, 200)
-        self.assertEqual(update.json()["preferences"]["display_name"], "Alice")
+        prefs = update.json()["preferences"]
+        self.assertEqual(prefs["display_name"], "Alice")
+        self.assertEqual(prefs["theme"], "light")
+        self.assertEqual(prefs["location"], "Munich")
+        self.assertEqual(prefs["notes"], ["buy milk", "call doctor"])
 
         me = self.client.get("/auth/me", headers={"X-Jarvis-Session": session_token})
         self.assertEqual(me.status_code, 200)
         self.assertEqual(me.json()["user"]["username"], "alice")
-        self.assertEqual(me.json()["preferences"]["accent_color"], "amber")
+        self.assertEqual(me.json()["preferences"]["theme"], "light")
+        self.assertEqual(me.json()["preferences"]["location"], "Munich")
+        self.assertEqual(me.json()["preferences"]["notes"], ["buy milk", "call doctor"])
+
+    def test_preferences_location_strips_whitespace(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+
+        self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {admin['token']}", "X-Jarvis-Role": "admin", "X-Jarvis-User-Id": admin["user_id"]},
+            json={"username": "bob", "role": "standard_user", "enabled": True, "password": "bob-pass"},
+        )
+
+        session_token = self.client.post("/auth/login", json={"username": "bob", "password": "bob-pass"}).json()["session_token"]
+
+        update = self.client.put(
+            "/auth/me/preferences",
+            headers={"X-Jarvis-Session": session_token},
+            json={"location": "  Berlin  "},
+        )
+        self.assertEqual(update.status_code, 200)
+        self.assertEqual(update.json()["preferences"]["location"], "Berlin")
+
+    def test_preferences_notes_persist_as_list(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+
+        self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {admin['token']}", "X-Jarvis-Role": "admin", "X-Jarvis-User-Id": admin["user_id"]},
+            json={"username": "carol", "role": "standard_user", "enabled": True, "password": "carol-pass"},
+        )
+
+        session_token = self.client.post("/auth/login", json={"username": "carol", "password": "carol-pass"}).json()["session_token"]
+
+        update = self.client.put(
+            "/auth/me/preferences",
+            headers={"X-Jarvis-Session": session_token},
+            json={"notes": ["item one", "item two", "item three"]},
+        )
+        self.assertEqual(update.status_code, 200)
+        self.assertEqual(update.json()["preferences"]["notes"], ["item one", "item two", "item three"])
+
+        # Overwrite with fewer notes
+        update2 = self.client.put(
+            "/auth/me/preferences",
+            headers={"X-Jarvis-Session": session_token},
+            json={"notes": ["only one"]},
+        )
+        self.assertEqual(update2.status_code, 200)
+        self.assertEqual(update2.json()["preferences"]["notes"], ["only one"])
+
+    def test_preferences_defaults_include_location_and_notes(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+
+        self.client.post(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {admin['token']}", "X-Jarvis-Role": "admin", "X-Jarvis-User-Id": admin["user_id"]},
+            json={"username": "dave", "role": "standard_user", "enabled": True, "password": "dave-pass"},
+        )
+
+        session_token = self.client.post("/auth/login", json={"username": "dave", "password": "dave-pass"}).json()["session_token"]
+
+        me = self.client.get("/auth/me", headers={"X-Jarvis-Session": session_token})
+        self.assertEqual(me.status_code, 200)
+        prefs = me.json()["preferences"]
+        self.assertIn("location", prefs)
+        self.assertIn("notes", prefs)
+        self.assertEqual(prefs["location"], "")
+        self.assertEqual(prefs["notes"], [])
 
 
 

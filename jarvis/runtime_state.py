@@ -1,4 +1,5 @@
 import base64
+import threading
 import json
 import os
 import re
@@ -59,6 +60,7 @@ class ChatHistoryStore:
             "owner_key": owner_key,
             "owner_user_id": owner_user_id,
             "messages": [],
+            "pending_home_assistant_action": None,
         }
         self.data.setdefault("sessions", {})[session_id] = item
         self._save()
@@ -80,6 +82,23 @@ class ChatHistoryStore:
             session["title"] = text[:50] or "New chat"
         self.data.setdefault("sessions", {})[session["id"]] = session
         self._save()
+
+    def get_pending_home_assistant_action(self, session_id: str, owner_key: str = "guest:anonymous") -> dict | None:
+        session = self.get_session(session_id, owner_key=owner_key)
+        if not session:
+            return None
+        pending = session.get("pending_home_assistant_action")
+        return pending if isinstance(pending, dict) else None
+
+    def set_pending_home_assistant_action(self, session_id: str, pending: dict | None, owner_key: str = "guest:anonymous", owner_user_id: str | None = None) -> None:
+        session = self.ensure_session(session_id, owner_key=owner_key, owner_user_id=owner_user_id)
+        session["pending_home_assistant_action"] = pending if isinstance(pending, dict) else None
+        session["updated_at"] = int(time.time())
+        self.data.setdefault("sessions", {})[session["id"]] = session
+        self._save()
+
+    def clear_pending_home_assistant_action(self, session_id: str, owner_key: str = "guest:anonymous", owner_user_id: str | None = None) -> None:
+        self.set_pending_home_assistant_action(session_id, None, owner_key=owner_key, owner_user_id=owner_user_id)
 
     def list_sessions(self, owner_key: str = "guest:anonymous") -> list[dict]:
         sessions = [s for s in self.data.get("sessions", {}).values() if s.get("owner_key") == owner_key]
@@ -105,6 +124,65 @@ class ChatHistoryStore:
         sessions.pop(session_id, None)
         self._save()
         return True
+
+    def rename_session(self, session_id: str, title: str, owner_key: str = "guest:anonymous") -> dict | None:
+        session = self.get_session(session_id, owner_key=owner_key)
+        if not session:
+            return None
+        clean = (title or "").strip()[:80] or "New chat"
+        session["title"] = clean
+        session["updated_at"] = int(time.time())
+        self.data.setdefault("sessions", {})[session_id] = session
+        self._save()
+        return session
+
+
+class JarvisStatusHub:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._version = 0
+        self._states: dict[str, dict[str, object]] = {}
+        self._priority = ["recording", "processing", "speaking"]
+
+    def begin(self, state: str, *, source: str = "", mode: str = "") -> str:
+        token = uuid.uuid4().hex
+        with self._lock:
+            self._states[token] = {
+                "state": state,
+                "source": source,
+                "mode": mode,
+                "ts": time.time(),
+            }
+            self._version += 1
+        return token
+
+    def end(self, token: str | None) -> None:
+        if not token:
+            return
+        with self._lock:
+            if token in self._states:
+                self._states.pop(token, None)
+                self._version += 1
+
+    def snapshot(self) -> dict[str, object]:
+        with self._lock:
+            active = list(self._states.values())
+            counts: dict[str, int] = {}
+            for item in active:
+                state = str(item.get("state") or "idle")
+                counts[state] = counts.get(state, 0) + 1
+            current = "idle"
+            for candidate in self._priority:
+                if counts.get(candidate):
+                    current = candidate
+                    break
+            return {
+                "state": current,
+                "version": self._version,
+                "updated_at": time.time(),
+                "active": len(active),
+                "counts": counts,
+            }
 
 
 class RagStore:

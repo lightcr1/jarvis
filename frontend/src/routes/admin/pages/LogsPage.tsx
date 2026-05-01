@@ -59,7 +59,10 @@ export function LogsPage() {
             <option value="service_system">service_system</option>
           </select>
           <button className="ui-button primary" onClick={() => load()}>Apply</button>
+          <button className="ui-button secondary" onClick={() => setFilterEvent("ha_entity_action_requested")}>HA action requests</button>
+          <button className="ui-button secondary" onClick={() => setFilterEvent("ha_automation_created")}>HA automations</button>
         </div>
+        <p className="tiny-note">HA audit events use the `ha_` prefix. Use focused filters here to inspect discovery, actions, confirmations, syncs and recovery flows.</p>
       </div>
 
       <div className="panel">
@@ -68,7 +71,7 @@ export function LogsPage() {
           <table className="data-table">
             <thead><tr><th>TS</th><th>Event</th><th>Role</th><th>Actor</th><th>Payload</th></tr></thead>
             <tbody>
-              {events.map((entry, index) => <tr key={index}><td>{entry.ts}</td><td><div className="table-primary">{entry.event}</div></td><td><span className="tag">{entry.actor_role || entry.role || "unknown"}</span></td><td><code className="table-code">{entry.actor_user_id || "system"}</code></td><td><code className="table-code">{JSON.stringify(entry.payload || entry)}</code></td></tr>)}
+              {events.map((entry, index) => <tr key={`${entry.ts}-${entry.event}-${index}`}><td>{entry.ts}</td><td><div className="table-primary">{entry.event}</div></td><td><span className="tag">{entry.actor_role || entry.role || "unknown"}</span></td><td><code className="table-code">{entry.actor_user_id || "system"}</code></td><td><code className="table-code">{JSON.stringify(entry.payload || entry)}</code></td></tr>)}
             </tbody>
           </table>
         </div>

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 import difflib
 import json
 import os
@@ -797,7 +797,7 @@ def handle_skills(ctx: ExecutionContext) -> dict:
 
 
 def handle_status(ctx: ExecutionContext) -> dict:
-    now = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     return {
         "summary": "Jarvis is running.",
         "data": {"time": now, "offline": not cloud_configured()},

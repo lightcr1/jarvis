@@ -1,73 +1,66 @@
 :root {
-  --bg: #111315;
-  --bg-2: #171a1d;
-  --panel: rgba(28, 31, 35, 0.82);
-  --panel-strong: rgba(22, 24, 28, 0.94);
-  --line: rgba(255, 255, 255, 0.075);
-  --line-strong: rgba(255, 255, 255, 0.13);
-  --text: #f2f0eb;
-  --muted: #aca79e;
-  --accent: #d2a66d;
-  --accent-2: #b78342;
-  --good: #98d4b0;
-  --danger: #e0a198;
-  --radius: 24px;
-  --radius-md: 20px;
-  --radius-sm: 16px;
-  --shadow: 0 24px 60px rgba(0, 0, 0, 0.26);
+  --bg: #0d0e11;
+  --bg-2: #111318;
+  --panel: rgba(18, 20, 26, 0.97);
+  --panel-strong: rgba(22, 24, 30, 0.99);
+  --panel-soft: rgba(255, 255, 255, 0.04);
+  --panel-elevated: rgba(20, 22, 28, 0.98);
+  --line: rgba(255, 255, 255, 0.07);
+  --line-strong: rgba(255, 255, 255, 0.12);
+  --text: #e8eaed;
+  --muted: #6b7280;
+  --accent: #3b82f6;
+  --accent-2: #2563eb;
+  --good: #22c55e;
+  --danger: #ef4444;
+  --overlay: rgba(0, 0, 0, 0.8);
+  --hero-badge-bg: rgba(255, 255, 255, 0.05);
+  --input-bg: rgba(255, 255, 255, 0.05);
+  --card-bg: rgba(255, 255, 255, 0.03);
+  --card-hover: rgba(255, 255, 255, 0.06);
+  --message-user: rgba(59, 130, 246, 0.12);
+  --message-assistant: rgba(255, 255, 255, 0.03);
+  --sidebar-bg: linear-gradient(180deg, #0d0e11, #0b0c10);
+  --topbar-bg: rgba(13, 14, 17, 0.95);
+  --radius: 10px;
+  --radius-md: 8px;
+  --radius-sm: 6px;
+  --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --font-sans: "Plus Jakarta Sans", "Inter", "Segoe UI Variable", "Segoe UI", sans-serif;
+  --font-serif: "Plus Jakarta Sans", "Inter", "Segoe UI Variable", "Segoe UI", sans-serif;
   color-scheme: dark;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-sans);
 }
 
 :root[data-theme="light"] {
-  --bg: #f5f1e8;
-  --bg-2: #ebe6dc;
-  --panel: rgba(255, 252, 247, 0.9);
-  --panel-strong: rgba(247, 242, 234, 0.96);
-  --line: rgba(53, 43, 28, 0.08);
-  --line-strong: rgba(53, 43, 28, 0.14);
-  --text: #2b2823;
-  --muted: #756f66;
-  --accent: #c48c4f;
-  --accent-2: #a96f34;
-  --good: #3c8f67;
-  --danger: #b55a52;
-  --shadow: 0 18px 42px rgba(60, 41, 12, 0.08);
+  --bg: #f9fafb;
+  --bg-2: #f3f4f6;
+  --panel: rgba(255, 255, 255, 0.97);
+  --panel-strong: rgba(255, 255, 255, 0.99);
+  --panel-soft: rgba(0, 0, 0, 0.03);
+  --panel-elevated: rgba(255, 255, 255, 0.99);
+  --line: rgba(0, 0, 0, 0.07);
+  --line-strong: rgba(0, 0, 0, 0.12);
+  --text: #111827;
+  --muted: #6b7280;
+  --accent: #2563eb;
+  --accent-2: #1d4ed8;
+  --good: #16a34a;
+  --danger: #dc2626;
+  --overlay: rgba(0, 0, 0, 0.5);
+  --hero-badge-bg: rgba(0, 0, 0, 0.05);
+  --input-bg: rgba(255, 255, 255, 0.9);
+  --card-bg: rgba(0, 0, 0, 0.02);
+  --card-hover: rgba(0, 0, 0, 0.05);
+  --message-user: rgba(37, 99, 235, 0.08);
+  --message-assistant: rgba(0, 0, 0, 0.02);
+  --sidebar-bg: linear-gradient(180deg, #f9fafb, #f3f4f6);
+  --topbar-bg: rgba(249, 250, 251, 0.95);
+  --shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
   color-scheme: light;
 }
 
 * { box-sizing: border-box; }
-html, body, #root { margin: 0; min-height: 100%; background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 38%, var(--bg) 100%); color: var(--text); }
-body::before {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background:
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.032), transparent 22%),
-    radial-gradient(circle at 72% 8%, rgba(210, 166, 109, 0.03), transparent 26%),
-    radial-gradient(circle at 50% 54%, rgba(48, 54, 63, 0.22), transparent 44%);
-}
-body::after {
-  content: "";
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(180deg, rgba(5, 7, 10, 0), rgba(5, 7, 10, 0.16) 70%, rgba(3, 4, 6, 0.34)),
-    radial-gradient(circle at center, rgba(255, 255, 255, 0.014), transparent 34%);
-}
-html[data-theme="light"] body::before {
-  background:
-    radial-gradient(circle at 18% 0%, rgba(255, 255, 255, 0.55), transparent 24%),
-    radial-gradient(circle at 72% 8%, rgba(196, 140, 79, 0.08), transparent 26%),
-    radial-gradient(circle at 50% 54%, rgba(139, 118, 83, 0.08), transparent 42%);
-}
-html[data-theme="light"] body::after {
-  background:
-    linear-gradient(180deg, rgba(255, 255, 255, 0), rgba(255, 255, 255, 0.2) 70%, rgba(213, 202, 185, 0.26)),
-    radial-gradient(circle at center, rgba(255, 255, 255, 0.24), transparent 36%);
-}
+html, body, #root { margin: 0; min-height: 100%; background: var(--bg); color: var(--text); }
 a { color: inherit; text-decoration: none; }
 button, input, select, textarea { font: inherit; }
-

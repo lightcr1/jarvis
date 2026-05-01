@@ -1,8 +1,10 @@
 import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react-swc";
+import { resolve } from "path";
 
 export default defineConfig({
   plugins: [react()],
+  publicDir: resolve(__dirname, "public_static"),
   build: {
     outDir: "dist",
     emptyOutDir: true,

@@ -9,7 +9,7 @@ import urllib.request
 import uuid
 from dataclasses import dataclass
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 
@@ -103,10 +103,10 @@ def _ssl_context(verify_tls: bool) -> ssl.SSLContext:
     return ssl._create_unverified_context()
 
 
-def _request_json(host: ProxmoxHost, path: str) -> dict:
+def _request_json(host: ProxmoxHost, path: str, *, method: str = "GET", body: bytes | None = None) -> dict:
     url = host.base_url.rstrip("/") + path
     headers = {"Authorization": f"PVEAPIToken={host.api_token}"}
-    req = urllib.request.Request(url, headers=headers)
+    req = urllib.request.Request(url, headers=headers, method=method, data=body)
     try:
         ctx = _ssl_context(host.verify_tls)
         with urllib.request.urlopen(req, context=ctx, timeout=12) as resp:
@@ -137,6 +137,89 @@ def proxmox_vm_status(host_id: str, node: str, vmid: str) -> dict:
 def proxmox_lxc_status(host_id: str, node: str, vmid: str) -> dict:
     host = _get_host(host_id)
     return _request_json(host, f"/api2/json/nodes/{node}/lxc/{vmid}/status/current")
+
+
+def proxmox_vm_action(host_id: str, node: str, vmid: str, action: str) -> dict:
+    host = _get_host(host_id)
+    if action not in {"start", "stop"}:
+        raise HTTPException(400, "Unsupported VM action")
+    return _request_json(host, f"/api2/json/nodes/{node}/qemu/{vmid}/status/{action}", method="POST", body=b"")
+
+
+def proxmox_lxc_action(host_id: str, node: str, vmid: str, action: str) -> dict:
+    host = _get_host(host_id)
+    if action not in {"start", "stop"}:
+        raise HTTPException(400, "Unsupported LXC action")
+    return _request_json(host, f"/api2/json/nodes/{node}/lxc/{vmid}/status/{action}", method="POST", body=b"")
+
+
+def proxmox_health() -> dict:
+    hosts = _read_hosts()
+    if not hosts:
+        return {
+            "configured": False,
+            "hosts": [],
+            "summary": {"hosts": 0, "nodes": 0, "vms": 0, "containers": 0, "running": 0, "stopped": 0},
+            "hint": "Add a Proxmox host first.",
+        }
+
+    payload_hosts = []
+    summary = {"hosts": len(hosts), "nodes": 0, "vms": 0, "containers": 0, "running": 0, "stopped": 0}
+
+    for host in hosts:
+        try:
+            nodes = (_request_json(host, "/api2/json/nodes").get("data") or [])
+            host_entry = {
+                "id": host.id,
+                "name": host.name,
+                "base_url": host.base_url,
+                "verify_tls": host.verify_tls,
+                "healthy": True,
+                "nodes": [],
+            }
+            for node in nodes:
+                node_name = node.get("node")
+                if not node_name:
+                    continue
+                vms = (_request_json(host, f"/api2/json/nodes/{node_name}/qemu").get("data") or [])
+                containers = (_request_json(host, f"/api2/json/nodes/{node_name}/lxc").get("data") or [])
+                summary["nodes"] += 1
+                summary["vms"] += len(vms)
+                summary["containers"] += len(containers)
+                for item in [*vms, *containers]:
+                    status = (item.get("status") or "").lower()
+                    if status == "running":
+                        summary["running"] += 1
+                    elif status in {"stopped", "paused"}:
+                        summary["stopped"] += 1
+                host_entry["nodes"].append(
+                    {
+                        "node": node_name,
+                        "status": node.get("status") or "unknown",
+                        "online": node.get("status") == "online",
+                        "cpu": node.get("cpu"),
+                        "maxcpu": node.get("maxcpu"),
+                        "mem": node.get("mem"),
+                        "maxmem": node.get("maxmem"),
+                        "vms": vms,
+                        "containers": containers,
+                    }
+                )
+            payload_hosts.append(host_entry)
+        except HTTPException as exc:
+            payload_hosts.append(
+                {
+                    "id": host.id,
+                    "name": host.name,
+                    "base_url": host.base_url,
+                    "verify_tls": host.verify_tls,
+                    "healthy": False,
+                    "error": exc.detail,
+                    "nodes": [],
+                }
+            )
+
+    return {"configured": True, "hosts": payload_hosts, "summary": summary}
 
 
 def _as_out(host: ProxmoxHost) -> ProxmoxHostOut:
@@ -215,5 +298,9 @@ def build_router(require_token):
     @router.get("/hosts/{host_id}/nodes/{node}/containers/{vmid}/status")
     def proxmox_lxc_status_endpoint(host_id: str, node: str, vmid: str):
         return proxmox_lxc_status(host_id, node, vmid)
+
+    @router.get("/health")
+    def proxmox_health_endpoint():
+        return proxmox_health()
 
     return router

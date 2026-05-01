@@ -5,3 +5,4 @@ openai
 google-genai
 faster-whisper
 python-multipart
+edge-tts

@@ -94,6 +94,7 @@ This roadmap is focused on a **stable first usable release**.
 - ✅ Scope/architecture artifacts are in repo (`docs/v1/planning/ROADMAP_V1.md`, `docs/v1/planning/EXECUTION_CHECKLIST_V1.md`, `docs/v1/planning/RELEASE_CRITERIA_V1.md`, `docs/v1/planning/ROLE_PERMISSION_MATRIX_V1.md`, `docs/v1/planning/SPRINT_PLAN_V1.md`).
 - [x] Security/access baseline is implemented and regression-validated locally (RBAC helpers, admin APIs, audit store, token + identity guard, modular router coverage, `91` Python tests green plus `7` frontend tests green).
 - [x] Admin operations baseline is implemented locally (users/groups/assignments/permissions APIs, dashboard UI, backup/restore scripts, update/rollback flow, integrity checks).
+- [x] Post-V1 Home-Assistant foundation is scaffolded inside Jarvis (`docs/v1/planning/HOME_ASSISTANT_FOUNDATION_PLAN.md`, dedicated backend domain, permissions, risk model, initial API/UI shell).
 - ➡️ Next roadmap focus: remaining V1 execution work outside local automation: voice-quality sign-off on target hardware, deploy/update/rollback execution evidence, environment-split validation, and performance/recovery evidence.
 
 ## April: Security + Access Foundation (3–4 weeks)

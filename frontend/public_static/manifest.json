@@ -1,0 +1,20 @@
+{
+  "name": "J.A.R.V.I.S.",
+  "short_name": "JARVIS",
+  "description": "Just A Rather Very Intelligent System — your personal AI assistant",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0a0a0f",
+  "theme_color": "#00d4ff",
+  "categories": ["productivity", "utilities"],
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}

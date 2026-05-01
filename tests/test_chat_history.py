@@ -136,7 +136,54 @@ class ChatHistoryTests(unittest.TestCase):
         self.assertEqual(res.status_code, 200)
         body = res.json()
         self.assertEqual(body.get("data", {}).get("error"), "cloud_llm_required")
-        self.assertIn("Cloud-KI", body.get("reply", ""))
+        self.assertIn("cloud LLM", body.get("reply", ""))
+
+    def test_rename_session(self):
+        create = self.client.post("/chat/sessions", json={"title": "Original Title"})
+        self.assertEqual(create.status_code, 200)
+        sid = create.json()["id"]
+
+        rename = self.client.patch(f"/chat/sessions/{sid}", json={"title": "Renamed Title"})
+        self.assertEqual(rename.status_code, 200)
+        self.assertEqual(rename.json()["title"], "Renamed Title")
+
+        detail = self.client.get(f"/chat/sessions/{sid}")
+        self.assertEqual(detail.status_code, 200)
+        self.assertEqual(detail.json()["title"], "Renamed Title")
+
+    def test_get_nonexistent_session_returns_404(self):
+        res = self.client.get("/chat/sessions/does-not-exist-123")
+        self.assertEqual(res.status_code, 404)
+
+    def test_delete_nonexistent_session_returns_404(self):
+        res = self.client.delete("/chat/sessions/ghost-session-abc")
+        self.assertEqual(res.status_code, 404)
+
+    def test_session_list_empty_initially(self):
+        listing = self.client.get("/chat/sessions")
+        self.assertEqual(listing.status_code, 200)
+        body = listing.json()
+        self.assertIn("sessions", body)
+        self.assertEqual(body["sessions"], [])
+
+    def test_chat_message_appends_to_existing_session(self):
+        create = self.client.post("/chat/sessions", json={"title": "Persist Test"})
+        sid = create.json()["id"]
+
+        self.client.post("/chat", json={"text": "uptime", "session_id": sid})
+        detail = self.client.get(f"/chat/sessions/{sid}")
+        session = detail.json()
+        self.assertGreaterEqual(len(session.get("messages", [])), 2)
+
+    def test_session_title_from_chat_with_explicit_session(self):
+        create = self.client.post("/chat/sessions", json={"title": "Test Session"})
+        self.assertEqual(create.status_code, 200)
+        sid = create.json()["id"]
+        res = self.client.post("/chat", json={"text": "health", "session_id": sid})
+        self.assertEqual(res.status_code, 200)
+        body = res.json()
+        self.assertEqual(body.get("session_id"), sid)
+
 
 if __name__ == "__main__":
     unittest.main()
