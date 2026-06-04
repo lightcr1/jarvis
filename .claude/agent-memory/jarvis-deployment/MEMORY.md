@@ -1,0 +1,1 @@
+- [Deployment Infrastructure](project_deployment_infra.md) — systemd service, install/update/rollback scripts, env files, path decisions for V1
