@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { J, Spinner, IconCheck, IconLock } from './jarvis-shared';
 import { login, setStoredIdentity } from '../shared/api/client';
 
-export function LoginScreen({ onLogin }: { onLogin: () => void }) {
+export function LoginScreen({ onLogin, onGuest }: { onLogin: () => void; onGuest?: () => void }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [state, setState] = useState<'idle' | 'loading' | 'error' | 'success'>('idle');
@@ -25,8 +25,11 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
   const onKey = (e: React.KeyboardEvent) => { if (e.key === 'Enter') void handleLogin(); };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, background: J.bg0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-      <div style={{ width: '100%', maxWidth: 400, background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 16, padding: '40px 36px 36px', animation: 'fadeIn 0.3s ease' }}>
+    <div style={{ position: 'fixed', inset: 0, background: J.bg0, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20, overflow: 'hidden' }}>
+      <style>{`@keyframes loginGlow{0%,100%{opacity:.6;transform:translateX(-50%) scale(1)}50%{opacity:1;transform:translateX(-50%) scale(1.06)}}`}</style>
+      <div style={{ position: 'absolute', inset: 0, backgroundImage: 'radial-gradient(circle, rgba(255,255,255,0.035) 1px, transparent 1px)', backgroundSize: '24px 24px', pointerEvents: 'none' }} />
+      <div style={{ position: 'absolute', top: '38%', left: '50%', width: 640, height: 300, background: 'radial-gradient(ellipse, rgba(224,154,26,0.07) 0%, transparent 70%)', pointerEvents: 'none', animation: 'loginGlow 6s ease-in-out infinite', transform: 'translateX(-50%)' }} />
+      <div style={{ width: '100%', maxWidth: 400, background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 16, padding: '40px 36px 36px', animation: 'fadeIn 0.3s ease', position: 'relative', zIndex: 1 }}>
 
         <div style={{ marginBottom: 32 }}>
           <div style={{ width: 44, height: 44, borderRadius: 11, background: J.amberDim, border: `1px solid ${J.borderAccent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 20 }}>
@@ -43,7 +46,7 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
         )}
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 16 }}>
-          <input className="j-input" type="text" placeholder="Username" value={username}
+          <input autoFocus className="j-input" type="text" placeholder="Username" value={username}
             onChange={e => { setUsername(e.target.value); setState('idle'); }} onKeyDown={onKey}
             style={{ borderRadius: 9, padding: '11px 14px', fontSize: 14, width: '100%' }} />
           <input className="j-input" type="password" placeholder="Password" value={password}
@@ -58,7 +61,16 @@ export function LoginScreen({ onLogin }: { onLogin: () => void }) {
           {(state === 'idle' || state === 'error') && 'Sign in'}
         </button>
 
-        <p style={{ textAlign: 'center', marginTop: 22, fontSize: 11, color: J.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
+        {onGuest && (
+          <button onClick={onGuest}
+            style={{ width: '100%', marginTop: 10, background: 'none', border: `1px solid ${J.border}`, borderRadius: 9, padding: '10px 20px', fontSize: 13, color: J.textMuted, cursor: 'pointer', transition: 'all .12s' }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(255,255,255,0.2)'; e.currentTarget.style.color = J.textSec; }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = J.border; e.currentTarget.style.color = J.textMuted; }}>
+            Continue as Guest
+          </button>
+        )}
+
+        <p style={{ textAlign: 'center', marginTop: 18, fontSize: 11, color: J.textMuted, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 5 }}>
           <IconLock size={10} /> Local instance · Credentials never leave this network
         </p>
       </div>

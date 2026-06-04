@@ -60,6 +60,18 @@ class UserStoreTests(unittest.TestCase):
         self.store.create_user("u1", role="standard_user", enabled=True)
         self.assertEqual(self.store.enabled_admin_count(), 1)
 
+    def test_touch_last_seen_updates_timestamp(self):
+        user = self.store.create_user("frank", role="standard_user")
+        self.assertIsNone(user.get("last_seen_at"))
+        self.store.touch_last_seen(user["id"])
+        updated = self.store.get_user(user["id"])
+        self.assertIsNotNone(updated)
+        self.assertIsInstance(updated["last_seen_at"], int)
+        self.assertGreater(updated["last_seen_at"], 0)
+
+    def test_touch_last_seen_unknown_user_is_noop(self):
+        self.store.touch_last_seen("usr-does-not-exist")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,10 +1,170 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+import logging
+from datetime import date, datetime, timedelta, timezone
 import re
 
 from .chat_actions import HOME_ASSISTANT_CHAT_ACTION_REGISTRY, HomeAssistantChatContext
 from .service import DEVICE_ACTION_PROFILES
+
+logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Synonym tables — normalize before intent matching
+# ---------------------------------------------------------------------------
+
+DEVICE_KIND_SYNONYMS: dict[str, str] = {
+    # climate / AC
+    "ac": "climate",
+    "aircon": "climate",
+    "air con": "climate",
+    "air conditioning": "climate",
+    "air conditioner": "climate",
+    "klimaanlage": "climate",
+    "klima": "climate",
+    "heizung": "climate",
+    "heater": "climate",
+    "heating": "climate",
+    "boiler": "climate",
+    "thermostat": "climate",
+    # lights
+    "lights": "light",
+    "light": "light",
+    "lamp": "light",
+    "lamps": "light",
+    "lampe": "light",
+    "lampen": "light",
+    "licht": "light",
+    "lichter": "light",
+    "bulb": "light",
+    "bulbs": "light",
+    "leuchtmittel": "light",
+    # media
+    "tv": "media",
+    "telly": "media",
+    "television": "media",
+    "fernseher": "media",
+    "fernsehen": "media",
+    "speaker": "media",
+    "lautsprecher": "media",
+    # covers / blinds
+    "blinds": "cover",
+    "blind": "cover",
+    "shutter": "cover",
+    "shutters": "cover",
+    "shade": "cover",
+    "shades": "cover",
+    "rollo": "cover",
+    "rolllade": "cover",
+    "rollläden": "cover",
+    "jalousie": "cover",
+    # locks
+    "door lock": "lock",
+    "türschloss": "lock",
+    "schloss": "lock",
+    # switches / appliances
+    "fridge": "switch",
+    "refrigerator": "switch",
+    "kuehlschrank": "switch",
+    "kühlschrank": "switch",
+    "socket": "switch",
+    "plug": "switch",
+    "steckdose": "switch",
+}
+
+AREA_SYNONYMS: dict[str, str] = {
+    # living room
+    "living room": "living_room",
+    "lounge": "living_room",
+    "sitting room": "living_room",
+    "front room": "living_room",
+    "wohnzimmer": "living_room",
+    "wohnraum": "living_room",
+    # bedroom
+    "master bedroom": "bedroom",
+    "main bedroom": "bedroom",
+    "schlafzimmer": "bedroom",
+    "schlafraum": "bedroom",
+    # bathroom
+    "loo": "bathroom",
+    "toilet": "bathroom",
+    "wc": "bathroom",
+    "badezimmer": "bathroom",
+    "bad": "bathroom",
+    "duschbad": "bathroom",
+    # office / study
+    "study": "office",
+    "home office": "office",
+    "büro": "office",
+    "arbeitszimmer": "office",
+    "homeoffice": "office",
+    # kitchen
+    "küche": "kitchen",
+    "kueche": "kitchen",
+    # hallway
+    "hallway": "hall",
+    "entrance": "hall",
+    "flur": "hall",
+    "diele": "hall",
+    "eingang": "hall",
+    "korridor": "hall",
+    # dining room
+    "dining room": "dining_room",
+    "dining_room": "dining_room",
+    "esszimmer": "dining_room",
+    "essbereich": "dining_room",
+    # garage
+    "garage": "garage",
+    # cellar / basement
+    "cellar": "basement",
+    "keller": "basement",
+    # garden / outdoor
+    "garden": "garden",
+    "yard": "garden",
+    "backyard": "garden",
+    "garten": "garden",
+    "terrasse": "garden",
+    "terrace": "garden",
+    "balcony": "balcony",
+    "balkon": "balcony",
+    # children's room
+    "kinderzimmer": "kids_room",
+    "kids room": "kids_room",
+    "nursery": "kids_room",
+    # guest room
+    "guest room": "guest_room",
+    "gästezimmer": "guest_room",
+    "gaestezimmer": "guest_room",
+    # attic / loft
+    "attic": "attic",
+    "loft": "attic",
+    "dachboden": "attic",
+    "dachgeschoss": "attic",
+    "speicher": "attic",
+}
+
+ACTION_SYNONYMS: dict[str, str] = {
+    # turn on
+    "switch on": "turn on",
+    "put on": "turn on",
+    "activate": "turn on",
+    "enable": "turn on",
+    "anschalten": "turn on",
+    "einschalten": "turn on",
+    "an machen": "turn on",
+    "anmachen": "turn on",
+    # turn off
+    "switch off": "turn off",
+    "put off": "turn off",
+    "kill": "turn off",
+    "cut": "turn off",
+    "deactivate": "turn off",
+    "disable": "turn off",
+    "ausschalten": "turn off",
+    "abschalten": "turn off",
+    "aus machen": "turn off",
+    "ausmachen": "turn off",
+}
 
 
 def normalize_lookup(text: str) -> str:
@@ -15,64 +175,143 @@ def normalize_lookup(text: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value).strip()
 
 
+def _apply_action_synonyms(text: str) -> str:
+    lowered = text.lower()
+    for alias, canonical in sorted(ACTION_SYNONYMS.items(), key=lambda x: -len(x[0])):
+        lowered = lowered.replace(alias, canonical)
+    return lowered
+
+
+def _normalize_area(raw: str) -> str:
+    lowered = raw.strip().lower()
+    lowered = lowered.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    for alias, canonical in sorted(AREA_SYNONYMS.items(), key=lambda x: -len(x[0])):
+        alias_normalized = alias.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+        if lowered == alias_normalized:
+            return canonical
+    return re.sub(r"[^a-z0-9]+", "_", lowered).strip("_")
+
+
+def _normalize_device_kind(raw: str) -> str | None:
+    lowered = raw.strip().lower()
+    lowered = lowered.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+    for alias, canonical in sorted(DEVICE_KIND_SYNONYMS.items(), key=lambda x: -len(x[0])):
+        alias_normalized = alias.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss")
+        if lowered == alias_normalized:
+            return canonical
+    return None
+
+
+# Area extraction: match a single area word after a preposition.
+# German areas are single compound words (Wohnzimmer, Schlafzimmer, Küche).
+# English multi-word areas (living room, home office) are looked up via synonyms.
+_AREA_WORD_PAT = r"[a-zA-ZäöüÄÖÜß][a-zA-ZäöüÄÖÜß0-9-]+"
+
+# Two-word area phrases only for known English combos
+_AREA_MULTI_WORDS = "|".join(
+    re.escape(k) for k in sorted(AREA_SYNONYMS.keys(), key=len, reverse=True) if " " in k
+)
+
+_AREA_PREP_MULTIWORD = re.compile(
+    rf"\b(?:in(?:\s+(?:der|dem|the))?|im|in\s+the)\s+({_AREA_MULTI_WORDS})\b",
+    re.IGNORECASE,
+)
+
+_AREA_PREP_SINGLE = re.compile(
+    rf"\b(?:in(?:\s+(?:der|dem|the))?|im|in\s+the)\s+({_AREA_WORD_PAT})\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_area_from_text(text: str) -> str | None:
+    m = _AREA_PREP_MULTIWORD.search(text) or _AREA_PREP_SINGLE.search(text)
+    if not m:
+        return None
+    raw = m.group(1).strip()
+    if not raw or len(raw) > 40:
+        return None
+    normalized = _normalize_area(raw)
+    return normalized if normalized else None
+
+
+_DEVICE_KIND_TERMS = re.compile(
+    r"\b("
+    + "|".join(re.escape(k) for k in sorted(DEVICE_KIND_SYNONYMS.keys(), key=len, reverse=True))
+    + r")\b",
+    re.IGNORECASE,
+)
+
+
+def _extract_device_kind_from_text(text: str) -> str | None:
+    m = _DEVICE_KIND_TERMS.search(text)
+    if not m:
+        return None
+    return _normalize_device_kind(m.group(1))
+
+
+_QUANTIFIER_PATTERN = re.compile(
+    r"\b(all|every|each|both|alle|jeden|jede|jedes|sämtliche)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_quantifier(text: str) -> bool:
+    return bool(_QUANTIFIER_PATTERN.search(text))
+
+
+_TIME_TOKENS_DE = frozenset((
+    "heute", "morgen", "übermorgen", "uebermorgen",
+    "montag", "dienstag", "mittwoch", "donnerstag", "freitag", "samstag", "sonntag",
+    "morgens", "mittag", "mittags", "nachmittags", "abends", "früh", "frueh",
+))
+
+_TIME_TOKENS_EN = frozenset((
+    "tomorrow", "today", "yesterday", "overmorrow",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "noon", "midnight", "morning", "afternoon", "evening", "night",
+    "next week", "this week",
+))
+
+
 def _has_time_reference(text: str) -> bool:
     lowered = text.lower()
     return bool(
         re.search(r"\b(\d{1,2})[:.](\d{2})\b", lowered)
         or re.search(r"\b(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?\b", lowered)
-        or any(
-            token in lowered
-            for token in (
-                "heute",
-                "morgen",
-                "übermorgen",
-                "uebermorgen",
-                "montag",
-                "dienstag",
-                "mittwoch",
-                "donnerstag",
-                "freitag",
-                "samstag",
-                "sonntag",
-                "morgens",
-                "mittag",
-                "mittags",
-                "nachmittags",
-                "abends",
-                "früh",
-                "frueh",
-            )
-        )
+        or re.search(r"\bat\s+\d{1,2}\b", lowered)
+        or re.search(r"\bin\s+\d+\s+(?:minutes?|hours?|minuten?|stunden?)\b", lowered)
+        or any(token in lowered for token in _TIME_TOKENS_DE)
+        or any(token in lowered for token in _TIME_TOKENS_EN)
     )
 
 
-def parse_iso_from_text(text: str) -> str:
-    lowered = text.lower()
-    now = datetime.now(timezone.utc)
-    target_day = now.date()
-    weekday_map = {
-        "montag": 0,
-        "dienstag": 1,
-        "mittwoch": 2,
-        "donnerstag": 3,
-        "freitag": 4,
-        "samstag": 5,
-        "sonntag": 6,
-    }
-    if "übermorgen" in lowered or "uebermorgen" in lowered:
-        target_day = (now + timedelta(days=2)).date()
-    elif "morgen" in lowered:
-        target_day = (now + timedelta(days=1)).date()
-    elif "heute" in lowered:
-        target_day = now.date()
-    else:
-        weekday_match = next((value for key, value in weekday_map.items() if key in lowered), None)
-        if weekday_match is not None:
-            delta = (weekday_match - now.weekday()) % 7
-            if delta == 0:
-                delta = 7
-            target_day = (now + timedelta(days=delta)).date()
+_WEEKDAY_MAP: dict[str, int] = {
+    "montag": 0, "monday": 0,
+    "dienstag": 1, "tuesday": 1,
+    "mittwoch": 2, "wednesday": 2,
+    "donnerstag": 3, "thursday": 3,
+    "freitag": 4, "friday": 4,
+    "samstag": 5, "saturday": 5,
+    "sonntag": 6, "sunday": 6,
+}
 
+
+def _parse_target_day(lowered: str, now: datetime) -> date:
+    if "übermorgen" in lowered or "uebermorgen" in lowered or "overmorrow" in lowered:
+        return (now + timedelta(days=2)).date()
+    if "tomorrow" in lowered:
+        return (now + timedelta(days=1)).date()
+    morgen_match = re.search(r"\bmorgen\b", lowered)
+    if morgen_match:
+        return (now + timedelta(days=1)).date()
+    if "today" in lowered or "heute" in lowered:
+        return now.date()
+    weekday_match = next((value for key, value in _WEEKDAY_MAP.items() if key in lowered), None)
+    if weekday_match is not None:
+        delta = (weekday_match - now.weekday()) % 7
+        if delta == 0:
+            delta = 7
+        return (now + timedelta(days=delta)).date()
     absolute_match = re.search(r"\b(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?\b", lowered)
     if absolute_match:
         day = int(absolute_match.group(1))
@@ -81,22 +320,35 @@ def parse_iso_from_text(text: str) -> str:
         year = int(year_raw) if year_raw else now.year
         if year < 100:
             year += 2000
-        target_day = datetime(year, month, day, tzinfo=timezone.utc).date()
+        return datetime(year, month, day, tzinfo=timezone.utc).date()
+    return now.date()
 
-    time_match = re.search(r"\b(\d{1,2})[:.](\d{2})\b", lowered)
-    if time_match:
-        hour = int(time_match.group(1))
-        minute = int(time_match.group(2))
-    elif "mittags" in lowered or "mittag" in lowered:
-        hour, minute = 12, 0
-    elif "nachmittags" in lowered:
-        hour, minute = 15, 0
-    elif "abends" in lowered or "abend" in lowered:
-        hour, minute = 19, 0
-    elif "morgens" in lowered or "früh" in lowered or "frueh" in lowered:
-        hour, minute = 8, 0
-    else:
-        hour, minute = 9, 0
+
+def _parse_target_time(lowered: str) -> tuple[int, int]:
+    hhmm_match = re.search(r"\b(\d{1,2})[:.](\d{2})\b", lowered)
+    if hhmm_match:
+        return int(hhmm_match.group(1)), int(hhmm_match.group(2))
+    bare_hour_match = re.search(r"\bat\s+(\d{1,2})\b", lowered)
+    if bare_hour_match:
+        return int(bare_hour_match.group(1)), 0
+    if "midnight" in lowered:
+        return 0, 0
+    if "nachmittags" in lowered or "afternoon" in lowered:
+        return 15, 0
+    if "mittags" in lowered or re.search(r"\bnoon\b", lowered) or "mittag" in lowered:
+        return 12, 0
+    if "abends" in lowered or "abend" in lowered or "evening" in lowered or "night" in lowered:
+        return 19, 0
+    if "morgens" in lowered or "früh" in lowered or "frueh" in lowered or "morning" in lowered:
+        return 8, 0
+    return 9, 0
+
+
+def parse_iso_from_text(text: str) -> str:
+    lowered = text.lower()
+    now = datetime.now(timezone.utc)
+    target_day = _parse_target_day(lowered, now)
+    hour, minute = _parse_target_time(lowered)
     return datetime(target_day.year, target_day.month, target_day.day, hour, minute, tzinfo=timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -122,26 +374,108 @@ def _build_action_value(action: str) -> str:
     return "on"
 
 
+_CONFIDENCE_EXACT = 1.0
+_CONFIDENCE_SYNONYM_KIND = 0.85
+_CONFIDENCE_AREA_KIND = 0.80
+_CONFIDENCE_PARTIAL = 0.65
+_CONFIDENCE_THRESHOLD_EXECUTE = 0.60
+_CONFIDENCE_THRESHOLD_WARN = 0.80
+
+
+def _entities_for_context(ctx: HomeAssistantChatContext) -> list[dict[str, object]]:
+    return ctx.service.list_managed_entities(user_id=ctx.user_id, role=ctx.role).get("entities") or []
+
+
+def _area_matches(entity_area: str, target_area: str) -> bool:
+    if not entity_area or not target_area:
+        return False
+    e = _normalize_area(entity_area)
+    t = _normalize_area(target_area)
+    return e == t or e.replace("_", "") == t.replace("_", "")
+
+
+def _score_entity_match(
+    entity: dict[str, object],
+    normalized_text: str,
+    target_area: str | None,
+    target_kind: str | None,
+) -> float:
+    label = normalize_lookup(str(entity.get("label") or ""))
+    entity_area = str(entity.get("area") or "").strip()
+    entity_kind = str(entity.get("kind") or "").strip().lower()
+
+    label_hit = bool(label and label in normalized_text)
+    area_hit = _area_matches(entity_area, target_area) if target_area else False
+    kind_hit = (entity_kind == target_kind) if target_kind else False
+
+    if label_hit and area_hit:
+        return _CONFIDENCE_EXACT
+    if label_hit:
+        return _CONFIDENCE_EXACT
+    if area_hit and kind_hit:
+        return _CONFIDENCE_AREA_KIND
+    if kind_hit and not target_area:
+        return _CONFIDENCE_SYNONYM_KIND
+    return 0.0
+
+
+def _find_entity_with_confidence(
+    ctx: HomeAssistantChatContext,
+    target_area: str | None = None,
+    target_kind: str | None = None,
+) -> tuple[dict[str, object], float] | None:
+    entities = _entities_for_context(ctx)
+    best: tuple[dict[str, object], float] | None = None
+    for entity in entities:
+        score = _score_entity_match(entity, ctx.normalized, target_area, target_kind)
+        if score <= 0.0:
+            continue
+        if best is None or score > best[1]:
+            best = (entity, score)
+    return best
+
+
 def _find_entity_by_text(ctx: HomeAssistantChatContext) -> dict[str, object] | None:
-    entities = ctx.service.list_managed_entities(user_id=ctx.user_id, role=ctx.role).get("entities") or []
-    for item in entities:
-        label = normalize_lookup(str(item.get("label") or ""))
-        if label and label in ctx.normalized:
-            return item
-    return None
+    result = _find_entity_with_confidence(ctx)
+    if result is None:
+        return None
+    entity, score = result
+    if score < _CONFIDENCE_THRESHOLD_EXECUTE:
+        logger.info("HA intent not matched (confidence %.2f < threshold): %s", score, ctx.text)
+        return None
+    return entity
+
+
+def _find_entities_by_area_kind(
+    ctx: HomeAssistantChatContext,
+    target_area: str | None,
+    target_kind: str | None,
+) -> list[dict[str, object]]:
+    entities = _entities_for_context(ctx)
+    matched = []
+    for entity in entities:
+        entity_area = str(entity.get("area") or "").strip()
+        entity_kind = str(entity.get("kind") or "").strip().lower()
+        if target_area and not _area_matches(entity_area, target_area):
+            continue
+        if target_kind and entity_kind != target_kind:
+            continue
+        matched.append(entity)
+    return matched
 
 
 def _device_action_from_text(normalized: str, kind: str) -> str | None:
     actions = {str(item.get("action") or "") for item in DEVICE_ACTION_PROFILES.get(kind, {}).get("actions", [])}
     candidates = (
-        ("turn_off", ("ausschalt", " aus", "aus ", "deaktivier")),
-        ("turn_on", ("einschalt", " an", "an ", "aktivier")),
-        ("unlock", ("entriegel", "entriegl", "entsperr", " unlock", "oeffne schloss", "öffne schloss")),
+        ("turn_off", ("turn off", "ausschalt", " aus", "aus ", "deaktivier", "abschalten", "ausmachen")),
+        ("turn_on", ("turn on", "einschalt", " an", "an ", "aktivier", "anschalten", "anmachen")),
+        ("set_temperature", ("set temperature", "set temp", "temperatur", "grad", "degrees")),
+        ("unlock", ("entriegel", "entriegl", "entsperr", " unlock", "oeffne schloss")),
         ("lock", ("verriegel", "sperr", " lock")),
-        ("open", ("öffne", "oeffne", "aufmach")),
-        ("close", ("schließ", "schliess", "zumach")),
-        ("arm", (" unscharf", " scharf", " arm", "aktivieren alarm")),
-        ("disarm", ("entschaerf", "entschärf", " disarm", "deaktivieren alarm", "unscharf")),
+        ("open", ("oeffne", "aufmach")),
+        ("close", ("schliess", "zumach")),
+        ("arm", (" scharf", " arm", "aktivieren alarm")),
+        ("disarm", ("entschaerf", " disarm", "deaktivieren alarm", "unscharf")),
         ("record", ("aufnehm", "record")),
         ("stream", ("stream", "livestream", "kamera zeigen")),
     )
@@ -306,15 +640,149 @@ def _resolve_discovery(ctx: HomeAssistantChatContext) -> dict[str, object] | Non
     return {"action": "create_discovery_candidate", "params": {"label": label, "kind": kind, "area": area}}
 
 
+def _resolve_area_scoped_action(ctx: HomeAssistantChatContext) -> dict[str, object] | None:
+    normalized = ctx.normalized
+    action_normalized = _apply_action_synonyms(normalized)
+    desired_action = _action_from_normalized(action_normalized)
+    if not desired_action:
+        return None
+    target_area = _extract_area_from_text(ctx.text)
+    target_kind = _extract_device_kind_from_text(ctx.text)
+    if not target_area and not target_kind:
+        return None
+    if not target_area and not _has_quantifier(ctx.text):
+        return None
+    entities = _find_entities_by_area_kind(ctx, target_area, target_kind)
+    if not entities:
+        return None
+    if len(entities) == 1:
+        entity = entities[0]
+        kind = str(entity.get("kind") or "").strip().lower()
+        remote_actions = {"unlock", "lock", "open", "close", "arm", "disarm", "record", "stream"}
+        return {
+            "action": "entity_action",
+            "params": {
+                "entity_id": str(entity.get("entity_id") or ""),
+                "entity_label": str(entity.get("label") or ""),
+                "action": desired_action,
+                "value": _build_action_value(desired_action),
+                "remote": desired_action in remote_actions,
+                "confidence": _CONFIDENCE_AREA_KIND,
+            },
+        }
+    entity_ids = [str(e.get("entity_id") or "") for e in entities]
+    entity_labels = [str(e.get("label") or "") for e in entities]
+    area_label = target_area.replace("_", " ") if target_area else ""
+    kind_label = target_kind or ""
+    return {
+        "action": "area_entity_action",
+        "params": {
+            "entity_ids": entity_ids,
+            "entity_labels": entity_labels,
+            "action": desired_action,
+            "value": _build_action_value(desired_action),
+            "area": area_label,
+            "kind": kind_label,
+            "confidence": _CONFIDENCE_AREA_KIND,
+        },
+    }
+
+
+def _action_from_normalized(text: str) -> str | None:
+    candidates = (
+        ("turn_off", ("turn off", "ausschalten", "ausmachen", "abschalten", " aus", "aus ", "deaktivier")),
+        ("turn_on", ("turn on", "einschalten", "anschalten", "anmachen", " an ", " an", "aktivier")),
+        ("unlock", ("entriegel", "entriegl", "entsperr", " unlock", "oeffne schloss", "oeffne schloss")),
+        ("lock", ("verriegel", "sperr", " lock")),
+        ("open", ("oeffne", "aufmach")),
+        ("close", ("schliess", "zumach")),
+        ("set_temperature", ("set temperature", "set temp", "temperatur", "degrees", "grad", "set to", "setze auf")),
+    )
+    for action, variants in candidates:
+        if any(variant in text for variant in variants):
+            return action
+    return None
+
+
+def _resolve_temperature_action(ctx: HomeAssistantChatContext) -> dict[str, object] | None:
+    normalized = ctx.normalized
+    temp_match = re.search(r"(\d+(?:[.,]\d+)?)\s*(?:grad|degrees?|°|celsius|°c)?", normalized)
+    if not temp_match:
+        return None
+    if not any(w in normalized for w in ("temperatur", "grad", "degrees", "set", "einstell", "setze", "celsius")):
+        return None
+    temperature = float(temp_match.group(1).replace(",", "."))
+    if temperature < 5 or temperature > 35:
+        return None
+    target_area = _extract_area_from_text(ctx.text)
+    target_kind = "climate"
+    entities = _find_entities_by_area_kind(ctx, target_area, target_kind)
+    if not entities:
+        result = _find_entity_with_confidence(ctx, target_area, target_kind)
+        if result is None:
+            return None
+        entity, score = result
+        if score < _CONFIDENCE_THRESHOLD_EXECUTE:
+            logger.info("HA intent not matched, falling through to LLM: %s", ctx.text)
+            return None
+        entities = [entity]
+    entity = entities[0]
+    return {
+        "action": "entity_action",
+        "params": {
+            "entity_id": str(entity.get("entity_id") or ""),
+            "entity_label": str(entity.get("label") or ""),
+            "action": "set_temperature",
+            "value": temperature,
+            "remote": False,
+            "confidence": _CONFIDENCE_AREA_KIND if target_area else _CONFIDENCE_SYNONYM_KIND,
+        },
+    }
+
+
 def _resolve_entity_action(ctx: HomeAssistantChatContext) -> dict[str, object] | None:
     normalized = ctx.normalized
-    if not any(word in normalized for word in (" an", " aus", " einschalten", " ausschalten", " schalte ", "schalte", " mach ", "mache", "oeff", "öff", "schliess", "schließ", "verriegel", "entriegel", "entriegl", "entsperr", "alarm", "kamera", "aufnahme", "stream")):
+    action_normalized = _apply_action_synonyms(normalized)
+    if not any(
+        word in action_normalized
+        for word in (
+            "turn on",
+            "turn off",
+            " an",
+            " aus",
+            " einschalten",
+            " ausschalten",
+            " schalte ",
+            "schalte",
+            " mach ",
+            "mache",
+            "oeff",
+            "schliess",
+            "verriegel",
+            "entriegel",
+            "entriegl",
+            "entsperr",
+            "alarm",
+            "kamera",
+            "aufnahme",
+            "stream",
+        )
+    ):
         return None
-    target_entity = _find_entity_by_text(ctx)
-    if not target_entity:
+    target_area = _extract_area_from_text(ctx.text)
+    target_kind = _extract_device_kind_from_text(ctx.text)
+    result = _find_entity_with_confidence(ctx, target_area, target_kind)
+    if result is None:
+        logger.info("HA intent not matched, falling through to LLM: %s", ctx.text)
         return None
+    target_entity, confidence = result
+    if confidence < _CONFIDENCE_THRESHOLD_EXECUTE:
+        logger.info("HA intent not matched (confidence %.2f), falling through to LLM: %s", confidence, ctx.text)
+        return None
+    if confidence < _CONFIDENCE_THRESHOLD_WARN:
+        logger.warning("HA intent matched with low confidence %.2f for: %s", confidence, ctx.text)
     kind = str(target_entity.get("kind") or "").strip().lower()
-    desired_action = _device_action_from_text(normalized, kind)
+    desired_action = _device_action_from_text(action_normalized, kind)
     if not desired_action:
         return {
             "action": "missing_entity_action_details",
@@ -322,6 +790,7 @@ def _resolve_entity_action(ctx: HomeAssistantChatContext) -> dict[str, object] |
                 "entity_id": str(target_entity.get("entity_id") or ""),
                 "entity_label": str(target_entity.get("label") or ""),
                 "kind": kind,
+                "confidence": confidence,
             },
         }
     remote_actions = {"unlock", "lock", "open", "close", "arm", "disarm", "record", "stream"}
@@ -333,9 +802,9 @@ def _resolve_entity_action(ctx: HomeAssistantChatContext) -> dict[str, object] |
             "action": desired_action,
             "value": _build_action_value(desired_action),
             "remote": desired_action in remote_actions,
+            "confidence": confidence,
         },
     }
-    return None
 
 
 def _continue_pending_action(ctx: HomeAssistantChatContext, pending_action: dict[str, object]) -> dict[str, object]:
@@ -511,6 +980,8 @@ RESOLVERS = (
     _resolve_inbox,
     _resolve_shopping,
     _resolve_discovery,
+    _resolve_temperature_action,
+    _resolve_area_scoped_action,
     _resolve_entity_action,
     _resolve_automation,
     _resolve_recovery,
@@ -610,4 +1081,5 @@ def execute_home_assistant_chat_intent(service: object, text: str, *, user_id: s
             return {"reply": str(exc), "data": {"error": "not_found", "route": "home_assistant_chat", "detail": str(exc), "action": action_name}}
         except ValueError as exc:
             return {"reply": str(exc), "data": {"error": "validation_error", "route": "home_assistant_chat", "detail": str(exc), "action": action_name}}
+    logger.debug("HA intent not matched, falling through to LLM: %s", text)
     return None

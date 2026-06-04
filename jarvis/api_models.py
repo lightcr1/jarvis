@@ -41,6 +41,7 @@ class UnlockIn(BaseModel):
 
 class TTSIn(BaseModel):
     text: str
+    voice: str = ""
 
 
 class UnlockOut(BaseModel):
@@ -68,6 +69,11 @@ class UserPasswordIn(BaseModel):
     password: str = Field(min_length=1)
 
 
+class UserChangePasswordIn(BaseModel):
+    current_password: str = Field(min_length=1)
+    new_password: str = Field(min_length=6)
+
+
 class UserPreferencesIn(BaseModel):
     display_name: str = ""
     accent_color: str = "cyan"
@@ -77,6 +83,7 @@ class UserPreferencesIn(BaseModel):
     theme: str = "dark"
     location: str = ""
     notes: list[str] = []
+    tts_voice: str = ""
 
 
 class AdminUserCreateIn(BaseModel):
@@ -132,6 +139,34 @@ class AdminSettingsIn(BaseModel):
     home_assistant: AdminHomeAssistantSettingsIn = Field(default_factory=AdminHomeAssistantSettingsIn)
 
 
+class AlertRuleCreate(BaseModel):
+    name: str = Field(min_length=1)
+    enabled: bool = True
+    metric: str = Field(default="cpu", pattern="^(cpu|ram|disk|ha_entity)$")
+    condition: str = Field(default="above", pattern="^(above|below|equals|contains)$")
+    threshold: float | str = 80.0
+    duration_seconds: int = Field(default=0, ge=0)
+    severity: str = Field(default="warning", pattern="^(info|warning|critical)$")
+    cooldown_seconds: int = Field(default=300, ge=60)
+    ha_entity_id: str | None = None
+    ha_attribute: str | None = None
+    message_template: str = "Alert: {metric} is {value} (threshold: {threshold})"
+
+
+class AlertRuleUpdate(BaseModel):
+    name: str | None = None
+    enabled: bool | None = None
+    metric: str | None = None
+    condition: str | None = None
+    threshold: float | str | None = None
+    duration_seconds: int | None = None
+    severity: str | None = None
+    cooldown_seconds: int | None = None
+    ha_entity_id: str | None = None
+    ha_attribute: str | None = None
+    message_template: str | None = None
+
+
 class HomeAssistantDiscoveryCandidateIn(BaseModel):
     source: str = Field(default="manual")
     ip_address: str = Field(min_length=1)
@@ -139,3 +174,31 @@ class HomeAssistantDiscoveryCandidateIn(BaseModel):
     suggested_type: str = Field(min_length=1)
     suggested_area: str = ""
     metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class MemoryNoteCreate(BaseModel):
+    text: str
+
+
+class MemoryNoteResponse(BaseModel):
+    id: str
+    text: str
+    created_at: int
+
+
+class MemoryAliasCreate(BaseModel):
+    alias: str
+    target: str
+
+
+class MemoryAliasResponse(BaseModel):
+    alias: str
+    target: str
+    created_at: int
+
+
+class MemorySummaryResponse(BaseModel):
+    notes: list[MemoryNoteResponse] = Field(default_factory=list)
+    aliases: list[MemoryAliasResponse] = Field(default_factory=list)
+    note_count: int = 0
+    alias_count: int = 0

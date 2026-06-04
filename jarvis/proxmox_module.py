@@ -141,16 +141,18 @@ def proxmox_lxc_status(host_id: str, node: str, vmid: str) -> dict:
 
 def proxmox_vm_action(host_id: str, node: str, vmid: str, action: str) -> dict:
     host = _get_host(host_id)
-    if action not in {"start", "stop"}:
+    if action not in {"start", "stop", "restart"}:
         raise HTTPException(400, "Unsupported VM action")
-    return _request_json(host, f"/api2/json/nodes/{node}/qemu/{vmid}/status/{action}", method="POST", body=b"")
+    api_action = "reboot" if action == "restart" else action
+    return _request_json(host, f"/api2/json/nodes/{node}/qemu/{vmid}/status/{api_action}", method="POST", body=b"")
 
 
 def proxmox_lxc_action(host_id: str, node: str, vmid: str, action: str) -> dict:
     host = _get_host(host_id)
-    if action not in {"start", "stop"}:
+    if action not in {"start", "stop", "restart"}:
         raise HTTPException(400, "Unsupported LXC action")
-    return _request_json(host, f"/api2/json/nodes/{node}/lxc/{vmid}/status/{action}", method="POST", body=b"")
+    api_action = "reboot" if action == "restart" else action
+    return _request_json(host, f"/api2/json/nodes/{node}/lxc/{vmid}/status/{api_action}", method="POST", body=b"")
 
 
 def proxmox_health() -> dict:

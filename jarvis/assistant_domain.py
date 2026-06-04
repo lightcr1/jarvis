@@ -1,5 +1,6 @@
 import ast
 import base64
+import difflib
 import hashlib
 import http.client
 import json
@@ -18,6 +19,12 @@ import urllib.request
 import uuid as _uuid
 from datetime import datetime, date as _date, timedelta
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+try:
+    import yaml as _yaml
+    _YAML_AVAILABLE = True
+except ImportError:
+    _YAML_AVAILABLE = False
 
 from fastapi import HTTPException
 
@@ -122,16 +129,22 @@ def _fetch_weather(city: str) -> dict | None:
 
 
 def _is_weather_query(t: str) -> bool:
+    # "temperature" alone matches weather; "cpu temp" / "sensor" do not
     keywords = [
         "weather", "wetter", "forecast", "vorhersage",
-        "temperature", "temperatur", "how is it outside",
-        "wie ist das wetter", "how is the weather",
-        "what's the weather", "what is the weather",
-        "wird es regnen", "will it rain",
-        "wie warm", "wie kalt",
+        "how is it outside", "wie ist das wetter",
+        "how is the weather", "what's the weather", "what is the weather",
+        "wird es regnen", "will it rain", "wie warm ist es draußen",
+        "wie kalt ist es draußen",
     ]
     stripped = t.strip(" ?")
-    return stripped in ("weather", "wetter") or any(kw in t for kw in keywords)
+    if stripped in ("weather", "wetter", "temperature", "temperatur"):
+        return stripped in ("weather", "wetter")
+    if "temperature" in t and re.search(r"\b(cpu|sensor|thermal|system|chip)\b", t):
+        return False
+    if "temperatur" in t and re.search(r"\b(cpu|sensor|prozessor)\b", t):
+        return False
+    return any(kw in t for kw in keywords)
 
 
 def _extract_city(t: str) -> str | None:
@@ -380,6 +393,8 @@ def try_skill(
     proxmox_vm_action,
     proxmox_lxc_action,
     user_prefs: dict | None = None,
+    memory_store=None,
+    user_id: str | None = None,
 ) -> dict[str, object] | None:
     t = text.strip().lower()
 
@@ -529,7 +544,7 @@ def try_skill(
         status = data.get("status") or "unknown"
         return {"reply": f"On it. Proxmox LXC {vmid} on {node} is {status}.", "data": data}
 
-    proxmox_action_match = re.fullmatch(r"pve\s+(start|stop)\s+(vm|lxc)\s+(\S+)\s+(\S+)\s+(\S+)", t)
+    proxmox_action_match = re.fullmatch(r"pve\s+(start|stop|restart)\s+(vm|lxc)\s+(\S+)\s+(\S+)\s+(\S+)", t)
     if proxmox_action_match:
         blocked = block_write_if_unauthorized(
             role,
@@ -812,11 +827,13 @@ def try_skill(
             "time / date",
             "hostname",
             "pve vm|lxc status <host> <node> <id>",
-            "pve start|stop vm|lxc <host> <node> <id>",
+            "pve start|stop|restart vm|lxc <host> <node> <id>",
             "restart|start|stop <service>",
             "uuid — generate a UUID v4",
             "timestamp — current Unix timestamp",
             "dns <host> — resolve hostname to IP",
+            "port check <host> <port> — test TCP reachability",
+            "generate secret [<bytes>] — cryptographically secure hex secret",
             "is <N> prime — prime number check",
             "factorial <N> — N! (up to 20)",
             "fibonacci <N> — first N Fibonacci numbers",
@@ -828,6 +845,14 @@ def try_skill(
             "hex/bin/oct <number> — base conversion",
             "generate password [<length>] — secure random password",
             "url encode/decode <text>",
+            "json format <json> — pretty-print and validate JSON",
+            "json minify <json> — compact / minify JSON",
+            "upper/lower/title/snake/camel/pascal/kebab <text> — string case conversion",
+            "jwt decode <token> — inspect JWT header and payload",
+            "yaml format <yaml> — pretty-print and validate YAML",
+            "regex test /<pattern>/[flags] against <text> — test a regex",
+            "cron explain <expression> — decode a cron schedule to plain English",
+            "diff <text_a> | <text_b> — line-level diff between two snippets",
             "flip a coin — heads or tails",
             "roll [N]d[S] — dice roller, e.g. 'roll 2d6'",
             "ascii <char|code> — ASCII character lookup",
@@ -840,6 +865,20 @@ def try_skill(
             "briefing / morning briefing — full status report",
             "http status <url> — HTTP response code check",
             "ssl <domain> — SSL certificate expiry check",
+            "temperature / cpu temp — CPU thermal sensor readings",
+            "battery / charge — battery level and charge status",
+            "top memory / memory hogs — processes by RAM usage",
+            "updates / check updates — available package upgrades",
+            "docker stats — CPU/RAM usage per container",
+            "wikipedia <topic> / who is <X> / tell me about <X> — Wikipedia lookup",
+            "random number [between X and Y] — random integer",
+            "100 USD to EUR — currency conversion (ECB rates)",
+            "sunrise / sunset [in <city>] — sun times for your location",
+            "ping <host> — network latency check",
+            "news / headlines — top BBC World News headlines",
+            "joke / tell me a joke — random joke",
+            "define <word> — dictionary definition",
+            "public ip / what's my public ip — your WAN IP address",
             "reboot — schedule system reboot (admin)",
             "shutdown [in <N> min] — system shutdown (admin)",
             "cancel shutdown — abort a pending shutdown",
@@ -1142,6 +1181,28 @@ def try_skill(
         except socket.gaierror:
             return {"reply": f"{_ack()} Could not resolve {host}.", "data": {"route": "dns", "host": host, "addresses": [], "error": "nxdomain"}}
 
+    # ── TCP port reachability check ───────────────────────────────────────────
+    port_m = re.match(r"(?:port\s+(?:check|test|scan|open\??)\s+|check\s+port\s+|tcp\s+)([a-zA-Z0-9._-]+)\s+(\d{1,5})", t, re.I)
+    if port_m:
+        host_p, port_s = port_m.group(1).strip(), port_m.group(2)
+        port_n = int(port_s)
+        if not (1 <= port_n <= 65535):
+            return {"reply": f"{_ack()} Port must be between 1 and 65535.", "data": {"route": "port_check", "error": "invalid_port"}}
+        try:
+            conn = socket.create_connection((host_p, port_n), timeout=5)
+            conn.close()
+            return {"reply": f"{_ack()} **{host_p}:{port_n}** is **open**.", "data": {"route": "port_check", "host": host_p, "port": port_n, "open": True}}
+        except (socket.timeout, ConnectionRefusedError, OSError):
+            return {"reply": f"{_ack()} **{host_p}:{port_n}** is **closed** or unreachable.", "data": {"route": "port_check", "host": host_p, "port": port_n, "open": False}}
+
+    # ── Secure hex secret generator ───────────────────────────────────────────
+    secret_m = re.match(r"(?:generate|gen|create|new|make)\s+(?:a\s+)?(?:hex\s+)?secret(?:\s+(\d+))?|secret\s+key(?:\s+(\d+))?", t, re.I)
+    if secret_m:
+        nbytes = int(secret_m.group(1) or secret_m.group(2) or 32)
+        nbytes = max(8, min(128, nbytes))
+        secret = secrets.token_hex(nbytes)
+        return {"reply": f"{_ack()} Secret ({nbytes} bytes, hex):\n`{secret}`", "data": {"route": "secret", "bytes": nbytes, "secret": secret}}
+
     # ── Developer utilities ───────────────────────────────────────────────────
     # Match against original `text` (not `t`) to preserve case for encode/decode payloads.
     b64_enc_m = re.match(r"base64\s+(?:encode|enc)\s+(.+)", text, re.I)
@@ -1257,6 +1318,208 @@ def try_skill(
         if len(seq) > 10:
             display += f", … (to F({n - 1})={seq[-1]})"
         return {"reply": f"{_ack()} Fibonacci({n}): {display}", "data": {"route": "fibonacci", "n": n, "sequence": seq}}
+
+    # ── JSON format / validate / minify ──────────────────────────────────────
+    json_m = re.match(r"(?:json\s+(?:format|pretty|fmt|pp|beautify|lint|validate|check))\s+(.+)", text, re.I | re.S)
+    if json_m:
+        raw = json_m.group(1).strip().strip("```").strip()
+        try:
+            parsed = json.loads(raw)
+            pretty = json.dumps(parsed, indent=2, ensure_ascii=False)
+            return {"reply": f"{_ack()} Valid JSON:\n```json\n{pretty}\n```", "data": {"route": "json_format", "valid": True}}
+        except json.JSONDecodeError as exc:
+            return {"reply": f"{_ack()} Invalid JSON: {exc.msg} at line {exc.lineno}.", "data": {"route": "json_format", "valid": False, "error": str(exc)}}
+
+    json_min_m = re.match(r"json\s+(?:minify|min|compact|compress|strip)\s+(.+)", text, re.I | re.S)
+    if json_min_m:
+        raw = json_min_m.group(1).strip().strip("```").strip()
+        try:
+            parsed = json.loads(raw)
+            minified = json.dumps(parsed, separators=(",", ":"), ensure_ascii=False)
+            saved = len(raw) - len(minified)
+            return {"reply": f"{_ack()} Minified JSON ({saved:+d} chars):\n`{minified}`", "data": {"route": "json_minify", "valid": True, "result": minified}}
+        except json.JSONDecodeError as exc:
+            return {"reply": f"{_ack()} Invalid JSON: {exc.msg} at line {exc.lineno}.", "data": {"route": "json_minify", "valid": False, "error": str(exc)}}
+
+    # ── String case conversion ────────────────────────────────────────────────
+    case_m = re.match(r"(upper|uppercase|lower|lowercase|title|titlecase|capitalize|snake[\s_]?case|camel[\s_]?case|pascal[\s_]?case|kebab[\s_]?case|screaming[\s_]?snake)\s+(.+)", text, re.I)
+    if case_m:
+        op = case_m.group(1).lower().replace(" ", "").replace("_", "")
+        raw = case_m.group(2).strip()
+        if op in {"upper", "uppercase"}:
+            result_s = raw.upper()
+            label = "UPPER"
+        elif op in {"lower", "lowercase"}:
+            result_s = raw.lower()
+            label = "lower"
+        elif op in {"title", "titlecase", "capitalize"}:
+            result_s = raw.title()
+            label = "Title Case"
+        elif op in {"snakecase"}:
+            result_s = re.sub(r"[\s\-]+", "_", raw).lower()
+            result_s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", result_s)
+            result_s = re.sub(r"([a-z\d])([A-Z])", r"\1_\2", result_s).lower()
+            label = "snake_case"
+        elif op in {"camelcase"}:
+            words = re.split(r"[\s_\-]+", raw)
+            result_s = words[0].lower() + "".join(w.capitalize() for w in words[1:]) if words else raw
+            label = "camelCase"
+        elif op in {"pascalcase"}:
+            words = re.split(r"[\s_\-]+", raw)
+            result_s = "".join(w.capitalize() for w in words)
+            label = "PascalCase"
+        elif op in {"kebabcase"}:
+            result_s = re.sub(r"[\s_]+", "-", raw).lower()
+            label = "kebab-case"
+        elif op in {"screamingsnake"}:
+            result_s = re.sub(r"[\s\-]+", "_", raw).upper()
+            label = "SCREAMING_SNAKE"
+        else:
+            result_s = raw
+            label = op
+        return {"reply": f"{_ack()} {label}: `{result_s}`", "data": {"route": "case_convert", "op": op, "result": result_s}}
+
+    # ── JWT decode (payload only, no verification) ────────────────────────────
+    jwt_m = re.match(r"(?:jwt|token)\s+(?:decode|inspect|info)\s+(\S+)", t, re.I)
+    if jwt_m:
+        raw_token = jwt_m.group(1).strip()
+        try:
+            parts = raw_token.split(".")
+            if len(parts) != 3:
+                raise ValueError("not a 3-part JWT")
+            # Base64url decode with padding
+            def _b64url(s: str) -> dict:
+                s += "=" * (-len(s) % 4)
+                return json.loads(base64.urlsafe_b64decode(s))
+            header = _b64url(parts[0])
+            payload = _b64url(parts[1])
+            pretty_h = json.dumps(header, indent=2)
+            pretty_p = json.dumps(payload, indent=2)
+            return {
+                "reply": (f"{_ack()} JWT header:\n```json\n{pretty_h}\n```\n"
+                          f"JWT payload:\n```json\n{pretty_p}\n```\n"
+                          f"*(Signature not verified.)*"),
+                "data": {"route": "jwt_decode", "header": header, "payload": payload},
+            }
+        except Exception as exc:
+            return {"reply": f"{_ack()} Could not decode JWT: {exc}", "data": {"route": "jwt_decode", "error": str(exc)}}
+
+    # ── YAML validate / format ────────────────────────────────────────────────
+    yaml_m = re.match(r"(?:yaml\s+(?:format|pretty|fmt|validate|check|lint|parse))\s+(.+)", text, re.I | re.S)
+    if yaml_m:
+        raw = yaml_m.group(1).strip().strip("```").strip()
+        if not _YAML_AVAILABLE:
+            return {"reply": f"{_ack()} YAML support is not installed on this server.", "data": {"route": "yaml_format", "valid": False}}
+        try:
+            docs = list(_yaml.safe_load_all(raw))
+            docs_clean = [d for d in docs if d is not None]
+            if not docs_clean:
+                return {"reply": f"{_ack()} YAML parsed to empty / null document.", "data": {"route": "yaml_format", "valid": True}}
+            pretty = _yaml.dump(docs_clean[0] if len(docs_clean) == 1 else docs_clean, default_flow_style=False, allow_unicode=True).rstrip()
+            doc_count = f" ({len(docs_clean)} documents)" if len(docs_clean) > 1 else ""
+            return {"reply": f"{_ack()} Valid YAML{doc_count}:\n```yaml\n{pretty}\n```", "data": {"route": "yaml_format", "valid": True}}
+        except _yaml.YAMLError as exc:
+            msg = str(exc).split("\n")[0]
+            return {"reply": f"{_ack()} Invalid YAML: {msg}", "data": {"route": "yaml_format", "valid": False, "error": str(exc)}}
+
+    # ── Regex test ────────────────────────────────────────────────────────────
+    regex_m = re.match(r"regex\s+(?:test|match|check)\s+/(.+?)/([gimsI]*)\s+(?:against\s+|on\s+)?(.+)", text, re.I | re.S)
+    if not regex_m:
+        regex_m = re.match(r"regex\s+(?:test|match|check)\s+\"(.+?)\"\s+(?:against\s+|on\s+)?(.+)", text, re.I | re.S)
+        if regex_m:
+            pattern_s, flags_s, subject = regex_m.group(1), "", regex_m.group(2)
+        else:
+            pattern_s = flags_s = subject = None
+    else:
+        pattern_s, flags_s, subject = regex_m.group(1), regex_m.group(2).lower(), regex_m.group(3)
+    if pattern_s is not None and subject is not None:
+        re_flags = 0
+        if "i" in flags_s: re_flags |= re.IGNORECASE
+        if "m" in flags_s: re_flags |= re.MULTILINE
+        if "s" in flags_s: re_flags |= re.DOTALL
+        try:
+            compiled = re.compile(pattern_s, re_flags)
+            matches = list(compiled.finditer(subject.strip()))
+            if not matches:
+                return {"reply": f"{_ack()} No matches for `/{pattern_s}/` in the given text.", "data": {"route": "regex_test", "matched": False, "count": 0}}
+            lines = []
+            for i, m in enumerate(matches[:10], 1):
+                groups = m.groups()
+                g_str = f" groups={list(groups)}" if groups else ""
+                lines.append(f"{i}. `{m.group(0)}` at [{m.start()}:{m.end()}]{g_str}")
+            suffix = f"\n*…and {len(matches) - 10} more.*" if len(matches) > 10 else ""
+            return {
+                "reply": f"{_ack()} **{len(matches)} match{'es' if len(matches) != 1 else ''}** for `/{pattern_s}/`:\n" + "\n".join(lines) + suffix,
+                "data": {"route": "regex_test", "matched": True, "count": len(matches)},
+            }
+        except re.error as exc:
+            return {"reply": f"{_ack()} Invalid regex: {exc}", "data": {"route": "regex_test", "error": str(exc)}}
+
+    # ── Cron expression explainer ─────────────────────────────────────────────
+    cron_m = re.match(r"cron\s+(?:explain|describe|parse|what\s+is|decode)\s+(.+)", text, re.I)
+    if cron_m:
+        expr = cron_m.group(1).strip().strip("`\"'")
+        parts = expr.split()
+        if len(parts) not in (5, 6):
+            return {"reply": f"{_ack()} A standard cron expression needs 5 fields (min hour dom mon dow) or 6 with seconds.", "data": {"route": "cron_explain", "error": "wrong_field_count"}}
+        has_seconds = len(parts) == 6
+        labels = (["second", "minute", "hour", "day-of-month", "month", "day-of-week"] if has_seconds
+                  else ["minute", "hour", "day-of-month", "month", "day-of-week"])
+        months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
+        days   = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]
+
+        def _explain_field(val: str, label: str) -> str:
+            if val == "*":
+                return f"every {label}"
+            if val.startswith("*/"):
+                return f"every {val[2:]} {label}(s)"
+            if "-" in val and "," not in val:
+                a, b = val.split("-", 1)
+                if label == "month":
+                    return f"{months[int(a)-1]}–{months[int(b)-1]}"
+                if label == "day-of-week":
+                    return f"{days[int(a)%7]}–{days[int(b)%7]}"
+                return f"{label} {a} to {b}"
+            if "," in val:
+                items = val.split(",")
+                if label == "month":
+                    return "months: " + ", ".join(months[int(i)-1] for i in items if i.isdigit())
+                if label == "day-of-week":
+                    return "days: " + ", ".join(days[int(i)%7] for i in items if i.isdigit())
+                return f"{label}s {val}"
+            if val.isdigit():
+                if label == "month":
+                    return months[int(val)-1]
+                if label == "day-of-week":
+                    return days[int(val)%7]
+                return f"{label} {val}"
+            return f"{label} `{val}`"
+
+        descriptions = [_explain_field(p, l) for p, l in zip(parts, labels)]
+        human = "At " + ", ".join(descriptions)
+        return {
+            "reply": f"{_ack()} `{expr}`\n→ **{human}**",
+            "data": {"route": "cron_explain", "expression": expr, "human": human},
+        }
+
+    # ── Text diff ─────────────────────────────────────────────────────────────
+    diff_m = re.match(r"diff\s+(.+?)\s*\|\s*(.+)", text, re.I | re.S)
+    if diff_m:
+        a_raw = diff_m.group(1).strip().strip("```").strip()
+        b_raw = diff_m.group(2).strip().strip("```").strip()
+        a_lines = a_raw.splitlines()
+        b_lines = b_raw.splitlines()
+        delta = list(difflib.unified_diff(a_lines, b_lines, lineterm="", fromfile="a", tofile="b"))
+        if not delta:
+            return {"reply": f"{_ack()} No differences found — the two snippets are identical.", "data": {"route": "diff", "identical": True}}
+        adds = sum(1 for l in delta if l.startswith("+") and not l.startswith("+++"))
+        dels = sum(1 for l in delta if l.startswith("-") and not l.startswith("---"))
+        diff_text = "\n".join(delta[:60])
+        suffix = f"\n*…truncated (showing 60/{len(delta)} lines).*" if len(delta) > 60 else ""
+        return {
+            "reply": f"{_ack()} **+{adds} / -{dels}** line(s) changed:\n```diff\n{diff_text}\n```{suffix}",
+            "data": {"route": "diff", "identical": False, "added": adds, "removed": dels},
+        }
 
     # ── Coin flip / dice roll ─────────────────────────────────────────────────
     if re.match(r"(?:flip\s+(?:a\s+)?coin|coin\s+flip|heads\s+or\s+tails|toss\s+(?:a\s+)?coin)", t, re.I):
@@ -1616,14 +1879,36 @@ def try_skill(
             },
         }
 
-    # ── Notes: remember / recall ──────────────────────────────────────────────
-    note_save = re.match(
+    # ── Memory store skills (persistent, per-user, server-side) ──────────────
+    # Alias pattern is checked first — "remember <key> is <value>" is more specific
+    # than the general "remember that <text>" note pattern.
+    _mem_alias_save = re.match(
+        r"(?:remember|store)\s+(\S+)\s+is\s+(.+)",
+        t, re.I,
+    )
+    if _mem_alias_save:
+        alias_key = _mem_alias_save.group(1).strip()
+        alias_val = _mem_alias_save.group(2).strip().rstrip(".,!?").strip()
+        if alias_key and alias_val and memory_store and user_id:
+            memory_store.set_alias(user_id, alias_key, alias_val)
+            return {
+                "reply": f"Understood. I have noted that {alias_key} is {alias_val}.",
+                "data": {"route": "alias_saved", "alias": alias_key, "target": alias_val},
+            }
+
+    _mem_note_save = re.match(
         r"(?:remember(?: that)?|note(?: that)?|merke?|notiz):?\s+(.+)",
         t, re.I,
     )
-    if note_save:
-        note_text = note_save.group(1).strip().rstrip(".,!?").strip()
+    if _mem_note_save:
+        note_text = _mem_note_save.group(1).strip().rstrip(".,!?").strip()
         if note_text:
+            if memory_store and user_id:
+                memory_store.add_note(user_id, note_text)
+                return {
+                    "reply": "Noted, sir.",
+                    "data": {"route": "note_saved", "text": note_text},
+                }
             existing = list(user_prefs.get("notes") or []) if user_prefs else []
             existing.append(note_text)
             return {
@@ -1631,7 +1916,34 @@ def try_skill(
                 "data": {"save_to_prefs": {"notes": existing}, "route": "note_saved"},
             }
 
-    if re.search(r"\b(what do you remember|what did you note|my notes|show notes|zeig meine notizen)\b", t):
+    _call_me = re.match(r"(?:call me|my name is)\s+(.+)", t, re.I)
+    if _call_me:
+        name = _call_me.group(1).strip().rstrip(".,!?").strip()
+        if name and memory_store and user_id:
+            memory_store.set_alias(user_id, "display_name", name)
+            return {
+                "reply": f"Understood. I'll call you {name}.",
+                "data": {"route": "alias_saved", "alias": "display_name", "target": name},
+            }
+
+    if re.search(
+        r"\b(what do you know about me|show my memory|my notes|what do you remember|"
+        r"what did you note|zeig meine notizen)\b",
+        t, re.I,
+    ):
+        if memory_store and user_id:
+            notes = memory_store.get_notes(user_id)
+            aliases = memory_store.get_aliases(user_id)
+            if not notes and not aliases:
+                return {"reply": "I have no notes or aliases for you yet.", "data": {"route": "memory_summary"}}
+            parts = []
+            if notes:
+                items = "\n".join(f"  • {n['text']}" for n in notes[-10:])
+                parts.append(f"Notes ({len(notes)}):\n{items}")
+            if aliases:
+                lines = "\n".join(f"  • {k}: {v['target']}" for k, v in aliases.items())
+                parts.append(f"Aliases ({len(aliases)}):\n{lines}")
+            return {"reply": "\n".join(parts), "data": {"route": "memory_summary"}}
         notes = list(user_prefs.get("notes") or []) if user_prefs else []
         if not notes:
             return {"reply": "No notes on file. Say 'remember that…' to add one.", "data": {"route": "notes", "notes": []}}
@@ -1639,6 +1951,9 @@ def try_skill(
         return {"reply": f"On it. Your notes:\n{items}", "data": {"route": "notes", "notes": notes}}
 
     if re.match(r"(?:clear all notes|delete all notes|remove all notes|clear notes|erase notes)", t, re.I):
+        if memory_store and user_id:
+            memory_store.clear_user(user_id)
+            return {"reply": "Done. All memory cleared.", "data": {"route": "notes_cleared"}}
         return {
             "reply": "Done. All notes cleared.",
             "data": {"save_to_prefs": {"notes": []}, "route": "notes_cleared"},
@@ -1647,9 +1962,23 @@ def try_skill(
     note_forget = re.match(r"(?:forget|delete note|remove note)\s+(.+)", t, re.I)
     if note_forget:
         keyword = note_forget.group(1).strip().lower()
-        notes = list(user_prefs.get("notes") or []) if user_prefs else []
-        remaining = [n for n in notes if keyword not in n.lower()]
-        removed = len(notes) - len(remaining)
+        if memory_store and user_id:
+            notes = memory_store.get_notes(user_id)
+            removed = 0
+            for n in notes:
+                if keyword in n["text"].lower():
+                    memory_store.delete_note(user_id, n["id"])
+                    removed += 1
+            aliases = memory_store.get_aliases(user_id)
+            if keyword in aliases:
+                memory_store.delete_alias(user_id, keyword)
+                removed += 1
+            if removed:
+                return {"reply": f"Done. Removed {removed} item(s) matching '{keyword}'.", "data": {"route": "note_deleted", "removed": removed}}
+            return {"reply": f"Nothing matching '{keyword}' found.", "data": {"route": "note_deleted", "removed": 0}}
+        notes_pref = list(user_prefs.get("notes") or []) if user_prefs else []
+        remaining = [n for n in notes_pref if keyword not in n.lower()]
+        removed = len(notes_pref) - len(remaining)
         if removed:
             return {
                 "reply": f"Done. Removed {removed} note(s) matching '{keyword}'.",
@@ -1657,6 +1986,460 @@ def try_skill(
             }
         return {"reply": f"No notes matching '{keyword}' found.", "data": {"route": "note_deleted", "removed": 0}}
 
+    # ── Notes: remember / recall (legacy prefs-only path kept for backward compat) ──
+    if re.search(r"\b(what do you remember|what did you note|show notes|zeig meine notizen)\b", t):
+        notes = list(user_prefs.get("notes") or []) if user_prefs else []
+        if not notes:
+            return {"reply": "No notes on file. Say 'remember that…' to add one.", "data": {"route": "notes", "notes": []}}
+        items = "\n".join(f"• {n}" for n in notes[-10:])
+        return {"reply": f"On it. Your notes:\n{items}", "data": {"route": "notes", "notes": notes}}
+
+    # ── CPU temperature ───────────────────────────────────────────────────────
+    if re.search(
+        r"\b(cpu\s+temp(?:erature)?|temp(?:erature)?|how\s+hot|thermal|sensor[s]?|"
+        r"wie\s+heiß|temperatur|cpu\s+wärme)\b",
+        t, re.I,
+    ):
+        temps = _read_cpu_temps()
+        if temps:
+            highest = max(z["temp_c"] for z in temps)
+            avg = sum(z["temp_c"] for z in temps) / len(temps)
+            if highest >= 80:
+                verdict = "running hot — consider checking cooling"
+            elif highest >= 65:
+                verdict = "warm but within normal range"
+            else:
+                verdict = "well within safe limits"
+            zones_str = ", ".join(f"zone{z['zone']}: {z['temp_c']}°C" for z in temps[:4])
+            return {
+                "reply": f"On it. CPU temperature: {highest:.1f}°C peak ({verdict}). {zones_str}.",
+                "data": {"route": "temperature", "zones": temps, "peak_c": highest, "avg_c": round(avg, 1)},
+            }
+        # Fall back to `sensors` CLI if available
+        try:
+            out = run_cmd(["sensors"], timeout=6)
+            if out.strip():
+                lines = [l for l in out.splitlines() if "°C" in l or "Temp" in l]
+                snippet = "\n".join(lines[:6]) if lines else out[:200]
+                return {
+                    "reply": f"On it. Sensor data:\n{snippet}",
+                    "data": {"route": "temperature", "raw": out},
+                }
+        except Exception:
+            pass
+        return {
+            "reply": "On it. No temperature sensors found or accessible on this system.",
+            "data": {"route": "temperature", "zones": []},
+        }
+
+    # ── Battery / power status ────────────────────────────────────────────────
+    if re.search(
+        r"\b(battery|power\s+supply|laptop\s+power|charge[d]?|charging|akku|batterie|laden|stromversorgung)\b",
+        t, re.I,
+    ):
+        bat = _read_battery()
+        if bat is not None:
+            pct = bat.get("percent")
+            status = bat.get("status", "Unknown")
+            time_str = bat.get("time_remaining", "")
+            if pct is not None:
+                verdict = "charged" if pct >= 95 else "low — please plug in" if pct < 20 else "normal"
+                reply = f"On it. Battery: {pct}% ({status})"
+                if time_str:
+                    reply += f", {time_str} remaining"
+                reply += f". {verdict.capitalize()}."
+            else:
+                reply = f"On it. Battery status: {status}."
+            return {"reply": reply, "data": {"route": "battery", **bat}}
+        return {
+            "reply": "On it. No battery found — this appears to be a desktop or server.",
+            "data": {"route": "battery", "found": False},
+        }
+
+    # ── Top memory processes ──────────────────────────────────────────────────
+    if re.search(
+        r"\b(memory\s+hog[s]?|top\s+memory|most\s+memory|memory\s+usage\s+by|ram\s+hog[s]?|"
+        r"arbeitsspeicher\s+verbrauch)\b",
+        t, re.I,
+    ):
+        out = run_cmd(["/usr/bin/ps", "aux", "--sort=-%mem"], timeout=8)
+        lines = out.strip().splitlines()
+        rows = []
+        for line in lines[1:8]:
+            parts = line.split(None, 10)
+            if len(parts) >= 11:
+                rows.append({"pid": parts[1], "cpu": parts[2], "mem": parts[3], "cmd": parts[10][:45]})
+        top3 = ", ".join(f"{r['cmd'].split()[-1]} ({r['mem']}%)" for r in rows[:3]) if rows else "none"
+        return {
+            "reply": f"On it. Top memory processes: {top3}",
+            "data": {"route": "memory_hogs", "processes": rows},
+        }
+
+    # ── Available system updates ──────────────────────────────────────────────
+    if re.search(
+        r"\b(updates?|system\s+updates?|package\s+updates?|apt\s+updates?|check\s+updates?|"
+        r"upgrades?|was\s+gibt\s+es\s+neues|neue\s+pakete|aktualisierungen)\b",
+        t, re.I,
+    ):
+        try:
+            out = run_cmd(
+                ["/usr/bin/apt", "list", "--upgradable"],
+                timeout=30,
+            )
+            lines = [l for l in out.splitlines() if "/" in l and "listing" not in l.lower()]
+            count = len(lines)
+            if count == 0:
+                return {
+                    "reply": "On it. System is up to date. No pending upgrades.",
+                    "data": {"route": "updates", "count": 0, "packages": []},
+                }
+            preview = ", ".join(l.split("/")[0] for l in lines[:5])
+            more = f" and {count - 5} more" if count > 5 else ""
+            return {
+                "reply": f"On it. {count} package update(s) available: {preview}{more}.",
+                "data": {"route": "updates", "count": count, "packages": [l.split("/")[0] for l in lines]},
+            }
+        except Exception:
+            return {
+                "reply": "On it. Could not check for updates — apt may not be available on this system.",
+                "data": {"route": "updates", "error": "unavailable"},
+            }
+
+    # ── Docker stats (resource usage) ────────────────────────────────────────
+    if re.search(r"\b(docker\s+stats?|container\s+stats?|container\s+resources?|container\s+usage)\b", t, re.I):
+        out = run_cmd(
+            ["/usr/bin/sudo", "/usr/bin/docker", "stats", "--no-stream",
+             "--format", "{{.Name}}\t{{.CPUPerc}}\t{{.MemUsage}}\t{{.NetIO}}"],
+            timeout=15,
+        )
+        rows = []
+        for line in out.strip().splitlines():
+            parts = line.split("\t")
+            if len(parts) >= 4:
+                rows.append({"name": parts[0], "cpu": parts[1], "mem": parts[2], "net": parts[3]})
+        if not rows:
+            return {"reply": "On it. No containers running.", "data": {"route": "docker_stats", "containers": []}}
+        lines = [f"  {r['name']}: CPU {r['cpu']}, RAM {r['mem']}" for r in rows[:6]]
+        return {
+            "reply": f"On it. Docker resource usage ({len(rows)} container(s)):\n" + "\n".join(lines),
+            "data": {"route": "docker_stats", "containers": rows},
+        }
+
+    # ── Random number ────────────────────────────────────────────────────────
+    _rnd_m = re.search(
+        r"\b(?:random\s+(?:number|num|integer|int)?|pick\s+(?:a\s+)?number|zufallszahl)\b"
+        r".*?(?:between\s+(-?\d+)\s+and\s+(-?\d+)|from\s+(-?\d+)\s+to\s+(-?\d+)|(\d+)[\s\-]+(\d+))?",
+        t, re.I,
+    )
+    if _rnd_m and re.search(r"\b(random|pick a number|zufallszahl)\b", t, re.I):
+        import random as _random
+        groups = _rnd_m.groups()
+        lo_str = groups[0] or groups[2] or groups[4]
+        hi_str = groups[1] or groups[3] or groups[5]
+        lo = int(lo_str) if lo_str is not None else 1
+        hi = int(hi_str) if hi_str is not None else 100
+        if lo > hi:
+            lo, hi = hi, lo
+        n = _random.randint(lo, hi)
+        return {
+            "reply": f"On it. Random number between {lo} and {hi}: **{n}**.",
+            "data": {"route": "random", "value": n, "lo": lo, "hi": hi},
+        }
+
+    # ── Currency conversion ───────────────────────────────────────────────────
+    _CURR_NAMES: dict[str, str] = {
+        "$": "USD", "€": "EUR", "£": "GBP", "¥": "JPY", "₹": "INR",
+        "dollar": "USD", "dollars": "USD", "euro": "EUR", "euros": "EUR",
+        "pound": "GBP", "pounds": "GBP", "yen": "JPY", "yuan": "CNY",
+        "ruble": "RUB", "rubles": "RUB", "franc": "CHF", "francs": "CHF",
+        "rupee": "INR", "rupees": "INR", "krona": "SEK", "krone": "NOK",
+        "won": "KRW", "real": "BRL", "reais": "BRL",
+    }
+    _curr_m = re.search(
+        r"(\d+(?:[.,]\d+)?)\s*(\$|€|£|¥|₹|[A-Za-z]{2,8})\s+(?:to|in|into|nach|zu)\s+(\$|€|£|¥|₹|[A-Za-z]{2,8})",
+        t, re.I,
+    )
+    if _curr_m:
+        raw_amount = _curr_m.group(1).replace(",", ".")
+        raw_from = _curr_m.group(2)
+        raw_to = _curr_m.group(3)
+        def _norm_curr(s: str) -> str:
+            return _CURR_NAMES.get(s, _CURR_NAMES.get(s.lower(), s.upper()))
+        from_code = _norm_curr(raw_from)
+        to_code = _norm_curr(raw_to)
+        amount = float(raw_amount)
+        if len(from_code) == 3 and len(to_code) == 3 and from_code != to_code:
+            try:
+                url = (
+                    "https://api.frankfurter.app/latest?"
+                    + urllib.parse.urlencode({"amount": raw_amount, "from": from_code, "to": to_code})
+                )
+                with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": "JARVIS/1.0"}), timeout=5) as resp:
+                    fx = json.loads(resp.read())
+                converted = fx.get("rates", {}).get(to_code)
+                if converted is not None:
+                    return {
+                        "reply": f"On it. **{amount:g} {from_code}** = **{converted:g} {to_code}** (ECB rate).",
+                        "data": {"route": "currency", "from": from_code, "to": to_code, "amount": amount, "result": converted},
+                    }
+            except Exception:
+                pass
+
+    # ── Sunrise / sunset ─────────────────────────────────────────────────────
+    if re.search(r"\b(sunrise|sunset|golden\s+hour|dawn|dusk|when\s+(?:does\s+)?(?:the\s+)?sun)\b", t, re.I):
+        city_match = re.search(r"\bin\s+([A-Za-zäöüÄÖÜß][A-Za-zäöüÄÖÜß ]{1,28}?)\s*\??$", t, re.I)
+        city = city_match.group(1).strip() if city_match else user_prefs.get("location", "")
+        if city:
+            try:
+                geo_url = (
+                    "https://geocoding-api.open-meteo.com/v1/search?"
+                    + urllib.parse.urlencode({"name": city, "count": 1, "language": "en", "format": "json"})
+                )
+                with urllib.request.urlopen(geo_url, timeout=5) as resp:
+                    geo = json.loads(resp.read())
+                r = (geo.get("results") or [{}])[0]
+                lat, lon = r.get("latitude"), r.get("longitude")
+                name = r.get("name", city)
+                if lat and lon:
+                    sun_url = (
+                        "https://api.sunrise-sunset.org/json?"
+                        + urllib.parse.urlencode({"lat": lat, "lng": lon, "formatted": 0})
+                    )
+                    with urllib.request.urlopen(sun_url, timeout=5) as resp:
+                        sun = json.loads(resp.read()).get("results", {})
+                    def _fmt_utc(iso: str) -> str:
+                        from datetime import datetime, timezone
+                        try:
+                            dt = datetime.fromisoformat(iso).astimezone()
+                            return dt.strftime("%H:%M")
+                        except Exception:
+                            return iso[:16]
+                    rise = _fmt_utc(sun.get("sunrise", ""))
+                    sset = _fmt_utc(sun.get("sunset", ""))
+                    day_len = sun.get("day_length", 0)
+                    h, m = divmod(int(day_len) // 60, 60)
+                    return {
+                        "reply": f"On it. {name} — sunrise **{rise}**, sunset **{sset}** (local time), daylight **{h}h {m}m**.",
+                        "data": {"route": "sunrise_sunset", "city": name, "sunrise": rise, "sunset": sset},
+                    }
+            except Exception:
+                pass
+        return {
+            "reply": "On it. Set your location first (say 'my location is …') to get sunrise/sunset times.",
+            "data": {"route": "sunrise_sunset", "error": "no_location"},
+        }
+
+    # ── Network ping ─────────────────────────────────────────────────────────
+    _ping_m = re.search(r"\bping\s+([a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}|(?:\d{1,3}\.){3}\d{1,3})\b", t, re.I)
+    if _ping_m:
+        import subprocess as _sub
+        host = _ping_m.group(1).strip()
+        try:
+            result = _sub.run(
+                ["ping", "-c", "3", "-W", "2", host],
+                capture_output=True, text=True, timeout=12,
+            )
+            rtt_m = re.search(r"rtt\s+min/avg/max[^=]+=\s*([\d.]+)/([\d.]+)/([\d.]+)", result.stdout)
+            if rtt_m:
+                avg = float(rtt_m.group(2))
+                quality = "excellent" if avg < 10 else "good" if avg < 50 else "fair" if avg < 150 else "poor"
+                return {
+                    "reply": f"On it. Ping **{host}**: avg **{avg:.1f} ms** ({quality}).",
+                    "data": {"route": "ping", "host": host, "avg_ms": avg, "quality": quality},
+                }
+            loss_m = re.search(r"(\d+)%\s+packet\s+loss", result.stdout)
+            if loss_m and loss_m.group(1) == "100":
+                return {
+                    "reply": f"On it. **{host}** is unreachable — 100% packet loss.",
+                    "data": {"route": "ping", "host": host, "reachable": False},
+                }
+        except Exception:
+            pass
+        return {"reply": f"On it. Could not ping {host}.", "data": {"route": "ping", "error": "failed"}}
+
+    # ── News headlines ───────────────────────────────────────────────────────
+    if re.search(r"\b(news|headlines|latest news|top news|what.s happening|what is happening|current events)\b", t, re.I):
+        try:
+            import xml.etree.ElementTree as _ET
+            req = urllib.request.Request(
+                "https://feeds.bbci.co.uk/news/world/rss.xml",
+                headers={"User-Agent": "JARVIS/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=7) as resp:
+                tree = _ET.fromstring(resp.read())
+            items = tree.findall(".//item")[:6]
+            headlines = [it.findtext("title", "").strip() for it in items if it.findtext("title")]
+            if headlines:
+                numbered = "\n".join(f"{i+1}. {h}" for i, h in enumerate(headlines))
+                return {
+                    "reply": f"On it. Top BBC World News headlines:\n{numbered}",
+                    "data": {"route": "news", "source": "BBC World", "headlines": headlines},
+                }
+        except Exception:
+            pass
+        return {"reply": "On it. Could not fetch news — check your internet connection.", "data": {"route": "news", "error": "unavailable"}}
+
+    # ── Joke ──────────────────────────────────────────────────────────────────
+    if re.search(r"\b(joke|tell me a joke|make me laugh|funny|dad joke|witz)\b", t, re.I):
+        try:
+            req = urllib.request.Request(
+                "https://icanhazdadjoke.com/",
+                headers={"Accept": "application/json", "User-Agent": "JARVIS/1.0"},
+            )
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                joke = json.loads(resp.read()).get("joke", "")
+            if joke:
+                return {"reply": joke, "data": {"route": "joke", "joke": joke}}
+        except Exception:
+            pass
+        return {"reply": "Why don't scientists trust atoms? Because they make up everything.", "data": {"route": "joke"}}
+
+    # ── Word definition ───────────────────────────────────────────────────────
+    _def_m = re.match(
+        r"^(?:define|definition\s+of|what\s+does\s+(\S+)\s+mean|meaning\s+of)\s+(\S+)",
+        t, re.I,
+    )
+    if _def_m:
+        word = (_def_m.group(1) or _def_m.group(2) or "").strip().lower()
+        if word:
+            try:
+                req = urllib.request.Request(
+                    f"https://api.dictionaryapi.dev/api/v2/entries/en/{urllib.parse.quote(word)}",
+                    headers={"User-Agent": "JARVIS/1.0"},
+                )
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read())
+                entry = data[0] if data else {}
+                phonetic = entry.get("phonetic", "")
+                meanings = entry.get("meanings", [])
+                defs = []
+                for m in meanings[:2]:
+                    pos = m.get("partOfSpeech", "")
+                    for d in m.get("definitions", [])[:2]:
+                        defs.append(f"*{pos}*: {d.get('definition', '')}")
+                if defs:
+                    phone_str = f" /{phonetic}/" if phonetic else ""
+                    return {
+                        "reply": f"**{word.title()}**{phone_str}\n" + "\n".join(defs),
+                        "data": {"route": "definition", "word": word, "definitions": defs},
+                    }
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    return {"reply": f"No definition found for '{word}'.", "data": {"route": "definition", "error": "not_found"}}
+            except Exception:
+                pass
+
+    # ── Public IP ────────────────────────────────────────────────────────────
+    if re.search(r"\b(public\s+ip|external\s+ip|my\s+public\s+ip|what.s\s+my\s+(public\s+)?ip\s*address|wan\s+ip)\b", t, re.I):
+        try:
+            req = urllib.request.Request("https://ipapi.co/json/", headers={"User-Agent": "JARVIS/1.0"})
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                info = json.loads(resp.read())
+            ip = info.get("ip", "unknown")
+            city = info.get("city", "")
+            country = info.get("country_name", "")
+            isp = info.get("org", "")
+            location = f", {city}, {country}" if city else f", {country}" if country else ""
+            isp_str = f" ({isp})" if isp else ""
+            return {
+                "reply": f"On it. Your public IP is **{ip}**{location}{isp_str}.",
+                "data": {"route": "public_ip", "ip": ip, "city": city, "country": country, "isp": isp},
+            }
+        except Exception:
+            pass
+        return {"reply": "On it. Could not determine your public IP.", "data": {"route": "public_ip", "error": "unavailable"}}
+
+    # ── Wikipedia / lookup ───────────────────────────────────────────────────
+    _wiki_m = re.match(
+        r"^(?:"
+        r"(?:wikipedia|wiki)\s+(.+)"
+        r"|(?:look\s+up|lookup|search\s+for|find\s+info(?:rmation)?\s+(?:on|about))\s+(.+)"
+        r"|who\s+is\s+(.+)"
+        r"|tell\s+me\s+about\s+(.+)"
+        r")$",
+        t, re.I,
+    )
+    if _wiki_m:
+        topic = next((g.strip().rstrip('?.') for g in _wiki_m.groups() if g), None)
+        if topic and len(topic) >= 2:
+            try:
+                slug = urllib.parse.quote(topic.replace(' ', '_'))
+                req = urllib.request.Request(
+                    f"https://en.wikipedia.org/api/rest_v1/page/summary/{slug}",
+                    headers={"User-Agent": "JARVIS/1.0 (local assistant)"},
+                )
+                with urllib.request.urlopen(req, timeout=6) as resp:
+                    wiki = json.loads(resp.read())
+                title = wiki.get("title", topic)
+                extract = (wiki.get("extract") or "").strip()
+                if extract:
+                    sentences = re.split(r'(?<=[.!?])\s+', extract)
+                    summary = ' '.join(sentences[:3])
+                    if len(summary) > 500:
+                        summary = summary[:497] + '…'
+                    return {
+                        "reply": f"**{title}**: {summary}",
+                        "data": {"route": "wikipedia", "title": title, "extract": extract},
+                    }
+                if wiki.get("type") == "disambiguation":
+                    return {
+                        "reply": f"On it. '{topic}' is a disambiguation — could you be more specific?",
+                        "data": {"route": "wikipedia", "title": title, "type": "disambiguation"},
+                    }
+            except urllib.error.HTTPError as e:
+                if e.code == 404:
+                    return {
+                        "reply": f"On it. No Wikipedia article found for '{topic}'.",
+                        "data": {"route": "wikipedia", "error": "not_found"},
+                    }
+            except Exception:
+                pass
+
+    return None
+
+
+def _read_cpu_temps() -> list[dict]:
+    """Read CPU temperatures from /sys/class/thermal — returns list of {zone, temp_c}."""
+    import glob
+    zones = []
+    for path in sorted(glob.glob("/sys/class/thermal/thermal_zone*/temp")):
+        try:
+            raw = int(open(path).read().strip())
+            zone_num = re.search(r"thermal_zone(\d+)", path)
+            zones.append({"zone": int(zone_num.group(1)) if zone_num else 0, "temp_c": round(raw / 1000, 1)})
+        except Exception:
+            continue
+    return zones
+
+
+def _read_battery() -> dict | None:
+    """Read battery info from /sys/class/power_supply/. Returns None if no battery found."""
+    import glob
+    for supply_path in glob.glob("/sys/class/power_supply/BAT*") + glob.glob("/sys/class/power_supply/battery"):
+        try:
+            def _read(name: str) -> str:
+                p = f"{supply_path}/{name}"
+                return open(p).read().strip() if os.path.exists(p) else ""
+
+            capacity = _read("capacity")
+            status = _read("status") or "Unknown"
+            pct = int(capacity) if capacity.isdigit() else None
+
+            # Time remaining from energy_now / power_now
+            time_str = ""
+            try:
+                energy_now = int(_read("energy_now") or 0)
+                power_now = int(_read("power_now") or 0)
+                if power_now > 0 and status == "Discharging":
+                    hours = energy_now / power_now
+                    h, m = int(hours), int((hours % 1) * 60)
+                    time_str = f"{h}h {m}m" if h else f"{m}m"
+            except Exception:
+                pass
+
+            return {"found": True, "percent": pct, "status": status, "time_remaining": time_str}
+        except Exception:
+            continue
     return None
 
 
@@ -1761,8 +2544,8 @@ def rag_llm_answer(user_text: str, hits: list[dict], *, get_provider, get_gemini
 
     prompt = (
         "You are J.A.R.V.I.S. Use only the provided RAG context. "
-        "Answer in German, concise and structured, with bullets for lists/tasks. "
-        "If user asks to list/read items, enumerate clearly.\n\n"
+        "Answer concisely and in the same language the user wrote in. "
+        "Use bullets for lists/tasks. If user asks to list/read items, enumerate clearly.\n\n"
         f"User request: {user_text}\n\nRAG context:\n{context_blob}"
     )
 

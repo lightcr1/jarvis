@@ -18,12 +18,22 @@ DEVICE_ACTION_PROFILES: dict[str, dict[str, object]] = {
         "actions": [
             {"action": "turn_on", "label": "Turn on", "risk_level": "medium", "remote": False},
             {"action": "turn_off", "label": "Turn off", "risk_level": "medium", "remote": False},
+            {"action": "set_brightness", "label": "Set brightness", "risk_level": "low", "remote": False},
+            {"action": "set_color_temp", "label": "Set color temperature", "risk_level": "low", "remote": False},
         ]
     },
     "switch": {
         "actions": [
             {"action": "turn_on", "label": "Turn on", "risk_level": "medium", "remote": False},
             {"action": "turn_off", "label": "Turn off", "risk_level": "medium", "remote": False},
+        ]
+    },
+    "climate": {
+        "actions": [
+            {"action": "turn_on", "label": "Turn on", "risk_level": "medium", "remote": False},
+            {"action": "turn_off", "label": "Turn off", "risk_level": "medium", "remote": False},
+            {"action": "set_temperature", "label": "Set temperature", "risk_level": "low", "remote": False},
+            {"action": "set_hvac_mode", "label": "Set HVAC mode", "risk_level": "low", "remote": False},
         ]
     },
     "sensor": {
@@ -51,6 +61,17 @@ DEVICE_ACTION_PROFILES: dict[str, dict[str, object]] = {
         "actions": [
             {"action": "open", "label": "Open", "risk_level": "high", "remote": True},
             {"action": "close", "label": "Close", "risk_level": "high", "remote": True},
+        ]
+    },
+    "media": {
+        "actions": [
+            {"action": "play", "label": "Play", "risk_level": "low", "remote": False},
+            {"action": "pause", "label": "Pause", "risk_level": "low", "remote": False},
+            {"action": "stop", "label": "Stop", "risk_level": "low", "remote": False},
+            {"action": "next_track", "label": "Next track", "risk_level": "low", "remote": False},
+            {"action": "previous_track", "label": "Previous track", "risk_level": "low", "remote": False},
+            {"action": "set_volume", "label": "Set volume", "risk_level": "low", "remote": False},
+            {"action": "mute", "label": "Mute", "risk_level": "low", "remote": False},
         ]
     },
 }

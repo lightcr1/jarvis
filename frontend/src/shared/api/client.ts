@@ -38,9 +38,26 @@ const STORAGE_KEYS = {
   user: "jarvis_user_profile",
   prefs: "jarvis_user_prefs",
   guestKey: "jarvis_guest_key",
+  guestMode: "jarvis_guest_mode",
   adminToken: "jarvis_admin_token",
   adminExp: "jarvis_admin_exp",
 };
+
+let _pendingChatPrefill: string | null = null;
+export function setPendingChatPrefill(text: string) { _pendingChatPrefill = text; }
+export function consumePendingChatPrefill(): string | null { const t = _pendingChatPrefill; _pendingChatPrefill = null; return t; }
+
+export function setGuestMode(): void {
+  localStorage.setItem(STORAGE_KEYS.guestMode, "1");
+}
+
+export function clearGuestMode(): void {
+  localStorage.removeItem(STORAGE_KEYS.guestMode);
+}
+
+export function isGuestMode(): boolean {
+  return localStorage.getItem(STORAGE_KEYS.guestMode) === "1";
+}
 
 export function ensureGuestKey(): string {
   let key = localStorage.getItem(STORAGE_KEYS.guestKey);
@@ -115,6 +132,7 @@ export function clearStoredIdentity(): void {
   localStorage.removeItem(STORAGE_KEYS.user);
   localStorage.removeItem(STORAGE_KEYS.prefs);
   clearAdminToken();
+  clearGuestMode();
 }
 
 export function getAdminToken(): string | null {
@@ -165,11 +183,24 @@ export function buildApiHeaders(options: RequestOptions = {}): Record<string, st
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
   const headers = buildApiHeaders(options);
-  const response = await fetch(path, {
-    method: options.method || "GET",
-    headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
-  });
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10_000);
+  let response: Response;
+  try {
+    response = await fetch(path, {
+      method: options.method || "GET",
+      headers,
+      body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+      signal: controller.signal,
+    });
+  } catch (err) {
+    if (err instanceof DOMException && err.name === "AbortError") {
+      throw new Error("Request timed out");
+    }
+    throw err;
+  } finally {
+    clearTimeout(timeoutId);
+  }
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
   if (!response.ok) throw new Error(data.detail || text || `HTTP ${response.status}`);

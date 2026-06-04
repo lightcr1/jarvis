@@ -25,6 +25,7 @@ KNOWN_PERMISSIONS = {
     "audit.read",
     "settings.manage",
     "emergency_stop.trigger",
+    "alerts.manage",
 }
 KNOWN_PERMISSIONS.update(HOME_ASSISTANT_PERMISSIONS)
 

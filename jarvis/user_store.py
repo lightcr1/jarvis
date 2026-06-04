@@ -94,6 +94,14 @@ class UserStore:
         self._save()
         return user
 
+    def touch_last_seen(self, user_id: str) -> None:
+        user = self.get_user(user_id)
+        if not user:
+            return
+        user["last_seen_at"] = int(time.time())
+        self.data.setdefault("users", {})[user_id] = user
+        self._save()
+
     def delete_user(self, user_id: str) -> bool:
         users = self.data.setdefault("users", {})
         if user_id not in users:

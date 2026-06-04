@@ -1,6 +1,11 @@
-import { useState, useEffect } from 'react';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck } from './jarvis-shared';
+import { useState, useEffect, useRef } from 'react';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume } from './jarvis-shared';
 import { getStoredPreferences, setStoredPreferences, getSessionToken, apiRequest, type UserPreferences } from '../shared/api/client';
+import { synthesizeSpeech } from '../shared/api/chat';
+import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
+import { OverlayDialog } from '../shared/ui/OverlayDialog';
+
+type IntegrationState = 'checking' | 'online' | 'offline' | 'unconfigured';
 
 type JarvisVoice = { id: string; name: string; lang: string; flag: string };
 
@@ -8,6 +13,7 @@ const CATS = [
   { id: 'appearance',   label: 'Appearance',   icon: <IconActivity size={13} /> },
   { id: 'chat',         label: 'Chat',         icon: <IconChat size={13} /> },
   { id: 'voice',        label: 'Voice',        icon: <IconMic size={13} /> },
+  { id: 'memory',       label: 'Memory',       icon: <IconMemory size={13} /> },
   { id: 'integrations', label: 'Integrations', icon: <IconGrid size={13} /> },
   { id: 'security',     label: 'Security',     icon: <IconShield size={13} /> },
   { id: 'developer',    label: 'Developer',    icon: <IconCode size={13} /> },
@@ -71,6 +77,280 @@ function Integration({ name, status, note, icon }: { name: string; status: strin
 
 const ACCENT_COLORS = ['#e09a1a', '#5294e8', '#3dba84', '#a855f7', '#e05555', '#f97316'];
 
+function MemoryPanel() {
+  useJ();
+  const [notes, setNotes] = useState<MemoryNote[]>([]);
+  const [aliases, setAliases] = useState<MemoryAlias[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [noteText, setNoteText] = useState('');
+  const [aliasKey, setAliasKey] = useState('');
+  const [aliasVal, setAliasVal] = useState('');
+  const [addingNote, setAddingNote] = useState(false);
+  const [addingAlias, setAddingAlias] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [error, setError] = useState('');
+  const isLoggedIn = !!getSessionToken();
+
+  const reload = () => {
+    if (!isLoggedIn) { setLoading(false); return; }
+    setLoading(true);
+    Promise.all([listNotes(), listAliases()])
+      .then(([n, a]) => { setNotes(n); setAliases(a); })
+      .catch(() => setError('Failed to load memory.'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { reload(); }, []);
+
+  const handleAddNote = async () => {
+    const text = noteText.trim();
+    if (!text) return;
+    setAddingNote(true);
+    try {
+      const note = await createNote(text);
+      setNotes(prev => [...prev, note]);
+      setNoteText('');
+    } catch {
+      setError('Failed to save note.');
+    } finally {
+      setAddingNote(false);
+    }
+  };
+
+  const handleDeleteNote = async (id: string) => {
+    try {
+      await deleteNote(id);
+      setNotes(prev => prev.filter(n => n.id !== id));
+    } catch {
+      setError('Failed to delete note.');
+    }
+  };
+
+  const handleAddAlias = async () => {
+    const key = aliasKey.trim();
+    const val = aliasVal.trim();
+    if (!key || !val) return;
+    setAddingAlias(true);
+    try {
+      const a = await createAlias(key, val);
+      setAliases(prev => [...prev.filter(x => x.alias !== key), a]);
+      setAliasKey('');
+      setAliasVal('');
+    } catch {
+      setError('Failed to save alias.');
+    } finally {
+      setAddingAlias(false);
+    }
+  };
+
+  const handleDeleteAlias = async (alias: string) => {
+    try {
+      await deleteAlias(alias);
+      setAliases(prev => prev.filter(a => a.alias !== alias));
+    } catch {
+      setError('Failed to delete alias.');
+    }
+  };
+
+  const handleClearAll = async () => {
+    setClearing(true);
+    try {
+      await clearAllMemory();
+      setNotes([]);
+      setAliases([]);
+      setShowClearConfirm(false);
+    } catch {
+      setError('Failed to clear memory.');
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  if (!isLoggedIn) {
+    return <div style={{ padding: '16px 0', fontSize: 13, color: J.textMuted }}>Memory requires a logged-in account.</div>;
+  }
+
+  return (
+    <>
+      {showClearConfirm && (
+        <OverlayDialog
+          title="Clear all memory?"
+          eyebrow="Destructive action"
+          onClose={() => setShowClearConfirm(false)}
+          actions={<>
+            <button onClick={() => setShowClearConfirm(false)}
+              style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 7, padding: '8px 16px', fontSize: 13, cursor: 'pointer' }}>
+              Cancel
+            </button>
+            <button onClick={() => void handleClearAll()} disabled={clearing}
+              style={{ background: J.error, border: 'none', color: J.bg0, borderRadius: 7, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: clearing ? 'not-allowed' : 'pointer', opacity: clearing ? 0.7 : 1 }}>
+              {clearing ? 'Clearing…' : 'Clear all memory'}
+            </button>
+          </>}
+        >
+          <p style={{ fontSize: 13, color: J.textSec, margin: 0 }}>
+            This will permanently delete all notes and aliases. This action cannot be undone.
+          </p>
+        </OverlayDialog>
+      )}
+
+      {error && (
+        <div style={{ background: J.errorDim, border: `1px solid ${J.error}`, borderRadius: 7, padding: '8px 12px', fontSize: 12, color: J.error, marginBottom: 12 }}
+          onClick={() => setError('')}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ padding: '4px 0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 12, color: J.textMuted }}>
+          {loading ? 'Loading…' : `${notes.length} note${notes.length !== 1 ? 's' : ''} · ${aliases.length} alias${aliases.length !== 1 ? 'es' : ''}`}
+        </span>
+        <button onClick={() => setShowClearConfirm(true)}
+          style={{ background: 'none', border: `1px solid ${J.error}`, color: J.error, borderRadius: 6, padding: '4px 12px', fontSize: 12, cursor: 'pointer', opacity: 0.8 }}
+          onMouseEnter={e => { e.currentTarget.style.opacity = '1'; }}
+          onMouseLeave={e => { e.currentTarget.style.opacity = '0.8'; }}>
+          Clear all
+        </button>
+      </div>
+
+      <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
+        <div style={{ fontSize: 14, color: J.text, fontWeight: 500, marginBottom: 10 }}>Notes</div>
+        {loading ? (
+          <div style={{ fontSize: 12, color: J.textMuted }}>Loading…</div>
+        ) : notes.length === 0 ? (
+          <div style={{ fontSize: 12, color: J.textMuted }}>No notes. Say "remember that…" to add one.</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
+            {notes.map(n => (
+              <div key={n.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, background: J.bg3, borderRadius: 7, padding: '7px 10px', border: `1px solid ${J.border}` }}>
+                <span style={{ fontSize: 12, color: J.textSec, flex: 1, lineHeight: 1.5 }}>{n.text}</span>
+                <button onClick={() => void handleDeleteNote(n.id)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: J.textMuted, fontSize: 14, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}
+                  onMouseEnter={e => { e.currentTarget.style.color = J.error; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = J.textMuted; }}>
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+          <input className="j-input" value={noteText} onChange={e => setNoteText(e.target.value)}
+            placeholder="Add a note…"
+            onKeyDown={e => { if (e.key === 'Enter') void handleAddNote(); }}
+            style={{ flex: 1, borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+          <button onClick={() => void handleAddNote()} disabled={addingNote || !noteText.trim()}
+            style={{ background: J.amber, color: J.bg0, border: 'none', borderRadius: 7, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: addingNote || !noteText.trim() ? 'not-allowed' : 'pointer', opacity: addingNote || !noteText.trim() ? 0.6 : 1, flexShrink: 0 }}>
+            {addingNote ? '…' : 'Add'}
+          </button>
+        </div>
+      </div>
+
+      <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
+        <div style={{ fontSize: 14, color: J.text, fontWeight: 500, marginBottom: 10 }}>Aliases</div>
+        <div style={{ fontSize: 12, color: J.textMuted, marginBottom: 10 }}>Key → value mappings JARVIS will remember about you.</div>
+        {loading ? (
+          <div style={{ fontSize: 12, color: J.textMuted }}>Loading…</div>
+        ) : aliases.length === 0 ? (
+          <div style={{ fontSize: 12, color: J.textMuted }}>{'No aliases. Say "remember <key> is <value>" to add one.'}</div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5, marginBottom: 10 }}>
+            {aliases.map(a => (
+              <div key={a.alias} style={{ display: 'flex', alignItems: 'center', gap: 8, background: J.bg3, borderRadius: 7, padding: '7px 10px', border: `1px solid ${J.border}` }}>
+                <span style={{ fontSize: 12, color: J.amber, fontFamily: 'JetBrains Mono,monospace', flexShrink: 0 }}>{a.alias}</span>
+                <span style={{ fontSize: 12, color: J.textMuted, flexShrink: 0 }}>→</span>
+                <span style={{ fontSize: 12, color: J.textSec, flex: 1 }}>{a.target}</span>
+                <button onClick={() => void handleDeleteAlias(a.alias)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: J.textMuted, fontSize: 14, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}
+                  onMouseEnter={e => { e.currentTarget.style.color = J.error; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = J.textMuted; }}>
+                  ×
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ display: 'flex', gap: 8, marginTop: 8, flexWrap: 'wrap' }}>
+          <input className="j-input" value={aliasKey} onChange={e => setAliasKey(e.target.value)}
+            placeholder="Key (e.g. city)"
+            style={{ flex: '1 1 100px', minWidth: 80, borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+          <input className="j-input" value={aliasVal} onChange={e => setAliasVal(e.target.value)}
+            placeholder="Value (e.g. Berlin)"
+            onKeyDown={e => { if (e.key === 'Enter') void handleAddAlias(); }}
+            style={{ flex: '2 1 140px', minWidth: 100, borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+          <button onClick={() => void handleAddAlias()} disabled={addingAlias || !aliasKey.trim() || !aliasVal.trim()}
+            style={{ background: J.amber, color: J.bg0, border: 'none', borderRadius: 7, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: addingAlias || !aliasKey.trim() || !aliasVal.trim() ? 'not-allowed' : 'pointer', opacity: addingAlias || !aliasKey.trim() || !aliasVal.trim() ? 0.6 : 1, flexShrink: 0 }}>
+            {addingAlias ? '…' : 'Add'}
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function SecurityPanel() {
+  const [cur, setCur] = useState('');
+  const [next, setNext] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [state, setState] = useState<'idle' | 'saving' | 'ok' | 'error'>('idle');
+  const [errMsg, setErrMsg] = useState('');
+  const isLoggedIn = !!getSessionToken();
+
+  const handleChange = async () => {
+    if (!cur || !next) { setState('error'); setErrMsg('Fill in all fields.'); return; }
+    if (next.length < 6) { setState('error'); setErrMsg('New password must be at least 6 characters.'); return; }
+    if (next !== confirm) { setState('error'); setErrMsg('New passwords do not match.'); return; }
+    setState('saving');
+    try {
+      await apiRequest('/auth/me/password', { method: 'PUT', includeUser: true, body: { current_password: cur, new_password: next } });
+      setState('ok');
+      setCur(''); setNext(''); setConfirm('');
+      setTimeout(() => setState('idle'), 3000);
+    } catch (e) {
+      setState('error');
+      setErrMsg((e as Error).message || 'Failed to change password.');
+    }
+  };
+
+  return (<>
+    <Row label="Confirm Critical Actions" desc="Always required for high-risk operations">
+      <span style={{ fontSize: 12, color: J.textMuted }}>Always on</span>
+    </Row>
+    <Row label="Audit Logging" desc="All actions are logged to disk">
+      <span style={{ fontSize: 12, color: J.textMuted }}>Always on</span>
+    </Row>
+    <Row label="Session" desc="Managed server-side, tied to your login">
+      <span style={{ fontSize: 12, color: J.textMuted }}>Server-managed</span>
+    </Row>
+    {isLoggedIn && (
+      <div style={{ padding: '16px 0', borderBottom: `1px solid ${J.border}` }}>
+        <div style={{ fontSize: 14, color: J.text, marginBottom: 4 }}>Change Password</div>
+        <div style={{ fontSize: 12, color: J.textMuted, marginBottom: 14 }}>Update your account password.</div>
+        {state === 'error' && (
+          <div style={{ background: J.errorDim, border: `1px solid rgba(224,85,85,0.2)`, borderRadius: 7, padding: '8px 12px', fontSize: 12, color: J.error, marginBottom: 10 }}>{errMsg}</div>
+        )}
+        {state === 'ok' && (
+          <div style={{ background: J.successDim, border: `1px solid rgba(61,186,132,0.2)`, borderRadius: 7, padding: '8px 12px', fontSize: 12, color: J.success, marginBottom: 10 }}>Password changed successfully.</div>
+        )}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <input className="j-input" type="password" placeholder="Current password" value={cur} onChange={e => { setCur(e.target.value); setState('idle'); }} style={{ borderRadius: 7, padding: '9px 12px', fontSize: 13 }} />
+          <input className="j-input" type="password" placeholder="New password (min 6 chars)" value={next} onChange={e => { setNext(e.target.value); setState('idle'); }} style={{ borderRadius: 7, padding: '9px 12px', fontSize: 13 }} />
+          <input className="j-input" type="password" placeholder="Confirm new password" value={confirm} onChange={e => { setConfirm(e.target.value); setState('idle'); }} style={{ borderRadius: 7, padding: '9px 12px', fontSize: 13 }} />
+          <button onClick={() => void handleChange()} disabled={state === 'saving'} className="j-btn"
+            style={{ alignSelf: 'flex-start', background: state === 'ok' ? J.success : J.amber, color: J.bg0, borderRadius: 7, padding: '8px 18px', fontSize: 13, fontWeight: 600, opacity: state === 'saving' ? 0.7 : 1 }}>
+            {state === 'saving' ? 'Saving…' : state === 'ok' ? '✓ Changed' : 'Change password'}
+          </button>
+        </div>
+      </div>
+    )}
+    <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
+      Role permissions and emergency stop are managed in the{' '}
+      <a href="/dashboard" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>.
+    </div>
+  </>);
+}
+
 export function SettingsScreen() {
   useJ();
   const [cat, setCat] = useState('appearance');
@@ -78,12 +358,50 @@ export function SettingsScreen() {
   const [saved, setSaved] = useState(false);
   const [prefs, setPrefs] = useState<UserPreferences>(() => getStoredPreferences());
   const [voices, setVoices] = useState<JarvisVoice[]>([]);
+  const [testingVoice, setTestingVoice] = useState(false);
+  const [voiceTestErr, setVoiceTestErr] = useState('');
+  const [intStatus, setIntStatus] = useState<Record<string, IntegrationState>>({
+    proxmox: 'checking', ha: 'checking', rag: 'checking',
+  });
+  const testAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handleTestVoice = () => {
+    if (testingVoice) {
+      testAudioRef.current?.pause();
+      testAudioRef.current = null;
+      setTestingVoice(false);
+      return;
+    }
+    setTestingVoice(true);
+    setVoiceTestErr('');
+    // Pass the currently selected (possibly unsaved) voice as an explicit override
+    synthesizeSpeech('Systems nominal. Standing by, sir.', prefs.tts_voice || '')
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        testAudioRef.current = audio;
+        audio.onended = () => { URL.revokeObjectURL(url); testAudioRef.current = null; setTestingVoice(false); };
+        audio.onerror = () => { URL.revokeObjectURL(url); testAudioRef.current = null; setTestingVoice(false); setVoiceTestErr('Playback failed'); };
+        void audio.play();
+      })
+      .catch(err => { setTestingVoice(false); setVoiceTestErr((err as Error).message || 'Voice synthesis unavailable.'); });
+  };
 
   useEffect(() => {
     if (getSessionToken()) {
       apiRequest<{ preferences: UserPreferences }>('/auth/me/preferences', { includeUser: true })
         .then(data => {
-          const merged = { ...getStoredPreferences(), ...data.preferences };
+          const local = getStoredPreferences();
+          const server = data.preferences;
+          // Server empty-string fields must not overwrite a real locally-saved value
+          const merged: UserPreferences = { ...local };
+          for (const [k, v] of Object.entries(server) as [keyof UserPreferences, UserPreferences[keyof UserPreferences]][]) {
+            if (v !== '' && v !== null && v !== undefined) {
+              (merged as Record<string, unknown>)[k] = v;
+            } else if (!(k in local) || local[k] === undefined) {
+              (merged as Record<string, unknown>)[k] = v;
+            }
+          }
           setStoredPreferences(merged);
           setPrefs(merged);
         })
@@ -94,6 +412,21 @@ export function SettingsScreen() {
     apiRequest<{ voices: JarvisVoice[] }>('/api/tts/voices')
       .then(data => setVoices(data.voices))
       .catch(() => setVoices([]));
+
+    // Check integration status dynamically
+    const checkInt = async () => {
+      const [px, ha, rag] = await Promise.allSettled([
+        apiRequest<{ healthy?: boolean }>('/proxmox/health', { includeUser: true }),
+        apiRequest<{ healthy?: boolean }>('/home/health', { includeUser: true }),
+        apiRequest<{ counts?: Record<string, number> }>('/rag/status'),
+      ]);
+      setIntStatus({
+        proxmox: px.status === 'fulfilled' ? 'online' : 'offline',
+        ha: ha.status === 'fulfilled' ? 'online' : 'offline',
+        rag: rag.status === 'fulfilled' ? 'online' : 'offline',
+      });
+    };
+    void checkInt();
   }, []);
 
   const set = <K extends keyof UserPreferences>(k: K, v: UserPreferences[K]) => {
@@ -175,7 +508,15 @@ export function SettingsScreen() {
             {voices.map(v => {
               const selected = (prefs.tts_voice ?? '') === v.id;
               return (
-                <button key={v.id} onClick={() => set('tts_voice', v.id)}
+                <button key={v.id} onClick={() => {
+                  const next = { ...prefs, tts_voice: v.id };
+                  setPrefs(next);
+                  setStoredPreferences(next);
+                  if (getSessionToken()) {
+                    apiRequest('/auth/me/preferences', { method: 'PUT', includeUser: true, body: next })
+                      .catch(() => undefined);
+                  }
+                }}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 10,
                     background: selected ? J.bg3 : J.bg2,
@@ -196,6 +537,22 @@ export function SettingsScreen() {
         )}
       </div>
       <div style={{ padding: '16px 0', borderBottom: `1px solid ${J.border}` }}>
+        <div style={{ fontSize: 14, color: J.text, marginBottom: 8 }}>Test Voice</div>
+        <div style={{ fontSize: 12, color: J.textMuted, marginBottom: 12 }}>
+          Play a sample phrase using the currently selected voice.
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button onClick={handleTestVoice}
+            style={{ display: 'flex', alignItems: 'center', gap: 7, background: testingVoice ? J.amberDim : J.bg3, border: `1px solid ${testingVoice ? J.amber : J.border}`, color: testingVoice ? J.amber : J.textSec, borderRadius: 8, padding: '8px 16px', fontSize: 13, cursor: 'pointer', transition: 'all .15s' }}
+            onMouseEnter={e => { if (!testingVoice) { e.currentTarget.style.borderColor = J.borderAccent; e.currentTarget.style.color = J.text; } }}
+            onMouseLeave={e => { if (!testingVoice) { e.currentTarget.style.borderColor = J.border; e.currentTarget.style.color = J.textSec; } }}>
+            <IconVolume size={13} />
+            {testingVoice ? 'Stop' : 'Test voice'}
+          </button>
+          {voiceTestErr && <span style={{ fontSize: 12, color: J.error }}>{voiceTestErr}</span>}
+        </div>
+      </div>
+      <div style={{ padding: '16px 0', borderBottom: `1px solid ${J.border}` }}>
         <div style={{ fontSize: 14, color: J.text, marginBottom: 6 }}>Wake Word</div>
         <div style={{ fontSize: 13, color: J.textMuted, lineHeight: 1.6 }}>
           Wake word settings (phrase, enabled state) are configured in the{' '}
@@ -210,11 +567,12 @@ export function SettingsScreen() {
       </div>
     </>),
 
+    memory: (<MemoryPanel />),
+
     integrations: (<>
-      <Integration name="Proxmox" status="configured" note="Via JARVIS_PROXMOX_HOST env var" icon={<IconSettings size={14} />} />
-      <Integration name="Home Assistant" status="configured" note="Via JARVIS_HA_BASE_URL env var" icon={<IconSettings size={14} />} />
-      <Integration name="GitHub RAG" status="configured" note="Indexes repos for knowledge queries" icon={<IconCode size={14} />} />
-      <Integration name="WikiJS RAG" status="configured" note="Indexes wiki pages for knowledge queries" icon={<IconMemory size={14} />} />
+      <Integration name="Proxmox" status={intStatus.proxmox === 'checking' ? 'checking' : intStatus.proxmox === 'online' ? 'online' : 'offline'} note="Via JARVIS_PROXMOX_HOST env var" icon={<IconSettings size={14} />} />
+      <Integration name="Home Assistant" status={intStatus.ha === 'checking' ? 'checking' : intStatus.ha === 'online' ? 'online' : 'offline'} note="Via JARVIS_HA_BASE_URL env var" icon={<IconSettings size={14} />} />
+      <Integration name="RAG / Knowledge" status={intStatus.rag === 'checking' ? 'checking' : intStatus.rag === 'online' ? 'active' : 'offline'} note="GitHub repos + WikiJS indexing" icon={<IconCode size={14} />} />
       <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
         Integrations are configured via environment variables on the server. Use the{' '}
         <a href="/dashboard/settings" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>{' '}
@@ -222,21 +580,7 @@ export function SettingsScreen() {
       </div>
     </>),
 
-    security: (<>
-      <Row label="Confirm Critical Actions" desc="Always required for high-risk operations">
-        <span style={{ fontSize: 12, color: J.textMuted }}>Always on</span>
-      </Row>
-      <Row label="Audit Logging" desc="All actions are logged to disk">
-        <span style={{ fontSize: 12, color: J.textMuted }}>Always on</span>
-      </Row>
-      <Row label="Session" desc="Managed server-side, tied to your login">
-        <span style={{ fontSize: 12, color: J.textMuted }}>Server-managed</span>
-      </Row>
-      <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
-        Security settings like role permissions and emergency stop are managed in the{' '}
-        <a href="/dashboard" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>.
-      </div>
-    </>),
+    security: (<SecurityPanel />),
 
     developer: (<>
       <Field label="Display Name" value={prefs.display_name || ''}

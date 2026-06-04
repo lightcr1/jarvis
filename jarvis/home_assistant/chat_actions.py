@@ -206,6 +206,56 @@ def _entity_action(ctx: HomeAssistantChatContext, params: dict[str, object]) -> 
     }
 
 
+def _area_entity_action(ctx: HomeAssistantChatContext, params: dict[str, object]) -> dict[str, object]:
+    entity_ids = list(params.get("entity_ids") or [])
+    entity_labels = list(params.get("entity_labels") or [])
+    desired_action = str(params.get("action") or "").strip()
+    value = params.get("value")
+    remote = bool(params.get("remote", False))
+    area = str(params.get("area") or "").strip()
+
+    executed_count = 0
+    failed_labels: list[str] = []
+    requests: list[dict[str, object]] = []
+
+    for idx, entity_id in enumerate(entity_ids):
+        label = entity_labels[idx] if idx < len(entity_labels) else entity_id
+        try:
+            result = ctx.service.request_entity_action(
+                entity_id,
+                {"action": desired_action, "value": value, "remote": remote},
+                user_id=ctx.user_id,
+                role=ctx.role,
+            )
+            if result.get("executed"):
+                executed_count += 1
+            requests.append(result.get("request") or {})
+        except Exception:
+            failed_labels.append(label)
+
+    total = len(entity_ids)
+    reply_action = _humanize_entity_action(desired_action)
+    area_hint = f" im Bereich {area}" if area else ""
+    if failed_labels:
+        reply = f"{executed_count} von {total} Geräten{area_hint} wurden {reply_action}. Fehler bei: {', '.join(failed_labels)}."
+    elif executed_count == total:
+        reply = f"Alle {total} Geräte{area_hint} wurden {reply_action}."
+    else:
+        reply = f"{executed_count} von {total} Geräten{area_hint} wurden {reply_action}."
+
+    return {
+        "reply": reply,
+        "data": {
+            "route": "home_assistant_chat",
+            "intent": "area_entity_action",
+            "action": "area_entity_action",
+            "executed_count": executed_count,
+            "total": total,
+            "requests": requests,
+        },
+    }
+
+
 def _list_automations(ctx: HomeAssistantChatContext, _params: dict[str, object]) -> dict[str, object]:
     result = ctx.service.list_automation_rules(user_id=ctx.user_id, role=ctx.role)
     automations = result.get("automations") or []
@@ -432,5 +482,12 @@ HOME_ASSISTANT_CHAT_ACTION_REGISTRY: dict[str, HomeAssistantChatActionDefinition
         executor=_request_system_action,
         risk_level="high",
         requires_confirmation=True,
+    ),
+    "area_entity_action": HomeAssistantChatActionDefinition(
+        name="area_entity_action",
+        summary="Führt eine Geräteaktion auf allen Geräten eines Bereichs aus.",
+        required_fields=("entity_ids", "action"),
+        executor=_area_entity_action,
+        risk_level="medium",
     ),
 }

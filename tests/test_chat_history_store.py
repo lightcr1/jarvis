@@ -97,6 +97,19 @@ class ChatHistoryStoreTests(unittest.TestCase):
         result = self.store.delete_session("chat-ghost-xyz")
         self.assertFalse(result)
 
+    def test_delete_all_sessions_removes_all_for_owner(self):
+        self.store.create_session("A", owner_key="user:usr-1")
+        self.store.create_session("B", owner_key="user:usr-1")
+        self.store.create_session("Other", owner_key="user:usr-2")
+        deleted = self.store.delete_all_sessions("user:usr-1")
+        self.assertEqual(2, deleted)
+        self.assertEqual(0, len(self.store.list_sessions("user:usr-1")))
+        self.assertEqual(1, len(self.store.list_sessions("user:usr-2")))
+
+    def test_delete_all_sessions_returns_zero_for_unknown_owner(self):
+        deleted = self.store.delete_all_sessions("user:nobody")
+        self.assertEqual(0, deleted)
+
     def test_rename_session(self):
         s = self.store.create_session("Old Title")
         renamed = self.store.rename_session(s["id"], "New Title")
@@ -123,9 +136,10 @@ class ChatHistoryStoreTests(unittest.TestCase):
     def test_list_sessions_sorted_by_updated_at_desc(self):
         s1 = self.store.create_session("First")
         s2 = self.store.create_session("Second")
-        # Force s2 to have a newer updated_at by directly setting it
-        self.store.data["sessions"][s1["id"]]["updated_at"] = 1000
-        self.store.data["sessions"][s2["id"]]["updated_at"] = 2000
+        # Force s2 to have a newer updated_at via direct DB update
+        self.store._ex("UPDATE sessions SET updated_at=1000 WHERE id=?", (s1["id"],))
+        self.store._ex("UPDATE sessions SET updated_at=2000 WHERE id=?", (s2["id"],))
+        self.store._conn.commit()
         sessions = self.store.list_sessions()
         self.assertEqual(s2["id"], sessions[0]["id"])
 
@@ -213,6 +227,86 @@ class JarvisStatusHubTests(unittest.TestCase):
         self.assertEqual(2, snap["counts"]["processing"])
         hub.end(t1)
         hub.end(t2)
+
+
+class ChatSearchTests(unittest.TestCase):
+    def setUp(self):
+        self.tmpdir = tempfile.TemporaryDirectory()
+        os.environ["JARVIS_CHAT_HISTORY_PATH"] = os.path.join(self.tmpdir.name, "ch.json")
+        self.store = ChatHistoryStore()
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+        os.environ.pop("JARVIS_CHAT_HISTORY_PATH", None)
+
+    def _make_session_with_msg(self, title: str, msg: str, owner: str = "guest:anonymous") -> str:
+        s = self.store.create_session(title, owner_key=owner)
+        self.store.append_message(s["id"], "user", msg, owner_key=owner)
+        return s["id"]
+
+    def test_search_finds_matching_message(self):
+        self._make_session_with_msg("Chat A", "Tell me about black holes")
+        hits = self.store.search_messages("black holes")
+        self.assertEqual(1, len(hits))
+        self.assertEqual("Chat A", hits[0]["session_title"])
+
+    def test_search_empty_query_returns_empty(self):
+        self._make_session_with_msg("Chat A", "hello world")
+        hits = self.store.search_messages("")
+        self.assertEqual([], hits)
+
+    def test_search_no_match_returns_empty(self):
+        self._make_session_with_msg("Chat A", "hello world")
+        hits = self.store.search_messages("quantum physics")
+        self.assertEqual([], hits)
+
+    def test_search_is_case_insensitive(self):
+        self._make_session_with_msg("Chat A", "Python is great")
+        hits = self.store.search_messages("PYTHON")
+        self.assertEqual(1, len(hits))
+
+    def test_search_only_returns_own_sessions(self):
+        self._make_session_with_msg("Own", "secret info", owner="user:u1")
+        self._make_session_with_msg("Other", "secret info", owner="user:u2")
+        hits = self.store.search_messages("secret info", owner_key="user:u1")
+        self.assertEqual(1, len(hits))
+        self.assertEqual("Own", hits[0]["session_title"])
+
+    def test_search_includes_snippet(self):
+        self._make_session_with_msg("Chat A", "The answer is 42 and it is universal")
+        hits = self.store.search_messages("answer")
+        self.assertIn("answer", hits[0]["snippet"].lower())
+
+    def test_search_includes_session_id(self):
+        sid = self._make_session_with_msg("Chat A", "hello world")
+        hits = self.store.search_messages("hello")
+        self.assertEqual(sid, hits[0]["session_id"])
+
+    def test_search_limit_respected(self):
+        for i in range(10):
+            self._make_session_with_msg(f"Chat {i}", f"match target {i}")
+        hits = self.store.search_messages("match target", limit=5)
+        self.assertLessEqual(len(hits), 5)
+
+    def test_search_sorted_newest_first(self):
+        from unittest.mock import patch
+        import time as _t
+        base = int(_t.time())
+        s1 = self.store.create_session("Old", owner_key="guest:anonymous")
+        with patch("jarvis.runtime_state.time") as mock_t:
+            mock_t.time.return_value = base + 10
+            self.store.append_message(s1["id"], "user", "match word")
+        s2 = self.store.create_session("New", owner_key="guest:anonymous")
+        with patch("jarvis.runtime_state.time") as mock_t:
+            mock_t.time.return_value = base + 20
+            self.store.append_message(s2["id"], "user", "match word")
+        hits = self.store.search_messages("match word")
+        self.assertEqual(s2["id"], hits[0]["session_id"])
+
+    def test_search_returns_role_field(self):
+        self._make_session_with_msg("Chat A", "user said this")
+        hits = self.store.search_messages("user said")
+        self.assertEqual("user", hits[0]["role"])
 
 
 if __name__ == "__main__":

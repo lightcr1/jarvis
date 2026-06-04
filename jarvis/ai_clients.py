@@ -19,8 +19,19 @@ SYSTEM_PROMPT = (
 )
 
 
-def build_system_prompt(user_name: str | None = None, voice_mode: bool = False) -> str:
+def build_system_prompt(
+    user_name: str | None = None,
+    voice_mode: bool = False,
+    location: str | None = None,
+    notes: list[str] | None = None,
+) -> str:
     name_line = f" Address the user as '{user_name}'." if user_name else ""
+    context_parts = []
+    if location:
+        context_parts.append(f"User location: {location}.")
+    if notes:
+        context_parts.append(f"User's personal notes: {'; '.join(notes[:10])}.")
+    context_line = ("\n\nPERSONAL CONTEXT: " + " ".join(context_parts)) if context_parts else ""
     voice_line = (
         "\n\nVOICE MODE: This response will be spoken aloud by text-to-speech. "
         "Use absolutely NO markdown formatting — no asterisks, no hashtags, no backticks, no bullet points, no numbered lists. "
@@ -42,6 +53,7 @@ def build_system_prompt(user_name: str | None = None, voice_mode: bool = False) 
         "CONSTRAINTS: Never identify yourself as an AI assistant or language model. "
         "Never say 'I cannot' — instead state what you need or suggest an alternative. "
         "Never break character."
+        f"{context_line}"
         f"{voice_line}"
     )
 

@@ -1,25 +1,28 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { J, useJ, StatusBadge, MetricCard, Spinner, IconSettings, IconPlus, IconX, IconCheck, IconActivity, IconGrid, IconShield, IconCode, IconMemory } from './jarvis-shared';
+import { apiRequest } from '../shared/api/client';
 
 const SERVICES = [
-  { id: 'chat',    name: 'Chat',           desc: 'AI conversation — text and context',      status: 'connected', cat: 'Core',           screen: 'chat',  note: 'Always active' },
-  { id: 'orb',     name: 'Voice',          desc: 'Voice interaction & wake word',            status: 'connected', cat: 'Core',           screen: 'orb',   note: 'Always active' },
-  { id: 'memory',  name: 'Memory',         desc: 'Long-term context, feedback & aliases',    status: 'connected', cat: 'Core',           note: 'Always active' },
-  { id: 'security',name: 'Security',       desc: 'Audit log, RBAC, action confirmation',     status: 'connected', cat: 'Core',           note: 'Always active' },
-  { id: 'admin',   name: 'Admin',          desc: 'User & permission management dashboard',   status: 'connected', cat: 'Core',           note: 'Via /dashboard' },
-  { id: 'ha',      name: 'Home Assistant', desc: 'Smart home device control & automations',  status: 'configured', cat: 'Integrations',  screen: 'home',  note: 'Needs JARVIS_HA_BASE_URL' },
-  { id: 'proxmox', name: 'Proxmox',        desc: 'VM and LXC container management',          status: 'configured', cat: 'Integrations',  screen: 'proxmox', note: 'Needs Proxmox hosts configured' },
-  { id: 'github',  name: 'GitHub RAG',     desc: 'Repository knowledge indexing',            status: 'configured', cat: 'Knowledge',     note: 'Needs JARVIS_GITHUB_TOKEN' },
-  { id: 'wikijs',  name: 'WikiJS RAG',     desc: 'Wiki page knowledge indexing',             status: 'configured', cat: 'Knowledge',     note: 'Needs JARVIS_WIKIJS_URL' },
+  { id: 'chat',    name: 'Chat',           desc: 'AI conversation — text and context',      status: 'connected',  cat: 'Core',           screen: 'chat',    note: 'Always active' },
+  { id: 'orb',     name: 'Voice',          desc: 'Voice interaction & wake word',            status: 'connected',  cat: 'Core',           screen: 'orb',     note: 'Always active' },
+  { id: 'memory',  name: 'Memory',         desc: 'Long-term context, feedback & aliases',    status: 'connected',  cat: 'Core',                              note: 'Always active' },
+  { id: 'security',name: 'Security',       desc: 'Audit log, RBAC, action confirmation',     status: 'connected',  cat: 'Core',                              note: 'Always active' },
+  { id: 'admin',   name: 'Admin',          desc: 'User & permission management dashboard',   status: 'connected',  cat: 'Core',                              note: 'Via /dashboard' },
+  { id: 'ha',      name: 'Home Assistant', desc: 'Smart home device control & automations',  status: 'configured', cat: 'Integrations',   screen: 'home',    note: 'Needs JARVIS_HA_BASE_URL' },
+  { id: 'proxmox', name: 'Proxmox',        desc: 'VM and LXC container management',          status: 'configured', cat: 'Integrations',   screen: 'proxmox', note: 'Needs Proxmox hosts configured' },
+  { id: 'github',  name: 'GitHub RAG',     desc: 'Repository knowledge indexing',            status: 'configured', cat: 'Knowledge',                         note: 'Needs JARVIS_GITHUB_TOKEN' },
+  { id: 'wikijs',  name: 'WikiJS RAG',     desc: 'Wiki page knowledge indexing',             status: 'configured', cat: 'Knowledge',                         note: 'Needs JARVIS_WIKIJS_URL' },
 ] as const;
 
 const CATS = ['All', 'Core', 'Integrations', 'Knowledge'];
 
 type Service = typeof SERVICES[number];
 
-function ServiceCard({ svc, onNavigate }: { svc: Service; onNavigate: (s: string) => void }) {
-  const isConnected  = svc.status === 'connected';
-  const isConfigured = svc.status === 'configured';
+function ServiceCard({ svc, liveStatus, onNavigate }: { svc: Service; liveStatus: string; onNavigate: (s: string) => void }) {
+  const isConnected  = liveStatus === 'connected';
+  const isOnline     = liveStatus === 'online';
+  const isChecking   = liveStatus === 'checking';
+  const isConfigured = liveStatus === 'configured' || liveStatus === 'offline';
 
   const iconMap: Record<string, JSX.Element> = {
     Core:         <IconShield size={15} />,
@@ -32,23 +35,25 @@ function ServiceCard({ svc, onNavigate }: { svc: Service; onNavigate: (s: string
       onMouseEnter={e => { (e.currentTarget as HTMLDivElement).style.background = J.bg3; (e.currentTarget as HTMLDivElement).style.borderColor = J.borderHover; }}
       onMouseLeave={e => { (e.currentTarget as HTMLDivElement).style.background = J.bg2; (e.currentTarget as HTMLDivElement).style.borderColor = J.border; }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
-        <div style={{ width: 38, height: 38, borderRadius: 9, background: J.bg3, border: `1px solid ${J.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: isConnected ? J.amber : J.textMuted }}>
+        <div style={{ width: 38, height: 38, borderRadius: 9, background: J.bg3, border: `1px solid ${J.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: (isConnected || isOnline) ? J.amber : J.textMuted }}>
           {iconMap[svc.cat] || <IconSettings size={15} />}
         </div>
-        <StatusBadge status={svc.status} size="xs" />
+        {isChecking
+          ? <span style={{ fontSize: 11, color: J.textMuted, display: 'flex', alignItems: 'center', gap: 4 }}><Spinner size={10} /> checking</span>
+          : <StatusBadge status={liveStatus} size="xs" />
+        }
       </div>
       <div>
         <div style={{ fontSize: 14, fontWeight: 500, color: J.text, marginBottom: 3 }}>{svc.name}</div>
         <div style={{ fontSize: 12, color: J.textMuted, lineHeight: 1.45 }}>{svc.desc}</div>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 'auto' }}>
-        <span style={{ fontSize: 11, color: J.textMuted }}>{'note' in svc ? svc.note : ''}</span>
+        <span style={{ fontSize: 11, color: liveStatus === 'offline' ? J.error : J.textMuted }}>
+          {liveStatus === 'offline' ? 'unreachable' : ('note' in svc ? svc.note : '')}
+        </span>
         {'screen' in svc && (
           <button className="j-btn" onClick={() => onNavigate(svc.screen as string)}
             style={{ background: J.amberDim, border: `1px solid ${J.borderAccent}`, color: J.amber, borderRadius: 7, padding: '4px 11px', fontSize: 11, fontWeight: 500 }}>Open</button>
-        )}
-        {isConfigured && (
-          <span style={{ fontSize: 11, color: J.textMuted }}>env var required</span>
         )}
       </div>
     </div>
@@ -155,14 +160,39 @@ function AddModal({ onClose }: { onClose: () => void }) {
   );
 }
 
+type LiveStatus = 'checking' | 'online' | 'offline' | 'connected';
+type LiveStatusMap = Record<string, LiveStatus>;
+
 export function ServiceHubScreen({ onNavigate }: { onNavigate: (screen: string) => void }) {
   useJ();
-  const [cat, setCat]         = useState('All');
-  const [showAdd, setShowAdd] = useState(false);
+  const [cat, setCat]             = useState('All');
+  const [showAdd, setShowAdd]     = useState(false);
+  const [liveStatus, setLiveStatus] = useState<LiveStatusMap>({ ha: 'checking', proxmox: 'checking', github: 'checking', wikijs: 'checking' });
 
-  const shown     = cat === 'All' ? SERVICES : SERVICES.filter(s => s.cat === cat);
-  const connected = SERVICES.filter(s => s.status === 'connected').length;
-  const configured = SERVICES.filter(s => s.status === 'configured').length;
+  useEffect(() => {
+    Promise.allSettled([
+      apiRequest<{ healthy?: boolean }>('/proxmox/health', { includeUser: true }),
+      apiRequest<{ healthy?: boolean }>('/home/health', { includeUser: true }),
+      apiRequest<{ counts?: Record<string, number> }>('/rag/status'),
+    ]).then(([px, ha, rag]) => {
+      setLiveStatus({
+        proxmox: px.status === 'fulfilled' ? 'online' : 'offline',
+        ha:      ha.status === 'fulfilled' ? 'online' : 'offline',
+        github:  rag.status === 'fulfilled' ? 'online' : 'offline',
+        wikijs:  rag.status === 'fulfilled' ? 'online' : 'offline',
+      });
+    });
+  }, []);
+
+  const getStatus = (svc: typeof SERVICES[number]): string => {
+    if (svc.status === 'connected') return 'connected';
+    return liveStatus[svc.id] ?? 'checking';
+  };
+
+  const shown      = cat === 'All' ? SERVICES : SERVICES.filter(s => s.cat === cat);
+  const connected  = SERVICES.filter(s => s.status === 'connected').length;
+  const online     = Object.values(liveStatus).filter(s => s === 'online').length;
+  const offline    = Object.values(liveStatus).filter(s => s === 'offline').length;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: J.bg0 }}>
@@ -175,10 +205,10 @@ export function ServiceHubScreen({ onNavigate }: { onNavigate: (screen: string) 
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '22px 24px' }}>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))', gap: 10, marginBottom: 24 }}>
-          <MetricCard label="Active"       value={connected}    sublabel="Always-on services"     icon={<IconGrid size={14} />} />
-          <MetricCard label="Integrations" value={configured}   sublabel="Env-var configured"      icon={<IconCode size={14} />} />
-          <MetricCard label="Total"        value={SERVICES.length} sublabel="Registered services"  icon={<IconActivity size={14} />} />
-          <MetricCard label="Security"     value="RBAC"         sublabel="Role-based access"        icon={<IconShield size={14} />} accent={J.success} />
+          <MetricCard label="Core"         value={connected}        sublabel="Always-on services"    icon={<IconGrid size={14} />} />
+          <MetricCard label="Online"       value={online}           sublabel="Integrations reachable" icon={<IconActivity size={14} />} accent={J.success} />
+          <MetricCard label="Offline"      value={offline}          sublabel="Unreachable / unset"    icon={<IconCode size={14} />} accent={offline > 0 ? J.error : undefined} />
+          <MetricCard label="Total"        value={SERVICES.length}  sublabel="Registered services"    icon={<IconShield size={14} />} />
         </div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 18, flexWrap: 'wrap' }}>
           {CATS.map(c => (
@@ -189,7 +219,7 @@ export function ServiceHubScreen({ onNavigate }: { onNavigate: (screen: string) 
           ))}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(210px,1fr))', gap: 10 }}>
-          {shown.map(svc => <ServiceCard key={svc.id} svc={svc} onNavigate={onNavigate} />)}
+          {shown.map(svc => <ServiceCard key={svc.id} svc={svc} liveStatus={getStatus(svc)} onNavigate={onNavigate} />)}
         </div>
       </div>
       {showAdd && <AddModal onClose={() => setShowAdd(false)} />}

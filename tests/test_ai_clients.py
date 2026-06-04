@@ -30,7 +30,7 @@ if "faster_whisper" not in sys.modules:
     faster_whisper.WhisperModel = object
     sys.modules["faster_whisper"] = faster_whisper
 
-from jarvis.ai_clients import local_ai_chat_reply, local_ai_stub_reply
+from jarvis.ai_clients import build_system_prompt, local_ai_chat_reply, local_ai_stub_reply
 
 
 class _FakeHttpResponse:
@@ -45,6 +45,56 @@ class _FakeHttpResponse:
 
     def __exit__(self, exc_type, exc, tb):
         return False
+
+
+class BuildSystemPromptTests(unittest.TestCase):
+    def test_base_prompt_contains_jarvis(self):
+        prompt = build_system_prompt()
+        self.assertIn("J.A.R.V.I.S.", prompt)
+
+    def test_user_name_included(self):
+        prompt = build_system_prompt(user_name="Lukas")
+        self.assertIn("Lukas", prompt)
+
+    def test_location_injected(self):
+        prompt = build_system_prompt(location="Munich")
+        self.assertIn("Munich", prompt)
+        self.assertIn("PERSONAL CONTEXT", prompt)
+
+    def test_notes_injected(self):
+        prompt = build_system_prompt(notes=["buy milk", "call doctor"])
+        self.assertIn("buy milk", prompt)
+        self.assertIn("call doctor", prompt)
+        self.assertIn("PERSONAL CONTEXT", prompt)
+
+    def test_notes_capped_at_ten(self):
+        notes = [f"note{i}" for i in range(15)]
+        prompt = build_system_prompt(notes=notes)
+        self.assertNotIn("note10", prompt)
+        self.assertIn("note9", prompt)
+
+    def test_empty_notes_no_context_line(self):
+        prompt = build_system_prompt(notes=[])
+        self.assertNotIn("PERSONAL CONTEXT", prompt)
+
+    def test_none_location_no_context_line(self):
+        prompt = build_system_prompt(location=None)
+        self.assertNotIn("PERSONAL CONTEXT", prompt)
+
+    def test_voice_mode_adds_tts_instruction(self):
+        prompt = build_system_prompt(voice_mode=True)
+        self.assertIn("VOICE MODE", prompt)
+
+    def test_no_voice_mode_no_tts_instruction(self):
+        prompt = build_system_prompt(voice_mode=False)
+        self.assertNotIn("VOICE MODE", prompt)
+
+    def test_all_params_combined(self):
+        prompt = build_system_prompt(user_name="Lukas", location="Berlin", notes=["remember X"], voice_mode=True)
+        self.assertIn("Lukas", prompt)
+        self.assertIn("Berlin", prompt)
+        self.assertIn("remember X", prompt)
+        self.assertIn("VOICE MODE", prompt)
 
 
 class AiClientsTests(unittest.TestCase):

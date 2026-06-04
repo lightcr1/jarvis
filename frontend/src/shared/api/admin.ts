@@ -1,10 +1,13 @@
-import { apiRequest } from "./client";
+import { apiRequest, buildApiHeaders } from "./client";
 
 export type AdminUser = {
   id: string;
   username: string;
   role: string;
   enabled: boolean;
+  active_session?: boolean;
+  session_expires_at?: number | null;
+  last_seen_at?: number | null;
 };
 
 export type AdminGroup = {
@@ -47,6 +50,8 @@ export type AdminSettings = {
   voice: {
     wakeword_enabled: boolean;
     wakeword_phrase: string;
+    wakeword_engine: "software" | "openwakeword" | "none";
+    wakeword_sensitivity: number;
     stt_provider: "local" | "gemini";
   };
   home_assistant: {
@@ -82,6 +87,10 @@ export function setAdminUserPassword(userId: string, password: string) {
 
 export function deleteAdminUser(userId: string) {
   return apiRequest<{ ok: boolean; id: string }>(`/admin/users/${encodeURIComponent(userId)}`, { method: "DELETE", includeAdmin: true });
+}
+
+export function deleteAdminUserConversations(userId: string) {
+  return apiRequest<{ ok: boolean; deleted: number }>(`/admin/users/${encodeURIComponent(userId)}/conversations`, { method: "DELETE", includeAdmin: true });
 }
 
 export function fetchAdminGroups() {
@@ -135,8 +144,27 @@ export function fetchEffectivePermissions(userId: string) {
   return apiRequest<Record<string, unknown>>(`/admin/permissions/effective/${encodeURIComponent(userId)}`, { includeAdmin: true });
 }
 
+export type AdminSession = {
+  user_id: string;
+  username: string;
+  role: string;
+  expires_at: number;
+  expires_in_sec: number;
+};
+
 export function fetchAdminStatusSummary() {
   return apiRequest<AdminStatusSummary>("/admin/status/summary", { includeAdmin: true });
+}
+
+export function fetchAdminSessions() {
+  return apiRequest<{ sessions: AdminSession[]; count: number }>("/admin/sessions", { includeAdmin: true });
+}
+
+export function revokeAdminSession(userId: string) {
+  return apiRequest<{ ok: boolean; revoked: number; user_id: string }>(
+    `/admin/sessions/${encodeURIComponent(userId)}`,
+    { method: "DELETE", includeAdmin: true },
+  );
 }
 
 export function fetchAdminSettings() {
@@ -145,4 +173,26 @@ export function fetchAdminSettings() {
 
 export function updateAdminSettings(settings: AdminSettings) {
   return apiRequest<AdminSettingsPayload>("/admin/settings", { method: "PUT", includeAdmin: true, body: settings });
+}
+
+export async function downloadAdminBackup(): Promise<void> {
+  const headers = buildApiHeaders({ includeAdmin: true });
+  const res = await fetch("/admin/backup", { headers });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const disposition = res.headers.get("content-disposition") || "";
+  const match = disposition.match(/filename="([^"]+)"/);
+  const filename = match ? match[1] : "jarvis_backup.json";
+  const blob = await res.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+export async function restoreAdminBackup(payload: Record<string, unknown>) {
+  return apiRequest<{ ok: boolean; restored: Record<string, number> }>("/admin/backup/restore", {
+    method: "POST",
+    includeAdmin: true,
+    body: payload,
+  });
 }

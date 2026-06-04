@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { getSessionToken } from "./client";
+import { apiRequest, getSessionToken } from "./client";
 
 export type JarvisAlert = {
   id: string;
@@ -8,6 +8,37 @@ export type JarvisAlert = {
   message: string;
   source: string;
   code: string;
+};
+
+export type AlertRule = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  metric: "cpu" | "ram" | "disk" | "ha_entity";
+  condition: "above" | "below" | "equals" | "contains";
+  threshold: number | string;
+  duration_seconds: number;
+  severity: "info" | "warning" | "critical";
+  cooldown_seconds: number;
+  ha_entity_id: string | null;
+  ha_attribute: string | null;
+  message_template: string;
+};
+
+export type AlertRuleCreate = Omit<AlertRule, "id">;
+export type AlertRuleUpdate = Partial<AlertRuleCreate>;
+
+export type AlertEvent = {
+  type: "alert";
+  alert_id: string;
+  rule_id: string;
+  rule_name: string;
+  severity: "info" | "warning" | "critical";
+  metric: string;
+  current_value: number | string;
+  threshold: number | string;
+  message: string;
+  timestamp: number;
 };
 
 function wsUrl(path: string) {
@@ -61,4 +92,44 @@ export function useJarvisAlerts() {
   };
 
   return { alerts, dismissAlert };
+}
+
+export function fetchAlertRules() {
+  return apiRequest<{ rules: AlertRule[] }>("/admin/alerts/rules", { includeAdmin: true });
+}
+
+export function createAlertRule(body: AlertRuleCreate) {
+  return apiRequest<{ rule: AlertRule }>("/admin/alerts/rules", {
+    method: "POST",
+    includeAdmin: true,
+    body,
+  });
+}
+
+export function updateAlertRule(ruleId: string, body: AlertRuleUpdate) {
+  return apiRequest<{ rule: AlertRule }>(`/admin/alerts/rules/${encodeURIComponent(ruleId)}`, {
+    method: "PATCH",
+    includeAdmin: true,
+    body,
+  });
+}
+
+export function deleteAlertRule(ruleId: string) {
+  return apiRequest<{ ok: boolean; id: string }>(`/admin/alerts/rules/${encodeURIComponent(ruleId)}`, {
+    method: "DELETE",
+    includeAdmin: true,
+  });
+}
+
+export function testAlertRule(ruleId: string) {
+  return apiRequest<{ ok: boolean; event: AlertEvent }>(`/admin/alerts/rules/${encodeURIComponent(ruleId)}/test`, {
+    method: "POST",
+    includeAdmin: true,
+  });
+}
+
+export function fetchAlertHistory(limit = 100) {
+  return apiRequest<{ alerts: AlertEvent[] }>(`/admin/alerts/history?limit=${limit}`, {
+    includeAdmin: true,
+  });
 }

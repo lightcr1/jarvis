@@ -71,6 +71,8 @@ def build_auth_chat_deps(state: object) -> dict:
 def build_admin_deps(state: object) -> dict:
     return {
         "require_admin_access": state.require_admin_access,
+        "identity_tokens": live_attr(state, "_identity_tokens"),
+        "prune_identity_tokens": getattr(state, "_prune_identity_tokens", lambda t: None),
         "prepare_audit_filters": state._prepare_audit_filters,
         "validate_audit_query": state._validate_audit_query,
         "audit_log": live_attr(state, "audit_log"),
@@ -88,6 +90,7 @@ def build_admin_deps(state: object) -> dict:
         "permission_decision": state.permission_decision,
         "settings_env_summary": state._settings_env_summary,
         "admin_settings_store": live_attr(state, "admin_settings_store"),
+        "chat_history": live_attr(state, "chat_history"),
     }
 
 
@@ -123,5 +126,16 @@ def build_status_deps(state: object) -> dict:
 def build_alerts_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,
+        "require_admin_access": state.require_admin_access,
         "home_assistant_service": live_attr(state, "home_assistant_service"),
+        "alert_rules_store": live_attr(state, "alert_rules_store"),
+        "alert_engine": live_attr(state, "alert_engine"),
+        "audit_admin_event": state._audit_admin_event,
+    }
+
+
+def build_memory_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "memory_store": live_attr(state, "memory_store"),
     }

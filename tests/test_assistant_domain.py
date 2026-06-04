@@ -121,6 +121,31 @@ class AssistantDomainTests(unittest.TestCase):
         self.assertEqual("start", result["data"]["action"])
         self.assertEqual("vm", result["data"]["resource"])
 
+    def test_try_skill_can_queue_proxmox_vm_restart(self):
+        result = try_skill(
+            "pve restart vm home-pve pve 100",
+            role="admin",
+            token="tok",
+            granted_permissions=["actions.write.execute"],
+            emergency_stop_enabled=lambda: False,
+            permission_check=lambda *_args: True,
+            run_cmd=lambda *_args, **_kwargs: "",
+            disk_usage=lambda *_args, **_kwargs: None,
+            format_bytes=lambda value: str(value),
+            parse_meminfo=lambda: {},
+            parse_ping=lambda _out: {},
+            tail_lines=lambda text, max_lines=6: text,
+            ensure_service_allowed=lambda _service: None,
+            proxmox_vm_status=lambda *_args: {},
+            proxmox_lxc_status=lambda *_args: {},
+            proxmox_vm_action=lambda *_args: {"data": "UPID:node:task"},
+            proxmox_lxc_action=lambda *_args: {},
+        )
+
+        self.assertEqual("proxmox", result["data"]["provider"])
+        self.assertEqual("restart", result["data"]["action"])
+        self.assertEqual("vm", result["data"]["resource"])
+
 
 class SafeEvalTests(unittest.TestCase):
     def test_basic_arithmetic(self):
@@ -1407,6 +1432,483 @@ class MorseCodeSkillTests(unittest.TestCase):
         encoded = r1["data"]["result"]
         r2 = try_skill(f"morse decode {encoded}", **_deps())
         self.assertEqual("JARVIS", r2["data"]["result"])
+
+
+class CpuTemperatureSkillTests(unittest.TestCase):
+    def _make_temps(self, zones):
+        """Patch _read_cpu_temps to return a fixed list."""
+        return patch("jarvis.assistant_domain._read_cpu_temps", return_value=zones)
+
+    def test_temperature_returns_peak(self):
+        zones = [{"zone": 0, "temp_c": 52.0}, {"zone": 1, "temp_c": 61.0}]
+        with self._make_temps(zones):
+            result = try_skill("temperature", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("temperature", result["data"]["route"])
+        self.assertEqual(61.0, result["data"]["peak_c"])
+
+    def test_temperature_keyword_cpu_temp(self):
+        zones = [{"zone": 0, "temp_c": 45.0}]
+        with self._make_temps(zones):
+            result = try_skill("cpu temp", **_deps())
+        self.assertIsNotNone(result)
+        self.assertIn("45.0", result["reply"])
+
+    def test_temperature_hot_verdict(self):
+        zones = [{"zone": 0, "temp_c": 85.0}]
+        with self._make_temps(zones):
+            result = try_skill("how hot is my cpu", **_deps())
+        self.assertIsNotNone(result)
+        self.assertIn("hot", result["reply"].lower())
+
+    def test_temperature_no_sensors(self):
+        with self._make_temps([]):
+            run_cmd_mock = Mock(side_effect=Exception("no sensors"))
+            result = try_skill("cpu temperature", **_deps(run_cmd=run_cmd_mock))
+        self.assertIsNotNone(result)
+        self.assertEqual("temperature", result["data"]["route"])
+
+    def test_temperature_safe_verdict(self):
+        zones = [{"zone": 0, "temp_c": 40.0}]
+        with self._make_temps(zones):
+            result = try_skill("cpu temperature", **_deps())
+        self.assertIsNotNone(result)
+        self.assertIn("safe", result["reply"].lower())
+
+    def test_temperature_german_keyword(self):
+        zones = [{"zone": 0, "temp_c": 55.0}]
+        with self._make_temps(zones):
+            result = try_skill("wie heiß ist mein cpu", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("temperature", result["data"]["route"])
+
+
+class BatterySkillTests(unittest.TestCase):
+    def _bat(self, **kw):
+        defaults = {"found": True, "percent": 72, "status": "Discharging", "time_remaining": "2h 15m"}
+        return patch("jarvis.assistant_domain._read_battery", return_value={**defaults, **kw})
+
+    def test_battery_returns_percent(self):
+        with self._bat():
+            result = try_skill("battery", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("battery", result["data"]["route"])
+        self.assertIn("72%", result["reply"])
+
+    def test_battery_charging(self):
+        with self._bat(percent=85, status="Charging", time_remaining=""):
+            result = try_skill("battery status", **_deps())
+        self.assertIn("Charging", result["reply"])
+
+    def test_battery_low_warning(self):
+        with self._bat(percent=15, status="Discharging", time_remaining="0h 30m"):
+            result = try_skill("battery", **_deps())
+        self.assertIn("low", result["reply"].lower())
+
+    def test_battery_no_battery(self):
+        with patch("jarvis.assistant_domain._read_battery", return_value=None):
+            result = try_skill("battery", **_deps())
+        self.assertIsNotNone(result)
+        self.assertFalse(result["data"].get("found"))
+
+    def test_battery_keyword_charge(self):
+        with self._bat(percent=100, status="Full"):
+            result = try_skill("charge", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("battery", result["data"]["route"])
+
+    def test_battery_german_keyword(self):
+        with self._bat():
+            result = try_skill("akku status", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("battery", result["data"]["route"])
+
+
+class MemoryHogsSkillTests(unittest.TestCase):
+    _PS_OUTPUT = (
+        "USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\n"
+        "root   1  0.5 12.3 12345 6789 ?   S  08:00 0:01 /usr/bin/firefox\n"
+        "root   2  0.1  8.1 10000 5000 ?   S  08:01 0:00 /usr/bin/python3\n"
+        "root   3  0.0  2.5  5000 2000 ?   S  08:02 0:00 /usr/sbin/sshd\n"
+    )
+
+    def test_memory_hogs(self):
+        result = try_skill("memory hogs", **_deps(run_cmd=lambda *_a, **_k: self._PS_OUTPUT))
+        self.assertIsNotNone(result)
+        self.assertEqual("memory_hogs", result["data"]["route"])
+        self.assertGreater(len(result["data"]["processes"]), 0)
+
+    def test_top_memory(self):
+        result = try_skill("top memory", **_deps(run_cmd=lambda *_a, **_k: self._PS_OUTPUT))
+        self.assertIsNotNone(result)
+        self.assertEqual("memory_hogs", result["data"]["route"])
+
+    def test_memory_hogs_reply_contains_process(self):
+        result = try_skill("most memory", **_deps(run_cmd=lambda *_a, **_k: self._PS_OUTPUT))
+        self.assertIn("firefox", result["reply"])
+
+
+class UpdatesSkillTests(unittest.TestCase):
+    _APT_OUTPUT_UPDATES = (
+        "Listing... Done\n"
+        "curl/focal 7.68.0-1ubuntu2.22 amd64 [upgradable from: 7.68.0-1ubuntu2.20]\n"
+        "git/focal 1:2.25.1-1ubuntu3.13 amd64 [upgradable from: 1:2.25.1-1ubuntu3.12]\n"
+        "vim/focal 2:8.1.2269-1ubuntu5.22 amd64 [upgradable from: 2:8.1.2269-1ubuntu5.20]\n"
+    )
+    _APT_OUTPUT_NONE = "Listing... Done\n"
+
+    def test_updates_available(self):
+        result = try_skill("check updates", **_deps(run_cmd=lambda *_a, **_k: self._APT_OUTPUT_UPDATES))
+        self.assertIsNotNone(result)
+        self.assertEqual("updates", result["data"]["route"])
+        self.assertEqual(3, result["data"]["count"])
+        self.assertIn("curl", result["data"]["packages"])
+
+    def test_updates_none(self):
+        result = try_skill("system updates", **_deps(run_cmd=lambda *_a, **_k: self._APT_OUTPUT_NONE))
+        self.assertIsNotNone(result)
+        self.assertEqual(0, result["data"]["count"])
+        self.assertIn("up to date", result["reply"].lower())
+
+    def test_updates_apt_unavailable(self):
+        result = try_skill("updates", **_deps(run_cmd=Mock(side_effect=Exception("apt not found"))))
+        self.assertIsNotNone(result)
+        self.assertEqual("unavailable", result["data"]["error"])
+
+    def test_updates_keyword_upgrades(self):
+        result = try_skill("upgrades", **_deps(run_cmd=lambda *_a, **_k: self._APT_OUTPUT_NONE))
+        self.assertIsNotNone(result)
+        self.assertEqual("updates", result["data"]["route"])
+
+
+class DockerStatsSkillTests(unittest.TestCase):
+    _STATS_OUTPUT = (
+        "myapp\t2.5%\t128MiB / 2GiB\t10MB / 5MB\n"
+        "db\t0.1%\t512MiB / 2GiB\t2MB / 1MB\n"
+    )
+
+    def test_docker_stats(self):
+        result = try_skill("docker stats", **_deps(run_cmd=lambda *_a, **_k: self._STATS_OUTPUT))
+        self.assertIsNotNone(result)
+        self.assertEqual("docker_stats", result["data"]["route"])
+        self.assertEqual(2, len(result["data"]["containers"]))
+
+    def test_docker_stats_empty(self):
+        result = try_skill("container stats", **_deps(run_cmd=lambda *_a, **_k: ""))
+        self.assertIsNotNone(result)
+        self.assertEqual(0, len(result["data"]["containers"]))
+        self.assertIn("No containers", result["reply"])
+
+    def test_docker_stats_alias(self):
+        result = try_skill("container resources", **_deps(run_cmd=lambda *_a, **_k: self._STATS_OUTPUT))
+        self.assertIsNotNone(result)
+        self.assertEqual("docker_stats", result["data"]["route"])
+
+
+class PortCheckSkillTests(unittest.TestCase):
+    def test_port_check_open(self):
+        import socket as _s
+        with unittest.mock.patch.object(_s, "create_connection") as mock_cc:
+            mock_cc.return_value.__enter__ = lambda s: s
+            mock_cc.return_value.__exit__ = lambda s, *_: False
+            result = try_skill("port check localhost 80", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("port_check", result["data"]["route"])
+        self.assertTrue(result["data"]["open"])
+        self.assertEqual(80, result["data"]["port"])
+
+    def test_port_check_closed(self):
+        import socket as _s
+        with unittest.mock.patch.object(_s, "create_connection", side_effect=ConnectionRefusedError):
+            result = try_skill("port check localhost 9999", **_deps())
+        self.assertIsNotNone(result)
+        self.assertFalse(result["data"]["open"])
+
+    def test_port_check_invalid_port(self):
+        result = try_skill("port check localhost 99999", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("invalid_port", result["data"]["error"])
+
+    def test_port_check_aliases(self):
+        import socket as _s
+        with unittest.mock.patch.object(_s, "create_connection", side_effect=ConnectionRefusedError):
+            for phrase in ["check port localhost 22", "tcp localhost 22", "port test localhost 22"]:
+                with self.subTest(phrase=phrase):
+                    result = try_skill(phrase, **_deps())
+                    self.assertIsNotNone(result)
+                    self.assertEqual("port_check", result["data"]["route"])
+
+
+class SecretGeneratorSkillTests(unittest.TestCase):
+    def test_generate_secret_default(self):
+        result = try_skill("generate secret", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("secret", result["data"]["route"])
+        self.assertEqual(32, result["data"]["bytes"])
+        self.assertEqual(64, len(result["data"]["secret"]))  # 32 bytes = 64 hex chars
+
+    def test_generate_secret_custom_size(self):
+        result = try_skill("generate secret 16", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual(16, result["data"]["bytes"])
+        self.assertEqual(32, len(result["data"]["secret"]))
+
+    def test_generate_secret_too_small_clamped(self):
+        result = try_skill("generate secret 2", **_deps())
+        self.assertIsNotNone(result)
+        self.assertGreaterEqual(result["data"]["bytes"], 8)
+
+    def test_generate_secret_too_large_clamped(self):
+        result = try_skill("generate secret 999", **_deps())
+        self.assertIsNotNone(result)
+        self.assertLessEqual(result["data"]["bytes"], 128)
+
+    def test_generate_hex_secret_alias(self):
+        result = try_skill("generate hex secret", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("secret", result["data"]["route"])
+
+    def test_secret_key_alias(self):
+        result = try_skill("secret key 24", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual(24, result["data"]["bytes"])
+
+
+class CronExplainSkillTests(unittest.TestCase):
+    def test_cron_every_minute(self):
+        result = try_skill("cron explain * * * * *", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("cron_explain", result["data"]["route"])
+        self.assertIn("every minute", result["data"]["human"])
+        self.assertIn("every hour", result["data"]["human"])
+
+    def test_cron_specific_time(self):
+        result = try_skill("cron explain 30 8 * * 1", **_deps())
+        self.assertIsNotNone(result)
+        self.assertIn("minute 30", result["data"]["human"])
+        self.assertIn("hour 8", result["data"]["human"])
+        self.assertIn("Mon", result["data"]["human"])
+
+    def test_cron_with_step(self):
+        result = try_skill("cron explain */5 * * * *", **_deps())
+        self.assertIsNotNone(result)
+        self.assertIn("every 5 minute", result["data"]["human"])
+
+    def test_cron_wrong_field_count(self):
+        result = try_skill("cron explain * * *", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("wrong_field_count", result["data"]["error"])
+
+    def test_cron_aliases(self):
+        for phrase in ["cron describe 0 12 * * *", "cron parse 0 12 * * *", "cron what is 0 12 * * *"]:
+            with self.subTest(phrase=phrase):
+                result = try_skill(phrase, **_deps())
+                self.assertIsNotNone(result)
+                self.assertEqual("cron_explain", result["data"]["route"])
+
+    def test_cron_with_month_list(self):
+        result = try_skill("cron explain 0 0 1 1,6,12 *", **_deps())
+        self.assertIsNotNone(result)
+        self.assertIn("Jan", result["data"]["human"])
+
+
+class DiffSkillTests(unittest.TestCase):
+    def test_diff_finds_changes(self):
+        result = try_skill("diff hello world | hello everyone", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("diff", result["data"]["route"])
+        self.assertFalse(result["data"]["identical"])
+        self.assertGreater(result["data"]["removed"], 0)
+        self.assertGreater(result["data"]["added"], 0)
+
+    def test_diff_identical(self):
+        result = try_skill("diff hello | hello", **_deps())
+        self.assertIsNotNone(result)
+        self.assertTrue(result["data"]["identical"])
+        self.assertIn("identical", result["reply"])
+
+    def test_diff_multiline(self):
+        result = try_skill("diff line1\nline2 | line1\nline3", **_deps())
+        self.assertIsNotNone(result)
+        self.assertFalse(result["data"]["identical"])
+
+    def test_diff_reply_contains_diff_block(self):
+        result = try_skill("diff foo | bar", **_deps())
+        self.assertIsNotNone(result)
+        self.assertIn("```diff", result["reply"])
+
+
+class YamlSkillTests(unittest.TestCase):
+    def test_yaml_format_valid(self):
+        result = try_skill("yaml format name: alice\nage: 30", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("yaml_format", result["data"]["route"])
+        self.assertTrue(result["data"]["valid"])
+        self.assertIn("```yaml", result["reply"])
+
+    def test_yaml_format_valid_keyword(self):
+        for phrase in ["yaml validate name: ok", "yaml check name: ok", "yaml lint name: ok"]:
+            with self.subTest(phrase=phrase):
+                result = try_skill(phrase, **_deps())
+                self.assertIsNotNone(result)
+                self.assertTrue(result["data"]["valid"])
+
+    def test_yaml_format_invalid(self):
+        result = try_skill("yaml format {bad: yaml: here:", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("yaml_format", result["data"]["route"])
+        self.assertFalse(result["data"]["valid"])
+        self.assertIn("Invalid YAML", result["reply"])
+
+    def test_yaml_format_nested(self):
+        yaml_in = "server:\n  host: localhost\n  port: 8080"
+        result = try_skill(f"yaml format {yaml_in}", **_deps())
+        self.assertIsNotNone(result)
+        self.assertTrue(result["data"]["valid"])
+
+
+class RegexSkillTests(unittest.TestCase):
+    def test_regex_match_found(self):
+        result = try_skill(r"regex test /\d+/ against foo 123 bar 456", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("regex_test", result["data"]["route"])
+        self.assertTrue(result["data"]["matched"])
+        self.assertEqual(2, result["data"]["count"])
+
+    def test_regex_match_not_found(self):
+        result = try_skill(r"regex test /xyz/ against hello world", **_deps())
+        self.assertIsNotNone(result)
+        self.assertFalse(result["data"]["matched"])
+        self.assertEqual(0, result["data"]["count"])
+
+    def test_regex_match_case_insensitive_flag(self):
+        result = try_skill(r"regex test /hello/i against Hello World", **_deps())
+        self.assertIsNotNone(result)
+        self.assertTrue(result["data"]["matched"])
+
+    def test_regex_match_with_groups(self):
+        result = try_skill(r"regex test /(\w+)@(\w+)/ against user@example", **_deps())
+        self.assertIsNotNone(result)
+        self.assertTrue(result["data"]["matched"])
+
+    def test_regex_invalid_pattern(self):
+        result = try_skill(r"regex test /[invalid/ against anything", **_deps())
+        self.assertIsNotNone(result)
+        self.assertIn("error", result["data"])
+
+    def test_regex_quoted_pattern(self):
+        result = try_skill(r'regex test "hello" against say hello world', **_deps())
+        self.assertIsNotNone(result)
+        self.assertTrue(result["data"]["matched"])
+
+    def test_regex_aliases(self):
+        result = try_skill(r"regex check /\d+/ against abc 1 def", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("regex_test", result["data"]["route"])
+
+
+class JsonSkillTests(unittest.TestCase):
+    def test_json_format_valid(self):
+        result = try_skill('json format {"a":1,"b":2}', **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("json_format", result["data"]["route"])
+        self.assertTrue(result["data"]["valid"])
+        self.assertIn("```json", result["reply"])
+
+    def test_json_format_aliases(self):
+        for cmd in ["json pretty", "json lint", "json validate", "json pp", "json beautify"]:
+            with self.subTest(cmd=cmd):
+                result = try_skill(f'{cmd} {{"x":1}}', **_deps())
+                self.assertIsNotNone(result)
+                self.assertEqual("json_format", result["data"]["route"])
+
+    def test_json_format_invalid(self):
+        result = try_skill("json format {bad json", **_deps())
+        self.assertIsNotNone(result)
+        self.assertFalse(result["data"]["valid"])
+        self.assertIn("error", result["data"])
+
+    def test_json_format_nested(self):
+        result = try_skill('json format {"a":{"b":[1,2,3]}}', **_deps())
+        self.assertIsNotNone(result)
+        self.assertTrue(result["data"]["valid"])
+
+    def test_json_minify_basic(self):
+        result = try_skill('json minify {"a": 1, "b": 2}', **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("json_minify", result["data"]["route"])
+        self.assertTrue(result["data"]["valid"])
+        self.assertNotIn(" ", result["data"]["result"])
+
+    def test_json_minify_aliases(self):
+        for cmd in ["json min", "json compact", "json compress"]:
+            with self.subTest(cmd=cmd):
+                result = try_skill(f'{cmd} {{"x":1}}', **_deps())
+                self.assertIsNotNone(result)
+                self.assertEqual("json_minify", result["data"]["route"])
+
+    def test_json_minify_invalid(self):
+        result = try_skill("json minify {bad", **_deps())
+        self.assertIsNotNone(result)
+        self.assertFalse(result["data"]["valid"])
+
+    def test_json_minify_removes_spaces(self):
+        result = try_skill('json minify {"key": "value", "num": 42}', **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual('{"key":"value","num":42}', result["data"]["result"])
+
+
+class CaseConvertSkillTests(unittest.TestCase):
+    def test_uppercase(self):
+        result = try_skill("upper hello world", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("case_convert", result["data"]["route"])
+        self.assertEqual("HELLO WORLD", result["data"]["result"])
+
+    def test_lowercase(self):
+        result = try_skill("lower HELLO WORLD", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("hello world", result["data"]["result"])
+
+    def test_title_case(self):
+        result = try_skill("title the quick brown fox", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("The Quick Brown Fox", result["data"]["result"])
+
+    def test_snake_case(self):
+        result = try_skill("snake case hello world", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("hello_world", result["data"]["result"])
+
+    def test_camel_case(self):
+        result = try_skill("camel case hello world", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("helloWorld", result["data"]["result"])
+
+    def test_pascal_case(self):
+        result = try_skill("pascal case hello world", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("HelloWorld", result["data"]["result"])
+
+    def test_kebab_case(self):
+        result = try_skill("kebab case hello world", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("hello-world", result["data"]["result"])
+
+    def test_screaming_snake(self):
+        result = try_skill("screaming snake hello world", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("HELLO_WORLD", result["data"]["result"])
+
+    def test_uppercase_alias(self):
+        result = try_skill("uppercase foo bar", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("FOO BAR", result["data"]["result"])
+
+    def test_lowercase_alias(self):
+        result = try_skill("lowercase FOO", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("foo", result["data"]["result"])
 
 
 if __name__ == "__main__":

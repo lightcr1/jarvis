@@ -137,6 +137,8 @@ class RouterDependencyTests(unittest.TestCase):
             permission_decision=lambda *args, **kwargs: {"allowed": False},
             _settings_env_summary=lambda: {},
             admin_settings_store=_NoopSettings(),
+            _identity_tokens={},
+            _prune_identity_tokens=lambda t: None,
         )
         app = FastAPI()
         app.include_router(build_admin_router(build_admin_deps(state)))

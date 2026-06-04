@@ -1,6 +1,17 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { createBrowserRouter, RouterProvider } from "react-router-dom";
+
+// Apply stored theme synchronously before first render to avoid flash
+try {
+  const raw = localStorage.getItem("jarvis_user_prefs");
+  const prefs = raw ? JSON.parse(raw) : {};
+  if (prefs.theme === "light") {
+    document.body.style.background = "#ebebeb";
+    document.body.style.color = "#0c0c0c";
+    document.documentElement.style.colorScheme = "light";
+  }
+} catch { /* ignore */ }
 import { AuthProvider } from "./features/auth/AuthProvider";
 import { JarvisApp } from "./screens/JarvisApp";
 import { AdminLoginPage } from "./routes/auth/AdminLoginPage";

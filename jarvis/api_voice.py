@@ -1,9 +1,10 @@
 import os
 
-from fastapi import APIRouter, File, Header, HTTPException, UploadFile
+from fastapi import APIRouter, File, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse, Response
 
 from .api_models import TTSIn
+from .rate_limiter import _rate
 from .router_dependencies import LiveRef
 from .user_preferences_store import JARVIS_VOICES
 
@@ -22,9 +23,13 @@ def build_voice_router(deps: dict) -> APIRouter:
     @router.post("/stt")
     async def stt(
         file: UploadFile = File(...),
+        request: Request = None,
         x_jarvis_session: str | None = Header(default=None),
         x_jarvis_mode: str | None = Header(default=None),
     ):
+        rl_key = x_jarvis_session or (request.client.host if request and request.client else "anon")
+        if not _rate.allow(f"stt:{rl_key}", limit=30, window=60.0):
+            raise HTTPException(429, "Rate limit exceeded — too many transcription requests.")
         status_token = current("status_hub").begin("recording", source="voice", mode=(x_jarvis_mode or "").strip().lower())
         if (x_jarvis_mode or "").strip().lower() == "orb":
             deps["require_identity_session"](x_jarvis_session)
@@ -89,20 +94,25 @@ def build_voice_router(deps: dict) -> APIRouter:
     @router.post("/tts")
     def tts(
         payload: TTSIn,
+        request: Request = None,
         x_jarvis_session: str | None = Header(default=None),
     ):
         text = (payload.text or "").strip()
         if not text:
             raise HTTPException(400, "Missing text")
+        rl_key = x_jarvis_session or (request.client.host if request and request.client else "anon")
+        if not _rate.allow(f"tts:{rl_key}", limit=60, window=60.0):
+            raise HTTPException(429, "Rate limit exceeded — too many TTS requests.")
 
-        # Resolve per-user voice preference if logged in
-        voice = ""
-        session = deps.get("get_identity_session") and deps["get_identity_session"](x_jarvis_session)
-        if session:
-            user_id = session.get("user_id", "")
-            user_prefs_store = current("user_preferences_store")
-            if user_id and user_prefs_store:
-                voice = user_prefs_store.get(user_id).get("tts_voice", "") or ""
+        # Explicit voice in the request body takes priority; fall back to stored user preference
+        voice = (payload.voice or "").strip()
+        if not voice:
+            session = deps.get("get_identity_session") and deps["get_identity_session"](x_jarvis_session)
+            if session:
+                user_id = (session.get("user") or {}).get("id", "")
+                user_prefs_store = current("user_preferences_store")
+                if user_id and user_prefs_store:
+                    voice = user_prefs_store.get(user_id).get("tts_voice", "") or ""
 
         status_token = current("status_hub").begin("speaking", source="voice", mode="tts")
         try:

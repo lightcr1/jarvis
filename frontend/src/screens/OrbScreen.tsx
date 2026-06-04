@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
-import { J, useJ, stripMarkdown, StatusBadge, IconMic, IconSettings, IconChat, MarkdownText } from './jarvis-shared';
-import { streamChatMessage, transcribeAudio, synthesizeSpeech } from '../shared/api/chat';
+import { J, useJ, stripMarkdown, StatusBadge, IconMic, IconSettings, IconChat, IconVolume, MarkdownText, showToast } from './jarvis-shared';
+import { streamChatMessage, transcribeAudio, synthesizeSpeech, SttError } from '../shared/api/chat';
 
 const ORB_STATES: Record<string, { label: string; sub: string; speedMult: number; glowMult: number }> = {
   idle:      { label: 'Ready',      sub: 'Tap the mic to speak',       speedMult: 1,   glowMult: 1   },
@@ -234,7 +234,24 @@ export function OrbScreen({ onNavigate, liveState = 'idle' }: { onNavigate: (scr
   const processAudio = async (blob: Blob) => {
     setOrbState('thinking');
     try {
-      const sttResult = await transcribeAudio(blob, 'orb');
+      let sttResult: { text?: string };
+      try {
+        sttResult = await transcribeAudio(blob, 'orb');
+      } catch (sttErr) {
+        if (sttErr instanceof SttError) {
+          const toastMsg =
+            sttErr.kind === 'network' ? 'Voice input unavailable. Check your connection.' :
+            sttErr.kind === 'rate_limit' ? 'Too many requests. Wait a moment and try again.' :
+            'Transcription failed. Tap mic to retry.';
+          showToast(toastMsg, 'error', 4000);
+        } else {
+          showToast('Transcription failed. Tap mic to retry.', 'error', 4000);
+        }
+        setErrorMsg('Transcription failed. Tap mic to retry.');
+        setOrbState('error');
+        return;
+      }
+
       const text = sttResult.text?.trim();
       if (!text) {
         setErrorMsg('Could not understand audio. Try again.');
@@ -388,21 +405,24 @@ export function OrbScreen({ onNavigate, liveState = 'idle' }: { onNavigate: (scr
         )}
 
         <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-          <button onClick={() => onNavigate('settings')} className="j-btn"
+          <button onClick={() => onNavigate('settings')} className="j-btn" title="Settings" aria-label="Settings"
             style={{ width: 46, height: 46, borderRadius: '50%', background: J.bg2, border: `1px solid ${J.border}`, color: J.textSec, justifyContent: 'center' }}>
             <IconSettings size={15} />
           </button>
           <button onClick={handleMicToggle} className="j-btn"
+            aria-label={micActive ? 'Stop recording' : 'Start recording'} aria-pressed={micActive}
             style={{ width: 68, height: 68, borderRadius: '50%', background: micActive ? 'rgba(61,186,132,0.15)' : J.amberDim, border: `1.5px solid ${micActive ? J.success : J.borderAccent}`, color: micActive ? J.success : J.amber, justifyContent: 'center', transition: 'all .25s', boxShadow: micActive ? `0 0 20px rgba(61,186,132,0.3)` : 'none' }}>
             <IconMic size={24} />
           </button>
-          <button onClick={() => onNavigate('chat')} className="j-btn"
-            style={{ width: 46, height: 46, borderRadius: '50%', background: J.bg2, border: `1px solid ${J.border}`, color: J.textSec, justifyContent: 'center' }}>
-            <IconChat size={15} />
+          <button onClick={() => setMuteTTS(v => !v)} className="j-btn"
+            title={muteTTS ? 'Voice muted — click to unmute' : 'Mute voice responses'}
+            aria-label={muteTTS ? 'Unmute voice' : 'Mute voice'} aria-pressed={muteTTS}
+            style={{ width: 46, height: 46, borderRadius: '50%', background: muteTTS ? J.errorDim : J.bg2, border: `1px solid ${muteTTS ? J.error : J.border}`, color: muteTTS ? J.error : J.textSec, justifyContent: 'center', transition: 'all .2s' }}>
+            <IconVolume size={15} />
           </button>
         </div>
         <p style={{ fontSize: 11, color: J.textMuted }}>
-          {hasMic ? 'Space or tap orb to start · tap again to send' : 'Microphone unavailable'}
+          {hasMic ? 'Space · tap orb to start · tap again to send' : 'Microphone unavailable'}{muteTTS ? ' · voice muted' : ''}
         </p>
       </div>
 
@@ -417,17 +437,13 @@ export function OrbScreen({ onNavigate, liveState = 'idle' }: { onNavigate: (scr
         </div>
       )}
 
-      <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 7, zIndex: 2, flexWrap: 'wrap', justifyContent: 'center' }}>
+      <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 7, zIndex: 2 }}>
         {[
           { l: 'STT', s: hasMic ? 'online' : 'error' },
-          { l: 'TTS', s: muteTTS ? 'local' : 'online' },
           { l: 'Chat', s: 'active' },
         ].map(item => (
-          <div key={item.l}
-            onClick={item.l === 'TTS' ? () => setMuteTTS(v => !v) : undefined}
-            style={{ background: J.bg2, border: `1px solid ${item.l === 'TTS' && muteTTS ? J.error : J.border}`, borderRadius: 8, padding: '5px 11px', display: 'flex', alignItems: 'center', gap: 6, cursor: item.l === 'TTS' ? 'pointer' : 'default' }}
-            title={item.l === 'TTS' ? (muteTTS ? 'TTS muted — click to unmute' : 'Click to mute TTS') : undefined}>
-            <span style={{ fontSize: 11, color: item.l === 'TTS' && muteTTS ? J.error : J.textMuted }}>{item.l}{item.l === 'TTS' && muteTTS ? ' (muted)' : ''}</span>
+          <div key={item.l} style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 8, padding: '5px 11px', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11, color: J.textMuted }}>{item.l}</span>
             <StatusBadge status={item.s} size="xs" />
           </div>
         ))}

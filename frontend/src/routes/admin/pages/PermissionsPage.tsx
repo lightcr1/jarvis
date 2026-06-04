@@ -10,8 +10,9 @@ import {
   updateAdminPermissions,
 } from "../../../shared/api/admin";
 import { useAuth } from "../../../features/auth/AuthProvider";
+import { useJ } from "../../../screens/jarvis-shared";
 
-const HOME_ASSISTANT_PREFIX = "home_assistant.";
+const HA_PREFIX = "home_assistant.";
 
 const FULL_HA_PERMISSIONS = [
   "home_assistant.access",
@@ -24,85 +25,110 @@ const FULL_HA_PERMISSIONS = [
   "home_assistant.automation_management",
 ];
 
+function labelFor(p: string): string {
+  return p.replace(HA_PREFIX, "").replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function initials(name: string): string {
+  return name.slice(0, 2).toUpperCase();
+}
+
 export function PermissionsPage() {
+  const J = useJ();
   const { user } = useAuth();
+
   const [permissions, setPermissions] = useState<AdminPermissionMap | null>(null);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [groups, setGroups] = useState<AdminGroup[]>([]);
   const [scope, setScope] = useState<"users" | "groups">("users");
   const [target, setTarget] = useState("");
-  const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
-  const [effective, setEffective] = useState("");
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [effective, setEffective] = useState<Record<string, unknown> | null>(null);
+  const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
-  const [saving, setSaving] = useState(false);
-  const targetOptions = useMemo(() => (scope === "users" ? users : groups), [groups, scope, users]);
-  const homeAssistantPermissions = useMemo(
-    () => (permissions?.known_permissions || []).filter((item) => item.startsWith(HOME_ASSISTANT_PREFIX)),
-    [permissions],
-  );
-  const platformPermissions = useMemo(
-    () => (permissions?.known_permissions || []).filter((item) => !item.startsWith(HOME_ASSISTANT_PREFIX)),
-    [permissions],
-  );
 
   const load = useCallback(async () => {
-    const [permissionData, userData, groupData] = await Promise.all([
+    const [pd, ud, gd] = await Promise.all([
       fetchAdminPermissions(),
       fetchAdminUsers(),
       fetchAdminGroups(),
     ]);
-    setPermissions(permissionData);
-    setUsers(userData.users || []);
-    setGroups(groupData.groups || []);
+    setPermissions(pd);
+    setUsers(ud.users || []);
+    setGroups(gd.groups || []);
   }, []);
 
+  useEffect(() => { load().catch(() => undefined); }, [load]);
   useEffect(() => {
-    load().catch(() => undefined);
-  }, [load]);
+    if (!status) return;
+    const id = setTimeout(() => setStatus(""), 4000);
+    return () => clearTimeout(id);
+  }, [status]);
+
+  const targetOptions = scope === "users" ? users : groups;
 
   useEffect(() => {
     if (!permissions || !targetOptions.length) return;
-    const preferredTarget = scope === "users" ? user?.id : "";
-    const nextTarget = target || preferredTarget || targetOptions[0]?.id || "";
-    setTarget(nextTarget);
-    const source = scope === "users" ? permissions.user_permissions : permissions.group_permissions;
-    setSelectedPermissions(source?.[nextTarget] || []);
-    setStatus("");
-    setError("");
+    const validIds = new Set(targetOptions.map(t => t.id));
+    if (validIds.has(target)) {
+      const src = scope === "users" ? permissions.user_permissions : permissions.group_permissions;
+      setSelected(src?.[target] || []);
+    } else {
+      const preferred = scope === "users" ? user?.id : "";
+      const next = (preferred && validIds.has(preferred) ? preferred : targetOptions[0]?.id) || "";
+      setTarget(next);
+      setStatus("");
+      setError("");
+      setEffective(null);
+      const src = scope === "users" ? permissions.user_permissions : permissions.group_permissions;
+      setSelected(src?.[next] || []);
+    }
   }, [permissions, scope, target, targetOptions, user?.id]);
 
-  const currentTarget = targetOptions.find((item) => item.id === target);
-  const selectedSet = useMemo(() => new Set(selectedPermissions), [selectedPermissions]);
+  const haPerms = useMemo(() => (permissions?.known_permissions || []).filter(p => p.startsWith(HA_PREFIX)), [permissions]);
+  const platformPerms = useMemo(() => (permissions?.known_permissions || []).filter(p => !p.startsWith(HA_PREFIX)), [permissions]);
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
 
-  function togglePermission(permission: string) {
-    setSelectedPermissions((current) => (
-      current.includes(permission)
-        ? current.filter((item) => item !== permission)
-        : [...current, permission].sort()
-    ));
-  }
-
-  function applyHaPreset(nextHaPermissions: string[]) {
-    setSelectedPermissions((current) => {
-      const nonHa = current.filter((item) => !item.startsWith(HOME_ASSISTANT_PREFIX));
-      return [...nonHa, ...nextHaPermissions].sort();
+  const filteredTargets = useMemo(() => {
+    const q = search.toLowerCase();
+    return targetOptions.filter(t => {
+      const name = "username" in t ? t.username : t.name;
+      return !q || name.toLowerCase().includes(q) || t.id.toLowerCase().includes(q);
     });
+  }, [targetOptions, search]);
+
+  function selectTarget(id: string) {
+    setTarget(id);
+    const src = scope === "users" ? permissions!.user_permissions : permissions!.group_permissions;
+    setSelected(src?.[id] || []);
+    setStatus("");
+    setError("");
+    setEffective(null);
   }
 
-  async function savePermissions(nextPermissions: string[], successMessage: string) {
+  function toggle(p: string) {
+    setSelected(cur => cur.includes(p) ? cur.filter(x => x !== p) : [...cur, p].sort());
+  }
+
+  function setHaPreset(haSet: string[]) {
+    setSelected(cur => [...cur.filter(p => !p.startsWith(HA_PREFIX)), ...haSet].sort());
+  }
+
+  async function save(perms: string[], msg: string) {
     if (!target) return;
     setSaving(true);
     setStatus("");
     setError("");
     try {
-      await updateAdminPermissions(scope, target, nextPermissions);
+      await updateAdminPermissions(scope, target, perms);
       await load();
-      setSelectedPermissions(nextPermissions);
-      setStatus(successMessage);
+      setSelected(perms);
+      setStatus(msg);
       if (scope === "users") {
         const data = await fetchEffectivePermissions(target);
-        setEffective(JSON.stringify(data, null, 2));
+        setEffective(data);
       }
     } catch (err) {
       setError((err as Error).message);
@@ -111,172 +137,272 @@ export function PermissionsPage() {
     }
   }
 
-  if (!permissions) return <div className="panel">Loading permissions…</div>;
+  if (!permissions) {
+    return (
+      <div style={{ padding: 40, color: J.textSec, fontSize: 13 }}>Loading permissions…</div>
+    );
+  }
+
+  const currentTarget = targetOptions.find(t => t.id === target);
+  const currentName = currentTarget ? ("username" in currentTarget ? currentTarget.username : currentTarget.name) : "";
+
+  const haSelected = selected.filter(p => p.startsWith(HA_PREFIX));
+  const platSelected = selected.filter(p => !p.startsWith(HA_PREFIX));
+  const hasFullHa = FULL_HA_PERMISSIONS.every(p => selectedSet.has(p));
+
+  const effectivePerms = (effective?.permissions as string[] | undefined) || [];
+  const effectiveHa = effectivePerms.filter(p => p.startsWith(HA_PREFIX));
+  const effectivePlat = effectivePerms.filter(p => !p.startsWith(HA_PREFIX));
+
+  const row: React.CSSProperties = {
+    display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap",
+  };
+  const cardBase: React.CSSProperties = {
+    background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 6,
+  };
 
   return (
-    <div className="page-stack">
-      <div className="dashboard-grid">
-        <div className="panel metric-card">
-          <div className="eyebrow">Known permissions</div>
-          <strong>{permissions.known_permissions.length}</strong>
-        </div>
-        <div className="panel metric-card">
-          <div className="eyebrow">HA permissions</div>
-          <strong>{homeAssistantPermissions.length}</strong>
-        </div>
-        <div className="panel metric-card">
-          <div className="eyebrow">User permission sets</div>
-          <strong>{Object.keys(permissions.user_permissions).length}</strong>
-        </div>
-        <div className="panel metric-card">
-          <div className="eyebrow">Group permission sets</div>
-          <strong>{Object.keys(permissions.group_permissions).length}</strong>
-        </div>
-        <div className="panel metric-card">
-          <div className="eyebrow">Editor scope</div>
-          <strong>{scope}</strong>
-        </div>
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+
+      {/* ── Metrics row ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: 10 }}>
+        {[
+          { label: "Known permissions", value: permissions.known_permissions.length },
+          { label: "HA permissions", value: haPerms.length },
+          { label: "User sets", value: Object.keys(permissions.user_permissions).length },
+          { label: "Group sets", value: Object.keys(permissions.group_permissions).length },
+        ].map(({ label, value }) => (
+          <div key={label} style={{ ...cardBase, padding: "12px 16px" }}>
+            <div style={{ fontSize: 11, color: J.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>{label}</div>
+            <div style={{ fontSize: 22, fontWeight: 700, color: J.text }}>{value}</div>
+          </div>
+        ))}
       </div>
 
-      <div className="panel">
-        <div className="eyebrow">Permission editor</div>
-        <div className="form-row">
-          <select className="ui-input" value={scope} onChange={(e) => setScope(e.target.value as "users" | "groups")}>
-            <option value="users">User</option>
-            <option value="groups">Group</option>
-          </select>
-          <select
-            className="ui-input"
-            value={target}
-            onChange={(e) => {
-              const value = e.target.value;
-              setTarget(value);
-              const source = scope === "users" ? permissions.user_permissions : permissions.group_permissions;
-              setSelectedPermissions(source?.[value] || []);
-              setStatus("");
-            }}
-          >
-            {targetOptions.map((item) => (
-              <option key={item.id} value={item.id}>{"username" in item ? item.username : item.name}</option>
+      {/* ── Main editor (two columns) ── */}
+      <div style={{ display: "grid", gridTemplateColumns: "240px 1fr", gap: 16, alignItems: "start" }}>
+
+        {/* Left — target list */}
+        <div style={{ ...cardBase, overflow: "hidden" }}>
+          {/* Scope tabs */}
+          <div style={{ display: "flex", borderBottom: `1px solid ${J.border}` }}>
+            {(["users", "groups"] as const).map(s => (
+              <button key={s} onClick={() => setScope(s)} style={{
+                flex: 1, padding: "9px 0", fontSize: 12, fontWeight: 600,
+                background: scope === s ? J.amberGlow : "transparent",
+                color: scope === s ? J.amber : J.textSec,
+                border: "none", cursor: "pointer", textTransform: "capitalize",
+                borderBottom: scope === s ? `2px solid ${J.amber}` : "2px solid transparent",
+                transition: "background .15s, color .15s",
+              }}>{s}</button>
             ))}
-          </select>
-        </div>
-        <div className="dashboard-stat-list">
-          <div><span>Selected target</span><strong>{currentTarget ? ("username" in currentTarget ? currentTarget.username : currentTarget.name) : "none selected"}</strong></div>
-          <div><span>Target ID</span><strong>{target || "not set"}</strong></div>
-          <div><span>Directly assigned</span><strong>{selectedPermissions.length}</strong></div>
-          <div><span>HA permissions</span><strong>{selectedPermissions.filter((item) => item.startsWith(HOME_ASSISTANT_PREFIX)).length}</strong></div>
-          <div><span>Platform permissions</span><strong>{selectedPermissions.filter((item) => !item.startsWith(HOME_ASSISTANT_PREFIX)).length}</strong></div>
-        </div>
-        <div className="page-stack">
-          <div className="permission-bundle-card">
-            <div className="eyebrow">HA bundle</div>
-            <h3>Home Assistant Full Access</h3>
-            <p>Grants all Home Assistant permissions in one step. This is the recommended default path.</p>
-            <div className="inline-actions">
-              <button
-                type="button"
-                className="ui-button primary"
-                disabled={!target || saving}
-                onClick={() => {
-                  const nonHa = selectedPermissions.filter((item) => !item.startsWith(HOME_ASSISTANT_PREFIX));
-                  const nextPermissions = [...nonHa, ...FULL_HA_PERMISSIONS].sort();
-                  void savePermissions(nextPermissions, "Home Assistant Full Access saved.");
+          </div>
+
+          {/* Search */}
+          {targetOptions.length > 5 && (
+            <div style={{ padding: "8px 10px", borderBottom: `1px solid ${J.border}` }}>
+              <input
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                placeholder={`Search ${scope}…`}
+                style={{
+                  width: "100%", boxSizing: "border-box", padding: "5px 8px", fontSize: 12,
+                  background: J.bg3, border: `1px solid ${J.border}`, borderRadius: 4,
+                  color: J.text, outline: "none",
                 }}
-              >
-                Save Full HA Access
-              </button>
-              <button type="button" className="ui-button ghost" disabled={saving} onClick={() => applyHaPreset(FULL_HA_PERMISSIONS)}>Preview selection</button>
-              <button type="button" className="ui-button ghost" disabled={saving} onClick={() => applyHaPreset([])}>Clear HA permissions</button>
+              />
             </div>
-          </div>
+          )}
 
-          <details className="permission-advanced">
-            <summary>Advanced individual permissions</summary>
-            <div className="page-stack">
+          {/* Target rows */}
+          <div style={{ maxHeight: 340, overflowY: "auto" }}>
+            {filteredTargets.map(t => {
+              const name = "username" in t ? t.username : t.name;
+              const active = t.id === target;
+              const src = scope === "users" ? permissions.user_permissions : permissions.group_permissions;
+              const count = (src?.[t.id] || []).length;
+              return (
+                <div key={t.id} onClick={() => selectTarget(t.id)} style={{
+                  display: "flex", alignItems: "center", gap: 10, padding: "9px 12px", cursor: "pointer",
+                  background: active ? J.amberGlow : "transparent",
+                  borderLeft: `2px solid ${active ? J.amber : "transparent"}`,
+                  borderBottom: `1px solid ${J.border}`,
+                  transition: "background .1s",
+                }}>
+                  <div style={{
+                    width: 28, height: 28, borderRadius: "50%", flexShrink: 0,
+                    background: active ? J.amberDim : J.bg4,
+                    border: `1px solid ${active ? J.borderAccent : J.border}`,
+                    display: "flex", alignItems: "center", justifyContent: "center",
+                    fontSize: 11, fontWeight: 700, color: active ? J.amber : J.textSec,
+                  }}>{initials(name)}</div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: active ? 600 : 400, color: active ? J.text : J.textSec, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{name}</div>
+                    <div style={{ fontSize: 10, color: J.textMuted }}>{count} permission{count !== 1 ? "s" : ""}</div>
+                  </div>
+                </div>
+              );
+            })}
+            {filteredTargets.length === 0 && (
+              <div style={{ padding: "16px 12px", color: J.textMuted, fontSize: 12 }}>No results.</div>
+            )}
+          </div>
+        </div>
+
+        {/* Right — permission editor */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+
+          {/* Header */}
+          <div style={{ ...cardBase, padding: "14px 18px" }}>
+            <div style={{ ...row, justifyContent: "space-between" }}>
               <div>
-            <div className="eyebrow">Home Assistant permissions</div>
-            <div className="permission-toggle-grid">
-              {homeAssistantPermissions.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  className={`permission-toggle${selectedSet.has(item) ? " active" : ""}`}
-                  onClick={() => togglePermission(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+                <div style={{ fontSize: 15, fontWeight: 600, color: J.text }}>{currentName || "—"}</div>
+                <div style={{ fontSize: 11, color: J.textMuted, marginTop: 2 }}>
+                  {haSelected.length} HA · {platSelected.length} platform · {selected.length} total
+                </div>
               </div>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <button
+                  onClick={() => void save(selected, "Permissions saved.")}
+                  disabled={!target || saving}
+                  style={{
+                    padding: "6px 16px", fontSize: 12, fontWeight: 600, borderRadius: 4, cursor: "pointer",
+                    background: J.amber, color: J.bg0, border: "none",
+                    opacity: !target || saving ? 0.5 : 1, transition: "opacity .15s",
+                  }}
+                >{saving ? "Saving…" : "Save changes"}</button>
+                {scope === "users" && (
+                  <button
+                    onClick={async () => {
+                      if (!target) return;
+                      try {
+                        setError("");
+                        const data = await fetchEffectivePermissions(target);
+                        setEffective(data);
+                      } catch (err) {
+                        setError((err as Error).message);
+                      }
+                    }}
+                    disabled={!target}
+                    style={{
+                      padding: "6px 12px", fontSize: 12, borderRadius: 4, cursor: "pointer",
+                      background: "transparent", color: J.textSec,
+                      border: `1px solid ${J.border}`,
+                      opacity: !target ? 0.5 : 1,
+                    }}
+                  >Show effective</button>
+                )}
+              </div>
+            </div>
+            {status && <div style={{ marginTop: 8, fontSize: 12, color: J.success }}>{status}</div>}
+            {error && <div style={{ marginTop: 8, fontSize: 12, color: J.error }}>{error}</div>}
+          </div>
 
+          {/* HA bundle preset */}
+          <div style={{ ...cardBase, padding: "14px 18px" }}>
+            <div style={{ ...row, justifyContent: "space-between" }}>
               <div>
-            <div className="eyebrow">Other platform permissions</div>
-            <div className="permission-toggle-grid">
-              {platformPermissions.map((item) => (
+                <div style={{ fontSize: 12, fontWeight: 600, color: J.text }}>Home Assistant — Full Access</div>
+                <div style={{ fontSize: 11, color: J.textMuted, marginTop: 2 }}>Grants all {FULL_HA_PERMISSIONS.length} HA permissions in one step.</div>
+              </div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {hasFullHa ? (
+                  <button
+                    onClick={() => setHaPreset([])}
+                    style={{ padding: "5px 12px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: J.errorDim, color: J.error, border: `1px solid ${J.error}30` }}
+                  >Clear HA</button>
+                ) : (
+                  <button
+                    onClick={() => setHaPreset(FULL_HA_PERMISSIONS)}
+                    style={{ padding: "5px 12px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: J.amberDim, color: J.amber, border: `1px solid ${J.borderAccent}` }}
+                  >Select all HA</button>
+                )}
                 <button
-                  key={item}
-                  type="button"
-                  className={`permission-toggle${selectedSet.has(item) ? " active" : ""}`}
-                  onClick={() => togglePermission(item)}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
+                  onClick={() => void save([...selected.filter(p => !p.startsWith(HA_PREFIX)), ...FULL_HA_PERMISSIONS].sort(), "Full HA access saved.")}
+                  disabled={!target || saving}
+                  style={{ padding: "5px 12px", fontSize: 11, borderRadius: 4, cursor: "pointer", background: J.amber, color: J.bg0, border: "none", opacity: !target || saving ? 0.5 : 1 }}
+                >Save full HA</button>
               </div>
             </div>
-          </details>
-        </div>
-        <div className="inline-actions">
-          <button
-            className="ui-button primary"
-            disabled={!target || saving}
-            onClick={() => { void savePermissions(selectedPermissions, "Permissions saved."); }}
-          >
-            {saving ? "Saving…" : "Save"}
-          </button>
-          <button
-            className="ui-button ghost"
-            disabled={!target || saving}
-            onClick={async () => {
-              if (scope !== "users") return;
-              try {
-                setError("");
-                const data = await fetchEffectivePermissions(target);
-                setEffective(JSON.stringify(data, null, 2));
-              } catch (err) {
-                setError((err as Error).message);
-              }
-            }}
-          >
-            Load effective permissions
-          </button>
-        </div>
-        {status ? <div className="tiny-note">{status}</div> : null}
-        {error ? <div className="error-text">{error}</div> : null}
-      </div>
-
-      <div className="dashboard-grid">
-        <div className="panel span-2">
-          <div className="eyebrow">Home Assistant permissions</div>
-          <div className="permission-grid">
-            {homeAssistantPermissions.map((item) => <span className="tag" key={item}>{item}</span>)}
           </div>
-          <p className="tiny-note">HA permissions must be explicitly granted. The admin role alone does not imply Home Assistant access or sensitive control rights.</p>
-        </div>
-        <div className="panel span-2">
-          <div className="eyebrow">Other platform permissions</div>
-          <div className="permission-grid">
-            {platformPermissions.map((item) => <span className="tag" key={item}>{item}</span>)}
-          </div>
-        </div>
-      </div>
 
-      <div className="dashboard-grid">
-        <div className="panel span-4">
-          <div className="eyebrow">Effective / current</div>
-          <pre>{effective || "Select a user and load effective permissions."}</pre>
+          {/* Permission toggles */}
+          {haPerms.length > 0 && (
+            <div style={{ ...cardBase, padding: "14px 18px" }}>
+              <div style={{ fontSize: 11, color: J.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Home Assistant</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {haPerms.map(p => {
+                  const on = selectedSet.has(p);
+                  return (
+                    <button key={p} onClick={() => toggle(p)} style={{
+                      padding: "4px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+                      background: on ? J.amberDim : J.bg4,
+                      color: on ? J.amber : J.textSec,
+                      border: `1px solid ${on ? J.borderAccent : J.border}`,
+                      fontWeight: on ? 600 : 400, transition: "all .1s",
+                    }}>{labelFor(p)}</button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {platformPerms.length > 0 && (
+            <div style={{ ...cardBase, padding: "14px 18px" }}>
+              <div style={{ fontSize: 11, color: J.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 10 }}>Platform</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                {platformPerms.map(p => {
+                  const on = selectedSet.has(p);
+                  return (
+                    <button key={p} onClick={() => toggle(p)} style={{
+                      padding: "4px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+                      background: on ? J.blueDim : J.bg4,
+                      color: on ? J.blue : J.textSec,
+                      border: `1px solid ${on ? J.blue + "40" : J.border}`,
+                      fontWeight: on ? 600 : 400, transition: "all .1s",
+                    }}>{labelFor(p)}</button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* Effective permissions panel */}
+          {effective && (
+            <div style={{ ...cardBase, padding: "14px 18px" }}>
+              <div style={{ ...row, justifyContent: "space-between", marginBottom: 12 }}>
+                <div style={{ fontSize: 11, color: J.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Effective permissions</div>
+                <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                  {typeof effective.source === "string" && <span style={{ fontSize: 10, color: J.textMuted, background: J.bg4, border: `1px solid ${J.border}`, borderRadius: 3, padding: "2px 6px" }}>{effective.source}</span>}
+                  <span style={{ fontSize: 11, color: J.textMuted }}>{effectivePerms.length} total</span>
+                  <button onClick={() => setEffective(null)} style={{ padding: "2px 8px", fontSize: 10, borderRadius: 3, cursor: "pointer", background: "transparent", color: J.textMuted, border: `1px solid ${J.border}` }}>×</button>
+                </div>
+              </div>
+              {effectiveHa.length > 0 && (
+                <div style={{ marginBottom: 10 }}>
+                  <div style={{ fontSize: 10, color: J.textMuted, marginBottom: 6 }}>Home Assistant</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {effectiveHa.map(p => (
+                      <span key={p} style={{ fontSize: 10, padding: "3px 8px", borderRadius: 3, background: J.successDim, color: J.success, border: `1px solid ${J.success}30` }}>{labelFor(p)}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {effectivePlat.length > 0 && (
+                <div>
+                  <div style={{ fontSize: 10, color: J.textMuted, marginBottom: 6 }}>Platform</div>
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 5 }}>
+                    {effectivePlat.map(p => (
+                      <span key={p} style={{ fontSize: 10, padding: "3px 8px", borderRadius: 3, background: J.blueDim, color: J.blue, border: `1px solid ${J.blue}30` }}>{labelFor(p)}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {effectivePerms.length === 0 && (
+                <div style={{ fontSize: 12, color: J.textMuted }}>No permissions granted.</div>
+              )}
+            </div>
+          )}
         </div>
       </div>
     </div>

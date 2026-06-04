@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   J, useJ, StatusBadge, MetricCard, Spinner,
-  IconRefresh, IconServer, IconActivity, IconGrid, IconPower, IconChat,
+  IconRefresh, IconServer, IconActivity, IconGrid, IconPower, IconChat, IconSearch,
 } from './jarvis-shared';
 import { sendChatMessage } from '../shared/api/chat';
 import { fetchProxmoxHealth, type ProxmoxHostHealth, type ProxmoxResource } from '../shared/api/proxmox';
+import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
 function fmtPercent(value?: number) {
   if (typeof value !== 'number' || Number.isNaN(value)) return '—';
@@ -15,6 +16,24 @@ function fmtMem(value?: number, max?: number) {
   if (typeof value !== 'number' || typeof max !== 'number' || Number.isNaN(value) || Number.isNaN(max) || max <= 0) return '—';
   const gb = (bytes: number) => `${(bytes / (1024 ** 3)).toFixed(1)} GB`;
   return `${gb(value)} / ${gb(max)}`;
+}
+
+function fmtUptime(seconds?: number) {
+  if (typeof seconds !== 'number' || seconds <= 0) return null;
+  const d = Math.floor(seconds / 86400);
+  const h = Math.floor((seconds % 86400) / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  return `${m}m`;
+}
+
+function MiniBar({ pct, color }: { pct: number; color: string }) {
+  return (
+    <div style={{ width: 44, height: 4, borderRadius: 2, background: J.bg4, overflow: 'hidden', flexShrink: 0 }}>
+      <div style={{ width: `${Math.min(Math.max(pct, 0), 100)}%`, height: '100%', background: color, borderRadius: 2, transition: 'width .5s ease' }} />
+    </div>
+  );
 }
 
 function resourceLabel(resource: ProxmoxResource, fallback: string) {
@@ -34,46 +53,83 @@ function ResourceRow({
   kind: 'vm' | 'lxc';
   resource: ProxmoxResource;
   busy: boolean;
-  onAction: (resource: ProxmoxResource, action: 'start' | 'stop') => void;
+  onAction: (resource: ProxmoxResource, action: 'start' | 'stop' | 'restart') => void;
 }) {
   const running = (resource.status || '').toLowerCase() === 'running';
   const stopped = (resource.status || '').toLowerCase() === 'stopped';
-  const primaryAction: 'start' | 'stop' = running ? 'stop' : 'start';
-  const primaryDisabled = busy || (!running && !stopped);
+  const canStart = stopped;
+  const canStop = running;
+  const cpuPct = typeof resource.cpu === 'number' ? resource.cpu * 100 : 0;
+  const memPct = typeof resource.mem === 'number' && typeof resource.maxmem === 'number' && resource.maxmem > 0
+    ? (resource.mem / resource.maxmem) * 100 : 0;
+  const cpuColor = cpuPct > 80 ? J.error : cpuPct > 50 ? J.warn : J.success;
+  const memColor = memPct > 85 ? J.error : memPct > 60 ? J.warn : J.blue;
+  const uptime = fmtUptime(resource.uptime);
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.8fr) repeat(3,minmax(72px,.8fr)) auto', gap: 10, alignItems: 'center', padding: '11px 12px', borderTop: `1px solid ${J.border}` }}>
+    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) repeat(2,minmax(90px,1fr)) auto', gap: 10, alignItems: 'center', padding: '11px 12px', borderTop: `1px solid ${J.border}` }}>
       <div style={{ minWidth: 0 }}>
         <div style={{ fontSize: 13, fontWeight: 500, color: J.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {resourceLabel(resource, kind.toUpperCase())}
         </div>
-        <div style={{ fontSize: 11, color: J.textMuted, marginTop: 2, fontFamily: 'JetBrains Mono,monospace' }}>
-          {hostId}/{node}/{resource.vmid}
+        <div style={{ fontSize: 11, color: J.textMuted, marginTop: 2, fontFamily: 'JetBrains Mono,monospace', display: 'flex', alignItems: 'center', gap: 7 }}>
+          <span>{hostId}/{node}/{resource.vmid}</span>
+          {uptime && running && <span style={{ color: J.textMuted }}>up {uptime}</span>}
+          <span style={{ fontSize: 10, color: kind === 'vm' ? J.blue : J.amber, background: kind === 'vm' ? 'rgba(56,144,224,0.12)' : J.amberDim, border: `1px solid ${kind === 'vm' ? 'rgba(56,144,224,0.25)' : J.borderAccent}`, borderRadius: 3, padding: '0 4px' }}>{kind.toUpperCase()}</span>
         </div>
       </div>
-      <div><StatusBadge status={resource.status || 'unknown'} size="xs" /></div>
-      <div style={{ fontSize: 12, color: J.textSec }}>{fmtPercent(resource.cpu)}</div>
-      <div style={{ fontSize: 12, color: J.textSec }}>{fmtMem(resource.mem, resource.maxmem)}</div>
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
+      <div>
+        <StatusBadge status={resource.status || 'unknown'} size="xs" />
+        {running && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 5 }}>
+            <MiniBar pct={cpuPct} color={cpuColor} />
+            <span style={{ fontSize: 10, color: cpuColor, fontFamily: 'JetBrains Mono,monospace', minWidth: 32 }}>{fmtPercent(resource.cpu)}</span>
+          </div>
+        )}
+      </div>
+      <div style={{ fontSize: 12, color: J.textSec }}>
+        {running ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 5 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
+              <MiniBar pct={memPct} color={memColor} />
+              <span style={{ fontSize: 10, color: memColor, fontFamily: 'JetBrains Mono,monospace' }}>{Math.round(memPct)}%</span>
+            </div>
+            <div style={{ fontSize: 10, color: J.textMuted }}>{fmtMem(resource.mem, resource.maxmem)}</div>
+          </div>
+        ) : '—'}
+      </div>
+      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+        {canStop && (
+          <button
+            className="j-btn"
+            onClick={() => onAction(resource, 'restart')}
+            disabled={busy}
+            title="Restart"
+            style={{ background: busy ? J.bg3 : J.bg4, border: `1px solid ${J.border}`, color: busy ? J.textMuted : J.textSec, borderRadius: 7, padding: '5px 9px', fontSize: 12, cursor: busy ? 'default' : 'pointer' }}
+            onMouseEnter={e => { if (!busy) { e.currentTarget.style.borderColor = J.borderAccent; e.currentTarget.style.color = J.amber; } }}
+            onMouseLeave={e => { e.currentTarget.style.borderColor = J.border; e.currentTarget.style.color = J.textSec; }}>
+            ↺
+          </button>
+        )}
         <button
           className="j-btn"
-          onClick={() => onAction(resource, primaryAction)}
-          disabled={primaryDisabled}
+          onClick={() => onAction(resource, canStart ? 'start' : 'stop')}
+          disabled={busy || (!canStart && !canStop)}
           style={{
-            background: primaryDisabled ? J.bg3 : primaryAction === 'stop' ? J.errorDim : J.amberDim,
-            border: `1px solid ${primaryDisabled ? J.border : primaryAction === 'stop' ? 'rgba(224,85,85,0.28)' : J.borderAccent}`,
-            color: primaryDisabled ? J.textMuted : primaryAction === 'stop' ? J.error : J.amber,
+            background: busy || (!canStart && !canStop) ? J.bg3 : canStop ? J.errorDim : J.amberDim,
+            border: `1px solid ${busy || (!canStart && !canStop) ? J.border : canStop ? 'rgba(224,85,85,0.28)' : J.borderAccent}`,
+            color: busy || (!canStart && !canStop) ? J.textMuted : canStop ? J.error : J.amber,
             borderRadius: 7,
             padding: '5px 11px',
             fontSize: 12,
             fontWeight: 500,
-            minWidth: 72,
+            minWidth: 68,
             justifyContent: 'center',
-            cursor: primaryDisabled ? 'default' : 'pointer',
+            cursor: busy || (!canStart && !canStop) ? 'default' : 'pointer',
           }}
         >
           {busy ? <Spinner size={12} color={J.textMuted} /> : <IconPower size={12} />}
-          {primaryAction === 'stop' ? 'Stop' : 'Start'}
+          {canStop ? 'Stop' : 'Start'}
         </button>
       </div>
     </div>
@@ -84,17 +140,32 @@ function NodeCard({
   host,
   node,
   busyKey,
+  kindFilter,
+  statusFilter,
+  search,
   onAction,
 }: {
   host: ProxmoxHostHealth;
   node: ProxmoxHostHealth['nodes'][number];
   busyKey: string | null;
-  onAction: (kind: 'vm' | 'lxc', resource: ProxmoxResource, action: 'start' | 'stop') => void;
+  kindFilter: 'vm' | 'lxc' | null;
+  statusFilter: 'running' | 'stopped' | null;
+  search: string;
+  onAction: (kind: 'vm' | 'lxc', resource: ProxmoxResource, action: 'start' | 'stop' | 'restart') => void;
 }) {
-  const resources = [
+  const q = search.toLowerCase();
+  const allResources = [
     ...node.vms.map((resource) => ({ kind: 'vm' as const, resource })),
     ...node.containers.map((resource) => ({ kind: 'lxc' as const, resource })),
   ];
+  const resources = allResources.filter(({ kind, resource }) => {
+    if (kindFilter && kind !== kindFilter) return false;
+    if (statusFilter && (resource.status || '').toLowerCase() !== statusFilter) return false;
+    if (q && !resourceLabel(resource, kind.toUpperCase()).toLowerCase().includes(q) && !String(resource.vmid).includes(q)) return false;
+    return true;
+  });
+
+  if (resources.length === 0 && (kindFilter || statusFilter || search)) return null;
 
   return (
     <div style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 14, overflow: 'hidden' }}>
@@ -112,15 +183,14 @@ function NodeCard({
       </div>
 
       {resources.length === 0 ? (
-        <div style={{ padding: '16px', fontSize: 13, color: J.textMuted }}>No workloads reported on this node.</div>
+        <div style={{ padding: '16px', fontSize: 13, color: J.textMuted }}>No workloads on this node.</div>
       ) : (
         <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1.8fr) repeat(3,minmax(72px,.8fr)) auto', gap: 10, padding: '8px 12px', fontSize: 10, color: J.textMuted, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 600 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,2fr) repeat(2,minmax(90px,1fr)) auto', gap: 10, padding: '8px 12px', fontSize: 10, color: J.textMuted, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 600 }}>
             <span>Workload</span>
-            <span>Status</span>
-            <span>CPU</span>
+            <span>Status / CPU</span>
             <span>Memory</span>
-            <span style={{ textAlign: 'right' }}>Action</span>
+            <span style={{ textAlign: 'right' }}>Actions</span>
           </div>
           {resources.map(({ kind, resource }) => {
             const rowKey = `${kind}:${host.id}:${node.node}:${resource.vmid}`;
@@ -142,6 +212,14 @@ function NodeCard({
   );
 }
 
+type PendingAction = {
+  kind: 'vm' | 'lxc';
+  host: ProxmoxHostHealth;
+  nodeName: string;
+  resource: ProxmoxResource;
+  action: 'stop' | 'restart';
+};
+
 export function ProxmoxScreen({ onNavigate }: { onNavigate: (screen: string) => void }) {
   useJ();
   const [loading, setLoading] = useState(true);
@@ -153,6 +231,10 @@ export function ProxmoxScreen({ onNavigate }: { onNavigate: (screen: string) => 
   const [busyKey, setBusyKey] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
   const [countdown, setCountdown] = useState(30);
+  const [search, setSearch] = useState('');
+  const [kindFilter, setKindFilter] = useState<'vm' | 'lxc' | null>(null);
+  const [statusFilter, setStatusFilter] = useState<'running' | 'stopped' | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
 
   const unhealthyHosts = useMemo(() => hosts.filter((host) => !host.healthy).length, [hosts]);
 
@@ -183,12 +265,14 @@ export function ProxmoxScreen({ onNavigate }: { onNavigate: (screen: string) => 
     return () => window.clearInterval(refresh);
   }, []);
 
-  const handleAction = async (kind: 'vm' | 'lxc', host: ProxmoxHostHealth, nodeName: string, resource: ProxmoxResource, action: 'start' | 'stop') => {
+  const handleAction = async (kind: 'vm' | 'lxc', host: ProxmoxHostHealth, nodeName: string, resource: ProxmoxResource, action: 'start' | 'stop' | 'restart') => {
     const key = `${kind}:${host.id}:${nodeName}:${resource.vmid}`;
     setBusyKey(key);
     setActionMessage(null);
     try {
-      const command = `pve ${action} ${kind} ${host.id} ${nodeName} ${resource.vmid}`;
+      const command = action === 'restart'
+        ? `pve restart ${kind} ${host.id} ${nodeName} ${resource.vmid}`
+        : `pve ${action} ${kind} ${host.id} ${nodeName} ${resource.vmid}`;
       const response = await sendChatMessage(command, 'web', 'chat');
       setActionMessage(response.reply || `${action} queued.`);
       window.setTimeout(() => { void load(); }, 1200);
@@ -214,6 +298,8 @@ export function ProxmoxScreen({ onNavigate }: { onNavigate: (screen: string) => 
       </div>
     );
   }
+
+  const hasFilters = search || kindFilter || statusFilter;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: J.bg0 }}>
@@ -242,6 +328,45 @@ export function ProxmoxScreen({ onNavigate }: { onNavigate: (screen: string) => 
           <MetricCard label="Running" value={summary.running} sublabel={`${summary.vms} VMs · ${summary.containers} LXCs`} icon={<IconActivity size={14} />} accent={J.success} />
           <MetricCard label="Stopped" value={summary.stopped} sublabel="Ready to start" icon={<IconPower size={14} />} accent={J.warn} />
         </div>
+
+        {/* Filter bar */}
+        {hosts.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16, flexWrap: 'wrap' }}>
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <span style={{ position: 'absolute', left: 9, top: '50%', transform: 'translateY(-50%)', color: J.textMuted, pointerEvents: 'none' }}><IconSearch size={12} /></span>
+              <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search workloads…"
+                style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 8, padding: '6px 11px 6px 28px', fontSize: 12, color: J.text, width: 190, outline: 'none' }}
+                onFocus={e => { e.currentTarget.style.borderColor = J.borderHover; }}
+                onBlur={e => { e.currentTarget.style.borderColor = J.border; }} />
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {(['vm', 'lxc'] as const).map(k => (
+                <button key={k} onClick={() => setKindFilter(kindFilter === k ? null : k)}
+                  style={{ padding: '4px 11px', fontSize: 11, fontWeight: kindFilter === k ? 600 : 400, borderRadius: 20, border: `1px solid ${kindFilter === k ? J.amber : J.border}`, background: kindFilter === k ? J.amberDim : J.bg2, color: kindFilter === k ? J.amber : J.textSec, cursor: 'pointer', textTransform: 'uppercase', transition: 'all .12s' }}
+                  onMouseEnter={e => { if (kindFilter !== k) { e.currentTarget.style.borderColor = J.borderHover; e.currentTarget.style.color = J.text; } }}
+                  onMouseLeave={e => { if (kindFilter !== k) { e.currentTarget.style.borderColor = J.border; e.currentTarget.style.color = J.textSec; } }}>
+                  {k}
+                </button>
+              ))}
+            </div>
+            <div style={{ display: 'flex', gap: 6 }}>
+              {(['running', 'stopped'] as const).map(s => (
+                <button key={s} onClick={() => setStatusFilter(statusFilter === s ? null : s)}
+                  style={{ padding: '4px 11px', fontSize: 11, fontWeight: statusFilter === s ? 600 : 400, borderRadius: 20, border: `1px solid ${statusFilter === s ? (s === 'running' ? J.success : J.textMuted) : J.border}`, background: statusFilter === s ? (s === 'running' ? 'rgba(61,186,132,0.1)' : J.bg3) : J.bg2, color: statusFilter === s ? (s === 'running' ? J.success : J.text) : J.textSec, cursor: 'pointer', textTransform: 'capitalize', transition: 'all .12s' }}
+                  onMouseEnter={e => { if (statusFilter !== s) { e.currentTarget.style.borderColor = J.borderHover; e.currentTarget.style.color = J.text; } }}
+                  onMouseLeave={e => { if (statusFilter !== s) { e.currentTarget.style.borderColor = J.border; e.currentTarget.style.color = J.textSec; } }}>
+                  {s}
+                </button>
+              ))}
+            </div>
+            {hasFilters && (
+              <button onClick={() => { setSearch(''); setKindFilter(null); setStatusFilter(null); }}
+                style={{ padding: '4px 9px', fontSize: 11, borderRadius: 20, border: `1px solid ${J.border}`, background: 'none', color: J.textMuted, cursor: 'pointer', transition: 'all .12s' }}>
+                Clear
+              </button>
+            )}
+          </div>
+        )}
 
         {actionMessage && (
           <div style={{ marginBottom: 16, padding: '11px 14px', borderRadius: 10, background: J.bg2, border: `1px solid ${J.border}`, color: J.textSec, fontSize: 13 }}>
@@ -281,7 +406,16 @@ export function ProxmoxScreen({ onNavigate }: { onNavigate: (screen: string) => 
                       host={host}
                       node={node}
                       busyKey={busyKey}
-                      onAction={(kind, resource, action) => void handleAction(kind, host, node.node, resource, action)}
+                      kindFilter={kindFilter}
+                      statusFilter={statusFilter}
+                      search={search}
+                      onAction={(kind, resource, action) => {
+                if (action === 'stop' || action === 'restart') {
+                  setPendingAction({ kind, host, nodeName: node.node, resource, action });
+                } else {
+                  void handleAction(kind, host, node.node, resource, action);
+                }
+              }}
                     />
                   ))}
                 </div>
@@ -290,6 +424,45 @@ export function ProxmoxScreen({ onNavigate }: { onNavigate: (screen: string) => 
           ))}
         </div>
       </div>
+
+      {pendingAction && (
+        <OverlayDialog
+          title={`${pendingAction.action === 'restart' ? 'Restart' : 'Stop'} ${resourceLabel(pendingAction.resource, pendingAction.kind.toUpperCase())}?`}
+          eyebrow="Confirm action"
+          onClose={() => setPendingAction(null)}
+          actions={
+            <>
+              <button
+                className="j-btn"
+                onClick={() => setPendingAction(null)}
+                style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, padding: '7px 18px', fontSize: 13, cursor: 'pointer' }}
+              >
+                Cancel
+              </button>
+              <button
+                className="j-btn"
+                onClick={() => {
+                  const p = pendingAction;
+                  setPendingAction(null);
+                  void handleAction(p.kind, p.host, p.nodeName, p.resource, p.action);
+                }}
+                style={{ background: J.errorDim, border: '1px solid rgba(224,85,85,0.35)', color: J.error, borderRadius: 8, padding: '7px 18px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}
+              >
+                {pendingAction.action === 'restart' ? 'Restart' : 'Stop'}
+              </button>
+            </>
+          }
+        >
+          <div style={{ fontSize: 13, color: J.textSec, lineHeight: 1.5 }}>
+            {pendingAction.action === 'restart'
+              ? `This will restart the workload. It will be briefly unavailable.`
+              : `This will stop the workload. It can be started again from this screen.`}
+            <div style={{ fontSize: 12, color: J.textMuted, marginTop: 8, fontFamily: 'JetBrains Mono, monospace' }}>
+              {pendingAction.host.id}/{pendingAction.nodeName}/{pendingAction.resource.vmid}
+            </div>
+          </div>
+        </OverlayDialog>
+      )}
     </div>
   );
 }

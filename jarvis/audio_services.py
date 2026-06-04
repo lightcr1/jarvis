@@ -143,14 +143,14 @@ def _synthesize_edge(speak_text: str, logger, voice: str = "") -> tuple[bytes, s
 
 
 def synthesize_tts(text: str, logger, voice: str = "") -> tuple[bytes, str]:
-    """Returns (audio_bytes, media_type). Provider selected by TTS_PROVIDER env var."""
-    provider = (os.getenv("TTS_PROVIDER") or "piper").strip().lower()
+    """Returns (audio_bytes, media_type). Provider selected by TTS_PROVIDER env var.
+    Defaults to edge-tts (free, no model needed). Set TTS_PROVIDER=piper to use piper."""
+    provider = (os.getenv("TTS_PROVIDER") or "edge").strip().lower()
     speak_text = tts_preprocess_text(text)
 
-    if provider == "edge":
-        return _synthesize_edge(speak_text, logger, voice=voice)
-    # default: piper (voice param ignored — piper uses model file)
-    return _synthesize_piper(speak_text, logger), "audio/wav"
+    if provider == "piper":
+        return _synthesize_piper(speak_text, logger), "audio/wav"
+    return _synthesize_edge(speak_text, logger, voice=voice)
 
 
 def transcribe_local(audio_path: str, whisper_getter) -> str:

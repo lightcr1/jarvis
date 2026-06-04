@@ -145,6 +145,14 @@ class _FakeEngine:
         return {"summary": f"engine:{text}:{role}:{source}:{len(granted_permissions)}", "data": {"route": "engine"}}
 
 
+class _FakeHAStore:
+    def __init__(self, calendar_items):
+        self._calendar_items = calendar_items
+
+    def list_calendar_items(self):
+        return list(self._calendar_items)
+
+
 class _FakeHomeAssistantService:
     def __init__(self):
         self.created = []
@@ -155,6 +163,7 @@ class _FakeHomeAssistantService:
         self.system_targets = []
         self.requests = []
         self.automations = []
+        self.store = _FakeHAStore(self.calendar_items)
 
     def overview(self, *, user_id, role):
         if user_id != "usr-ha":
@@ -1030,6 +1039,110 @@ class ApiModuleRouterTests(unittest.TestCase):
         )
         self.assertEqual(200, confirm.status_code)
         self.assertTrue(confirm.json()["executed"])
+
+
+class DailyBriefingEndpointTests(unittest.TestCase):
+    def _make_client(self, briefing_text="Good morning, sir.", ha_service=None):
+        user_store = _FakeUserStore()
+        user_store.users["usr-1"] = {"id": "usr-1", "username": "alice", "role": "standard_user", "enabled": True}
+        prefs = _FakePreferencesStore()
+        audit = _FakeAuditLog()
+
+        def get_identity_session(token):
+            if token == "sess-1":
+                return {"token": token, "user": user_store.get_user("usr-1"), "role": "standard_user"}
+            return None
+
+        app = FastAPI()
+        app.include_router(
+            build_auth_chat_router({
+                "ensure_default_admin_seeded": lambda: None,
+                "user_store": user_store,
+                "admin_password_store": _FakePasswordStore(),
+                "audit_log": audit,
+                "issue_token": lambda: UnlockOut(token="t", expires_in_sec=60),
+                "token_fingerprint": lambda t: f"fp-{t}",
+                "issue_identity_token": lambda uid, role: {"session_token": f"sess-{uid}", "expires_in_sec": 60},
+                "user_preferences_store": prefs,
+                "identity_tokens": {},
+                "require_identity_session": lambda t: (_ for _ in ()).throw(HTTPException(401)) if not get_identity_session(t) else get_identity_session(t),
+                "normalize_role": lambda role: role or "guest_restricted",
+                "get_identity_session": get_identity_session,
+                "chat_owner_key": lambda s, g: (f"user:{get_identity_session(s)['user']['id']}", get_identity_session(s)["user"]["id"]) if get_identity_session(s) else (f"guest:{g or 'anon'}", None),
+                "chat_history": _FakeChatHistory(),
+                "rag_store": _FakeRagStore(),
+                "wakeword_enabled": lambda: False,
+                "wakeword_phrase": lambda: "hey jarvis",
+                "strip_wakeword": lambda t: (t, True),
+                "tokens": {},
+                "is_token_active": lambda _t, tok: bool(tok),
+                "resolve_effective_permissions": lambda *_: set(),
+                "membership_store": object(),
+                "permission_store": object(),
+                "home_assistant_service": ha_service,
+                "try_skill": lambda text, **_kw: {"reply": briefing_text} if "briefing" in text else None,
+                "rag_query_from_prompt": lambda _t: None,
+                "select_rag_hits": lambda *_a, **_k: [],
+                "rag_needs_smart_llm": lambda _t: False,
+                "cloud_llm_available": lambda: False,
+                "format_rag_reply": lambda *_a, **_k: "",
+                "rag_llm_answer": lambda *_a, **_k: "",
+                "engine": _FakeEngine(),
+                "build_context_reply": lambda t: f"offline:{t}",
+                "get_provider": lambda: "local",
+                "local_ai_stub_reply": lambda t: f"local:{t}",
+                "local_ai_chat_reply": lambda msgs, **_k: f"local:{msgs[-1]['content'] if msgs else ''}",
+                "status_hub": JarvisStatusHub(),
+                "get_gemini": lambda: None,
+                "get_openai": lambda: None,
+                "gemini_model": lambda: "gemini",
+                "openai_model": lambda: "gpt",
+                "openai_temperature": lambda: 0.3,
+                "openai_max_tokens": lambda: 120,
+                "system_prompt": lambda: "system",
+                "bearer_token_from_header": lambda auth: (auth or "").removeprefix("Bearer ").strip(),
+                "prune_expired_tokens": lambda _t: 0,
+                "passphrase": lambda: "test-pass",
+            })
+        )
+        return TestClient(app)
+
+    def test_daily_briefing_returns_text_and_date(self):
+        client = self._make_client(briefing_text="Good morning, sir. All systems nominal.")
+        resp = client.get("/chat/daily-briefing", headers={"X-Jarvis-Session": "sess-1"})
+        self.assertEqual(200, resp.status_code)
+        data = resp.json()
+        self.assertIn("text", data)
+        self.assertIn("date", data)
+        self.assertEqual("Good morning, sir. All systems nominal.", data["text"])
+        import re
+        self.assertRegex(data["date"], r"^\d{4}-\d{2}-\d{2}$")
+
+    def test_daily_briefing_without_auth_uses_guest_role(self):
+        client = self._make_client(briefing_text="Good day, sir.")
+        resp = client.get("/chat/daily-briefing")
+        self.assertEqual(200, resp.status_code)
+        self.assertIn("text", resp.json())
+
+    def test_daily_briefing_appends_todays_calendar_events(self):
+        from datetime import date
+        today = date.today().isoformat()
+        ha_service = _FakeHomeAssistantService()
+        ha_service.calendar_items.append({"id": "ev-1", "title": "Team Standup", "starts_at": f"{today}T09:00:00Z"})
+        client = self._make_client(briefing_text="Good morning, sir.", ha_service=ha_service)
+        resp = client.get("/chat/daily-briefing", headers={"X-Jarvis-Session": "sess-1"})
+        self.assertEqual(200, resp.status_code)
+        text = resp.json()["text"]
+        self.assertIn("Team Standup", text)
+        self.assertIn("09:00", text)
+
+    def test_daily_briefing_ignores_past_calendar_events(self):
+        ha_service = _FakeHomeAssistantService()
+        ha_service.calendar_items.append({"id": "ev-old", "title": "Old Meeting", "starts_at": "2024-01-01T09:00:00Z"})
+        client = self._make_client(briefing_text="Good morning, sir.", ha_service=ha_service)
+        resp = client.get("/chat/daily-briefing", headers={"X-Jarvis-Session": "sess-1"})
+        self.assertEqual(200, resp.status_code)
+        self.assertNotIn("Old Meeting", resp.json()["text"])
 
 
 if __name__ == "__main__":

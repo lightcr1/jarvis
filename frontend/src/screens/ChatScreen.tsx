@@ -7,10 +7,10 @@ import {
 } from './jarvis-shared';
 import {
   listChatSessions, createChatSession, streamChatMessage, getChatSession,
-  renameChatSession, synthesizeSpeech,
+  renameChatSession, synthesizeSpeech, getDailyBriefing,
 } from '../shared/api/chat';
 import type { ChatSessionListItem } from '../shared/api/chat';
-import { getStoredPreferences, setStoredPreferences } from '../shared/api/client';
+import { getStoredPreferences, setStoredPreferences, getStoredUser } from '../shared/api/client';
 
 type Msg = {
   id: number;
@@ -332,6 +332,19 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
     listChatSessions()
       .then(data => setGroups(groupSessions(data.sessions)))
       .catch(() => {});
+
+    const today = new Date().toISOString().slice(0, 10);
+    const userId = getStoredUser()?.id ?? 'guest';
+    const briefingKey = `jarvis_briefing_${userId}_${today}`;
+    if (!localStorage.getItem(briefingKey)) {
+      getDailyBriefing()
+        .then(data => {
+          const t = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+          setMsgs(prev => [{ id: Date.now(), role: 'jarvis', content: data.text, time: t }, ...prev]);
+          localStorage.setItem(briefingKey, '1');
+        })
+        .catch(() => {});
+    }
   }, []);
 
   useEffect(() => {
