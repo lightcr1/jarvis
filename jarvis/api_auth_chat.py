@@ -1,4 +1,7 @@
 import json as _json
+import os as _os
+import time as _time
+from datetime import datetime, date as _date
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
@@ -13,6 +16,7 @@ from .api_models import (
     ChatSessionUpdateIn,
     UnlockIn,
     UnlockOut,
+    UserChangePasswordIn,
     UserLoginIn,
     UserPreferencesIn,
 )
@@ -159,6 +163,17 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         updated = current("user_preferences_store").update(session["user"]["id"], payload.model_dump())
         current("audit_log").write("user_preferences_updated", {"user_id": session["user"]["id"]})
         return {"preferences": updated}
+
+    @router.put("/auth/me/password")
+    def auth_change_password(payload: UserChangePasswordIn, x_jarvis_session: str | None = Header(default=None)):
+        session = require_identity_session(x_jarvis_session)
+        user_id = session["user"]["id"]
+        pw_store = current("admin_password_store")
+        if not pw_store.verify_password(user_id, payload.current_password):
+            raise HTTPException(400, "current password is incorrect")
+        pw_store.set_password(user_id, payload.new_password)
+        current("audit_log").write("user_password_changed", {"user_id": user_id})
+        return {"ok": True}
 
     @router.post("/admin/session")
     def admin_session(x_jarvis_session: str | None = Header(default=None)):
@@ -638,6 +653,12 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         owner_key, _ = chat_owner_key(x_jarvis_session, x_jarvis_guest_key)
         return {"sessions": current("chat_history").list_sessions(owner_key=owner_key)}
 
+    @router.get("/chat/search")
+    def search_chat_messages(q: str = "", limit: int = 30, x_jarvis_session: str | None = Header(default=None), x_jarvis_guest_key: str | None = Header(default=None)):
+        owner_key, _ = chat_owner_key(x_jarvis_session, x_jarvis_guest_key)
+        hits = current("chat_history").search_messages(q, owner_key=owner_key, limit=limit)
+        return {"hits": hits}
+
     @router.post("/chat/sessions")
     def create_chat_session(payload: ChatSessionCreateIn, x_jarvis_session: str | None = Header(default=None), x_jarvis_guest_key: str | None = Header(default=None)):
         owner_key, owner_user_id = chat_owner_key(x_jarvis_session, x_jarvis_guest_key)
@@ -675,6 +696,108 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         if not deleted:
             raise HTTPException(404, "session not found")
         return {"ok": True, "id": session_id}
+
+    @router.get("/chat/daily-briefing")
+    def daily_briefing(
+        x_jarvis_session: str | None = Header(default=None),
+        x_jarvis_guest_key: str | None = Header(default=None),
+    ):
+        _, effective_user_id = chat_owner_key(x_jarvis_session, x_jarvis_guest_key)
+        identity_session = get_identity_session(x_jarvis_session)
+        active_user = identity_session["user"] if identity_session else None
+        role = normalize_role(active_user.get("role") if active_user else "guest_restricted")
+        granted_permissions = sorted(resolve_effective_permissions(
+            role, effective_user_id, current("membership_store"), current("permission_store")
+        ))
+        user_prefs = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
+
+        skill_result = try_skill(
+            "briefing",
+            role=role,
+            token=None,
+            granted_permissions=granted_permissions,
+            user_prefs=user_prefs,
+        )
+        base_text: str = skill_result.get("reply", "Good day, sir. All systems nominal.") if skill_result else "All systems nominal."
+
+        calendar_lines: list[str] = []
+        ha_service = current("home_assistant_service")
+        if ha_service:
+            today = _date.today().isoformat()
+            try:
+                for item in ha_service.store.list_calendar_items():
+                    starts = (item.get("starts_at") or "")[:10]
+                    if starts == today and item.get("title"):
+                        time_part = item.get("starts_at", "")
+                        if "T" in time_part:
+                            hm = time_part.split("T")[1][:5]
+                            calendar_lines.append(f"{hm} — {item['title']}")
+                        else:
+                            calendar_lines.append(item["title"])
+            except Exception:
+                pass
+
+        if calendar_lines:
+            cal_block = "Today's schedule: " + "; ".join(calendar_lines) + "."
+            text = base_text.rstrip(".") + " " + cal_block
+        else:
+            text = base_text
+
+        return {"text": text, "date": _date.today().isoformat()}
+
+    @router.get("/sys/metrics")
+    def sys_metrics(x_jarvis_session: str | None = Header(default=None)):
+        require_identity_session(x_jarvis_session)
+        try:
+            with open("/proc/loadavg") as f:
+                la1 = float(f.read().split()[0])
+            cpu_count = len([l for l in open("/proc/cpuinfo") if l.startswith("processor")]) or 1
+            cpu_pct = min(round(la1 / cpu_count * 100, 1), 100.0)
+        except Exception:
+            cpu_pct = 0.0
+
+        try:
+            mem: dict[str, int] = {}
+            for line in open("/proc/meminfo"):
+                parts = line.split()
+                if parts[0].rstrip(":") in ("MemTotal", "MemAvailable"):
+                    mem[parts[0].rstrip(":")] = int(parts[1])
+            total_kb = mem.get("MemTotal", 1)
+            avail_kb = mem.get("MemAvailable", total_kb)
+            used_kb = total_kb - avail_kb
+            ram_pct = round(used_kb / total_kb * 100, 1)
+            ram_used_gb = round(used_kb / 1024 / 1024, 2)
+            ram_total_gb = round(total_kb / 1024 / 1024, 2)
+        except Exception:
+            ram_pct, ram_used_gb, ram_total_gb = 0.0, 0.0, 0.0
+
+        try:
+            sv = _os.statvfs("/")
+            disk_total = sv.f_frsize * sv.f_blocks
+            disk_free = sv.f_frsize * sv.f_bavail
+            disk_used = disk_total - disk_free
+            disk_pct = round(disk_used / disk_total * 100, 1) if disk_total else 0.0
+            disk_used_gb = round(disk_used / 1024**3, 1)
+            disk_total_gb = round(disk_total / 1024**3, 1)
+        except Exception:
+            disk_pct, disk_used_gb, disk_total_gb = 0.0, 0.0, 0.0
+
+        try:
+            uptime_sec = float(open("/proc/uptime").read().split()[0])
+            days, rem = divmod(int(uptime_sec), 86400)
+            hours, rem = divmod(rem, 3600)
+            mins = rem // 60
+            uptime_str = (f"{days}d " if days else "") + f"{hours}h {mins}m"
+        except Exception:
+            uptime_str = "—"
+
+        return {
+            "cpu": {"pct": cpu_pct},
+            "ram": {"pct": ram_pct, "used_gb": ram_used_gb, "total_gb": ram_total_gb},
+            "disk": {"pct": disk_pct, "used_gb": disk_used_gb, "total_gb": disk_total_gb},
+            "uptime": uptime_str,
+            "ts": int(_time.time()),
+        }
 
     @router.get("/rag/status")
     def rag_status():

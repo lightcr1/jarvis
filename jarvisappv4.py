@@ -1,9 +1,12 @@
+import asyncio
 import sys
 import logging
 import os
 import re
 import subprocess
 import uuid
+
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
@@ -81,16 +84,20 @@ from jarvis.admin_settings_store import AdminSettingsStore
 from jarvis.user_preferences_store import UserPreferencesStore
 from jarvis.api_admin import build_admin_router
 from jarvis.api_auth_chat import build_auth_chat_router
-from jarvis.api_alerts import build_alerts_router
+from jarvis.api_alerts import build_alerts_router, get_alert_broadcaster
 from jarvis.api_home_assistant import build_home_assistant_router
+from jarvis.alert_store import AlertRulesStore
+from jarvis.alert_engine import AlertEngine
+from jarvis.api_memory import build_memory_router
 from jarvis.api_status import build_status_router
 from jarvis.api_voice import build_voice_router
+from jarvis.memory_store import MemoryStore
 from jarvis.api_models import UnlockOut
 from jarvis.frontend_routes import frontend_router, mount_frontend_assets
 from jarvis.home_assistant.client import HomeAssistantClient
 from jarvis.home_assistant.service import HomeAssistantService
 from jarvis.home_assistant.store import HomeAssistantStore
-from jarvis.router_dependencies import build_admin_deps, build_alerts_deps, build_auth_chat_deps, build_home_assistant_deps, build_status_deps, build_voice_deps
+from jarvis.router_dependencies import build_admin_deps, build_alerts_deps, build_auth_chat_deps, build_home_assistant_deps, build_memory_deps, build_status_deps, build_voice_deps
 from jarvis.jarvis_engine import (
     JarvisEngine,
     build_registry,
@@ -103,8 +110,31 @@ from jarvis.jarvis_engine import (
 from jarvis.runtime_state import ChatHistoryStore, RagStore
 from jarvis.runtime_state import JarvisStatusHub
 from jarvis.session_auth import bearer_token_from_header, enforce_token_capacity, is_token_active, prune_expired_tokens
+from jarvis.wakeword_engine import (
+    NullWakewordEngine,
+    SoftwareWakewordEngine,
+    create_wakeword_engine,
+)
 
-app = FastAPI(title="Jarvis Backend")
+@asynccontextmanager
+async def _lifespan(application: FastAPI):  # noqa: ARG001
+    global _auto_backup_task, wakeword_engine
+    _WARN_IF_MISSING = ["OPENAI_API_KEY", "JARVIS_PASSPHRASE"]
+    for _var in _WARN_IF_MISSING:
+        if not os.getenv(_var):
+            logging.warning("JARVIS startup: env var %s is not set — dependent features will fail", _var)
+    if os.getenv("JARVIS_AUTO_BACKUP_DISABLED", "").strip().lower() not in {"1", "true", "yes"}:
+        _auto_backup_task = asyncio.create_task(_auto_backup_loop())
+    alert_engine.start()
+    wakeword_engine = create_wakeword_engine(admin_settings_store.get())
+    wakeword_engine.start(asyncio.get_event_loop(), _on_wakeword_detected)
+    yield
+    wakeword_engine.stop()
+    alert_engine.stop()
+    if _auto_backup_task:
+        _auto_backup_task.cancel()
+
+app = FastAPI(title="Jarvis Backend", lifespan=_lifespan)
 logger = logging.getLogger("jarvis.audio")
 
 mount_frontend_assets(app)
@@ -125,9 +155,13 @@ permission_store = PermissionStore()
 admin_password_store = AdminPasswordStore()
 admin_settings_store = AdminSettingsStore()
 user_preferences_store = UserPreferencesStore()
+memory_store = MemoryStore()
 status_hub = JarvisStatusHub()
 home_assistant_store = HomeAssistantStore()
 home_assistant_client = HomeAssistantClient()
+alert_rules_store = AlertRulesStore()
+
+wakeword_engine: NullWakewordEngine | SoftwareWakewordEngine = NullWakewordEngine()
 
 DEFAULT_ADMIN_USERNAME = (os.getenv("JARVIS_DEFAULT_ADMIN_USERNAME") or "admin").strip() or "admin"
 DEFAULT_ADMIN_PASSWORD = (os.getenv("JARVIS_DEFAULT_ADMIN_PASSWORD") or "admin123").strip() or "admin123"
@@ -145,6 +179,17 @@ def ensure_default_admin_seeded() -> dict | None:
 
 
 ensure_default_admin_seeded()
+
+
+async def _on_wakeword_detected() -> None:
+    logger.debug("Wakeword detected — always-on engine callback fired")
+
+
+def _apply_wakeword_settings(updated_settings: dict) -> None:
+    voice = updated_settings.get("voice", {})
+    new_sens = voice.get("wakeword_sensitivity")
+    if new_sens is not None and hasattr(wakeword_engine, "sensitivity"):
+        wakeword_engine.sensitivity = float(new_sens)  # type: ignore[union-attr]
 
 
 @app.get("/health")
@@ -340,12 +385,20 @@ home_assistant_service = HomeAssistantService(
     audit_log=audit_log,
 )
 
+alert_engine = AlertEngine(
+    rules_store=alert_rules_store,
+    audit_admin_event=_audit_admin_event,
+    ha_store=home_assistant_store,
+    broadcast_fn=get_alert_broadcaster().broadcast,
+)
+
 # Transitional modular router activation.
 # The admin router now resolves live dependencies against the current module state,
 # so test suites that replace stores on jarvisappv4 keep working.
 app.include_router(build_admin_router(build_admin_deps(sys.modules[__name__])))
 app.include_router(build_alerts_router(build_alerts_deps(sys.modules[__name__])))
 app.include_router(build_home_assistant_router(build_home_assistant_deps(sys.modules[__name__])))
+app.include_router(build_memory_router(build_memory_deps(sys.modules[__name__])))
 app.include_router(build_status_router(build_status_deps(sys.modules[__name__])))
 
 # ---------------------------
@@ -360,6 +413,8 @@ def wakeword_phrase() -> str:
 
 
 def strip_wakeword(text: str) -> tuple[str, bool]:
+    if isinstance(wakeword_engine, SoftwareWakewordEngine):
+        return wakeword_engine.strip(text)
     return audio_strip_wakeword(text, wakeword_phrase())
 
 
@@ -393,7 +448,7 @@ def block_write_if_unauthorized(role: str, token: str | None, granted_permission
     )
 
 
-def try_skill(text: str, role: str = "admin", token: str | None = None, granted_permissions: list[str] | None = None, user_prefs: dict | None = None) -> dict[str, object] | None:
+def try_skill(text: str, role: str = "admin", token: str | None = None, granted_permissions: list[str] | None = None, user_prefs: dict | None = None, user_id: str | None = None) -> dict[str, object] | None:
     active_token = token if token and is_token_active(_tokens, token) else None
     return domain_try_skill(
         text,
@@ -417,6 +472,8 @@ def try_skill(text: str, role: str = "admin", token: str | None = None, granted_
         proxmox_vm_action=proxmox_vm_action,
         proxmox_lxc_action=proxmox_lxc_action,
         user_prefs=user_prefs,
+        memory_store=memory_store,
+        user_id=user_id,
     )
 
 
@@ -456,6 +513,68 @@ def rag_llm_answer(user_text: str, hits: list[dict]) -> str:
 # ---------------------------
 app.include_router(build_auth_chat_router(build_auth_chat_deps(sys.modules[__name__])))
 app.include_router(build_voice_router(build_voice_deps(sys.modules[__name__])))
+
+# ---------------------------
+# Auto-backup scheduler
+# ---------------------------
+_auto_backup_task: asyncio.Task | None = None
+
+
+def _write_auto_backup() -> str:
+    """Write a timestamped backup JSON and return the path written."""
+    import json as _json
+    import datetime as _dt
+    from pathlib import Path as _Path
+    import tempfile as _tempfile
+
+    preferred = _Path("/var/lib/jarvis/auto_backups")
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        backup_dir = preferred
+    except OSError:
+        backup_dir = _Path(_tempfile.gettempdir()) / "jarvis" / "auto_backups"
+        backup_dir.mkdir(parents=True, exist_ok=True)
+
+    ts = _dt.datetime.now(_dt.timezone.utc).strftime("%Y-%m-%dT%H-%M-%S")
+    filename = backup_dir / f"jarvis_backup_{ts}.json"
+
+    payload = {
+        "backup_version": 1,
+        "exported_at": _dt.datetime.now(_dt.timezone.utc).isoformat(),
+        "auto": True,
+        "users": user_store.list_users(),
+        "groups": group_store.list_groups(),
+        "memberships": membership_store.list_memberships(),
+        "group_permissions": permission_store.list_group_permissions(),
+        "user_permissions": permission_store.list_user_permissions(),
+        "settings": admin_settings_store.get(),
+    }
+    filename.write_text(_json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Keep only the 7 most recent auto backups
+    existing = sorted(backup_dir.glob("jarvis_backup_*.json"))
+    for old in existing[:-7]:
+        try:
+            old.unlink()
+        except OSError:
+            pass
+
+    return str(filename)
+
+
+async def _auto_backup_loop() -> None:
+    interval_hours = int(os.getenv("JARVIS_AUTO_BACKUP_INTERVAL_HOURS") or "24")
+    interval_sec = max(3600, interval_hours * 3600)
+    await asyncio.sleep(60)  # short initial delay so startup is not blocked
+    while True:
+        try:
+            path = await asyncio.get_event_loop().run_in_executor(None, _write_auto_backup)
+            logging.getLogger("jarvis").info("Auto-backup written: %s", path)
+        except Exception as exc:
+            logging.getLogger("jarvis").warning("Auto-backup failed: %s", exc)
+        await asyncio.sleep(interval_sec)
+
+
 
 # ---------------------------
 # STT (local faster-whisper OR Gemini)

@@ -1,4 +1,8 @@
+import datetime
+import json
+
 from fastapi import APIRouter, Header, HTTPException
+from fastapi.responses import Response
 
 from .api_models import (
     AdminGroupCreateIn,
@@ -111,7 +115,25 @@ def build_admin_router(deps: dict) -> APIRouter:
     @router.get("/admin/users")
     def admin_list_users(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
         require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
-        return {"users": current("user_store").list_users()}
+        import time
+        now = time.time()
+        tokens = current("identity_tokens")
+        active_users: dict[str, float] = {}
+        for data in tokens.values():
+            uid = data.get("user_id")
+            exp = data.get("exp", 0)
+            if uid and exp > now:
+                active_users[uid] = max(active_users.get(uid, 0), exp)
+        users = current("user_store").list_users()
+        for u in users:
+            uid = u["id"]
+            if uid in active_users:
+                u["active_session"] = True
+                u["session_expires_at"] = int(active_users[uid])
+            else:
+                u["active_session"] = False
+                u["session_expires_at"] = None
+        return {"users": users}
 
     @router.post("/admin/users")
     def admin_create_user(payload: AdminUserCreateIn, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
@@ -376,5 +398,121 @@ def build_admin_router(deps: dict) -> APIRouter:
         updated = current("admin_settings_store").update(payload.model_dump())
         audit_admin_event("admin_settings_updated", actor_user_id, caller_role, {"token_ttl_min": updated["usage_limits"]["token_ttl_min"], "max_active_tokens": updated["usage_limits"]["max_active_tokens"], "wakeword_enabled": updated["voice"]["wakeword_enabled"], "wakeword_phrase": updated["voice"]["wakeword_phrase"], "stt_provider": updated["voice"]["stt_provider"]})
         return {"settings": updated, "effective": settings_env_summary()}
+
+    @router.get("/admin/sessions")
+    def admin_list_sessions(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        import time as _time
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        now = _time.time()
+        tokens = current("identity_tokens")
+        users = {u["id"]: u for u in current("user_store").list_users()}
+        sessions = []
+        for _tok, data in list(tokens.items()):
+            exp = float(data.get("exp", 0))
+            if exp < now:
+                continue
+            uid = data.get("user_id", "")
+            u = users.get(uid, {})
+            sessions.append({
+                "user_id": uid,
+                "username": u.get("username", uid),
+                "role": data.get("role", "unknown"),
+                "expires_at": int(exp),
+                "expires_in_sec": int(exp - now),
+            })
+        sessions.sort(key=lambda s: s["expires_in_sec"], reverse=True)
+        return {"sessions": sessions, "count": len(sessions)}
+
+    @router.delete("/admin/sessions/{user_id}")
+    def admin_revoke_sessions(user_id: str, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        tokens = current("identity_tokens")
+        revoked = [tok for tok, data in list(tokens.items()) if data.get("user_id") == user_id]
+        for tok in revoked:
+            tokens.pop(tok, None)
+        current("audit_log").write("admin_sessions_revoked", {"target_user_id": user_id, "revoked_count": len(revoked)})
+        return {"ok": True, "revoked": len(revoked), "user_id": user_id}
+
+    @router.get("/admin/backup")
+    def admin_backup(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        data = {
+            "backup_version": 1,
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+            "users": current("user_store").list_users(),
+            "groups": current("group_store").list_groups(),
+            "memberships": current("membership_store").list_memberships(),
+            "permissions": {
+                "groups": current("permission_store").list_group_permissions(),
+                "users": current("permission_store").list_user_permissions(),
+            },
+            "settings": current("admin_settings_store").get(),
+        }
+        ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
+        filename = f"jarvis_backup_{ts}.json"
+        return Response(
+            content=json.dumps(data, indent=2, default=str),
+            media_type="application/json",
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @router.delete("/admin/users/{user_id}/conversations")
+    def admin_delete_user_conversations(user_id: str, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        user = current("user_store").get_user(user_id)
+        if not user:
+            raise HTTPException(404, "User not found")
+        owner_key = f"user:{user_id}"
+        deleted = current("chat_history").delete_all_sessions(owner_key)
+        current("audit_log").write("admin_conversations_deleted", {"target_user_id": user_id, "deleted_count": deleted, "admin_user_id": x_jarvis_user_id})
+        return {"ok": True, "deleted": deleted}
+
+    @router.post("/admin/backup/restore")
+    def admin_backup_restore(payload: dict, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        ver = payload.get("backup_version")
+        if ver != 1:
+            raise HTTPException(400, f"Unsupported backup_version: {ver!r} — only version 1 is accepted.")
+
+        restored: dict[str, int] = {}
+
+        users = payload.get("users") or []
+        if isinstance(users, list):
+            us = current("user_store")
+            us.data["users"] = {u["id"]: u for u in users if isinstance(u, dict) and "id" in u}
+            us._save()
+            restored["users"] = len(us.data["users"])
+
+        groups = payload.get("groups") or []
+        if isinstance(groups, list):
+            gs = current("group_store")
+            gs.data["groups"] = {g["id"]: g for g in groups if isinstance(g, dict) and "id" in g}
+            gs._save()
+            restored["groups"] = len(gs.data["groups"])
+
+        memberships = payload.get("memberships") or []
+        if isinstance(memberships, list):
+            ms = current("membership_store")
+            ms.data["memberships"] = [m for m in memberships if isinstance(m, dict)]
+            ms._save()
+            restored["memberships"] = len(ms.data["memberships"])
+
+        perms = payload.get("permissions") or {}
+        if isinstance(perms, dict):
+            ps = current("permission_store")
+            if "groups" in perms:
+                ps.data["group_permissions"] = perms["groups"]
+            if "users" in perms:
+                ps.data["user_permissions"] = perms["users"]
+            ps._save()
+            restored["permissions"] = len(perms.get("groups", {})) + len(perms.get("users", {}))
+
+        settings = payload.get("settings")
+        if isinstance(settings, dict):
+            current("admin_settings_store").update(settings)
+            restored["settings"] = 1
+
+        current("audit_log").write("admin_backup_restored", {"restored": restored, "admin_user_id": x_jarvis_user_id})
+        return {"ok": True, "restored": restored}
 
     return router

@@ -21,6 +21,8 @@ class AdminSettingsStore:
             "voice": {
                 "wakeword_enabled": False,
                 "wakeword_phrase": "hey jarvis",
+                "wakeword_engine": "software",
+                "wakeword_sensitivity": 0.5,
                 "stt_provider": "local",
             },
             "home_assistant": {
@@ -47,6 +49,8 @@ class AdminSettingsStore:
         max_active_raw = usage_limits.get("max_active_tokens", base["usage_limits"]["max_active_tokens"])
         wakeword_enabled_raw = voice.get("wakeword_enabled", base["voice"]["wakeword_enabled"])
         wakeword_phrase_raw = voice.get("wakeword_phrase", base["voice"]["wakeword_phrase"])
+        wakeword_engine_raw = voice.get("wakeword_engine", base["voice"]["wakeword_engine"])
+        wakeword_sensitivity_raw = voice.get("wakeword_sensitivity", base["voice"]["wakeword_sensitivity"])
         stt_provider_raw = voice.get("stt_provider", base["voice"]["stt_provider"])
         confirmation_ttl_raw = home_assistant.get("confirmation_ttl_sec", base["home_assistant"]["confirmation_ttl_sec"])
         remote_allowed_raw = home_assistant.get("remote_allowed_cidrs", base["home_assistant"]["remote_allowed_cidrs"])
@@ -64,6 +68,14 @@ class AdminSettingsStore:
         max_active_tokens = max(1, max_active_tokens)
 
         wakeword_phrase = (str(wakeword_phrase_raw or "").strip().lower() or base["voice"]["wakeword_phrase"])
+        wakeword_engine = (str(wakeword_engine_raw or "").strip().lower() or base["voice"]["wakeword_engine"])
+        if wakeword_engine not in {"software", "openwakeword", "none"}:
+            wakeword_engine = base["voice"]["wakeword_engine"]
+        try:
+            wakeword_sensitivity = float(wakeword_sensitivity_raw)
+            wakeword_sensitivity = max(0.0, min(1.0, wakeword_sensitivity))
+        except (TypeError, ValueError):
+            wakeword_sensitivity = base["voice"]["wakeword_sensitivity"]
         stt_provider = (str(stt_provider_raw or "").strip().lower() or base["voice"]["stt_provider"])
         if stt_provider not in {"local", "gemini"}:
             stt_provider = base["voice"]["stt_provider"]
@@ -89,6 +101,8 @@ class AdminSettingsStore:
             "voice": {
                 "wakeword_enabled": bool(wakeword_enabled_raw),
                 "wakeword_phrase": wakeword_phrase,
+                "wakeword_engine": wakeword_engine,
+                "wakeword_sensitivity": wakeword_sensitivity,
                 "stt_provider": stt_provider,
             },
             "home_assistant": {
