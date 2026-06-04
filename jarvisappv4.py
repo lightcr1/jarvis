@@ -4,7 +4,11 @@ import logging
 import os
 import re
 import subprocess
+import time as _startup_time
 import uuid
+
+JARVIS_VERSION = "1.0.0"
+_START_TIME = _startup_time.monotonic()
 
 from contextlib import asynccontextmanager
 
@@ -125,6 +129,7 @@ async def _lifespan(application: FastAPI):  # noqa: ARG001
             logging.warning("JARVIS startup: env var %s is not set — dependent features will fail", _var)
     if os.getenv("JARVIS_AUTO_BACKUP_DISABLED", "").strip().lower() not in {"1", "true", "yes"}:
         _auto_backup_task = asyncio.create_task(_auto_backup_loop())
+    prune_expired_tokens(_tokens)
     alert_engine.start()
     wakeword_engine = create_wakeword_engine(admin_settings_store.get())
     wakeword_engine.start(asyncio.get_event_loop(), _on_wakeword_detected)
@@ -192,9 +197,24 @@ def _apply_wakeword_settings(updated_settings: dict) -> None:
         wakeword_engine.sensitivity = float(new_sens)  # type: ignore[union-attr]
 
 
+@app.get("/version")
+def version():
+    return {"version": JARVIS_VERSION}
+
+
 @app.get("/health")
 def health():
-    return {"ok": True}
+    import time as _t
+    uptime_sec = round(_t.monotonic() - _START_TIME)
+    active_tokens = sum(1 for exp in _tokens.values() if exp > _t.time())
+    return {
+        "ok": True,
+        "version": JARVIS_VERSION,
+        "uptime_sec": uptime_sec,
+        "active_tokens": active_tokens,
+        "alert_engine": alert_engine._task is not None and not alert_engine._task.done(),
+        "wakeword_engine": type(wakeword_engine).__name__,
+    }
 
 
 @app.get("/greeting")

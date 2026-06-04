@@ -6,6 +6,8 @@ from datetime import datetime, date as _date
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
 
+from .rate_limiter import _rate
+
 from .ai_clients import build_system_prompt
 from .api_models import (
     AdminLoginIn,
@@ -273,6 +275,10 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         if not text:
             return {"reply": "Say that again.", "session_id": session_id}
 
+        rl_key = effective_user_id or (x_jarvis_guest_key or "anon")
+        if not _rate.allow(f"chat:{rl_key}", limit=30, window=60.0):
+            raise HTTPException(429, "Rate limit exceeded — slow down")
+
         token = deps["bearer_token_from_header"](authorization)
         if token and not is_token_active(current("tokens"), token):
             token = None
@@ -460,6 +466,12 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
             def _empty():
                 yield f"data: {_json.dumps({'type': 'done', 'reply': 'Say that again.', 'session_id': session_id})}\n\n"
             return StreamingResponse(_empty(), media_type="text/event-stream")
+
+        rl_key = effective_user_id or (x_jarvis_guest_key or "anon")
+        if not _rate.allow(f"chat:{rl_key}", limit=30, window=60.0):
+            def _rl():
+                yield f"data: {_json.dumps({'type': 'error', 'detail': 'Rate limit exceeded — slow down'})}\n\n"
+            return StreamingResponse(_rl(), media_type="text/event-stream")
 
         token = deps["bearer_token_from_header"](authorization)
         if token and not is_token_active(current("tokens"), token):

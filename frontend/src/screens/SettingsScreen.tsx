@@ -360,10 +360,29 @@ export function SettingsScreen() {
   const [voices, setVoices] = useState<JarvisVoice[]>([]);
   const [testingVoice, setTestingVoice] = useState(false);
   const [voiceTestErr, setVoiceTestErr] = useState('');
+  const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
   const [intStatus, setIntStatus] = useState<Record<string, IntegrationState>>({
     proxmox: 'checking', ha: 'checking', rag: 'checking',
   });
   const testAudioRef = useRef<HTMLAudioElement | null>(null);
+  const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handlePreviewVoice = (voiceId: string) => {
+    previewAudioRef.current?.pause();
+    previewAudioRef.current = null;
+    if (previewingVoice === voiceId) { setPreviewingVoice(null); return; }
+    setPreviewingVoice(voiceId);
+    synthesizeSpeech('Systems nominal. Standing by.', voiceId)
+      .then(blob => {
+        const url = URL.createObjectURL(blob);
+        const audio = new Audio(url);
+        previewAudioRef.current = audio;
+        audio.onended = () => { URL.revokeObjectURL(url); previewAudioRef.current = null; setPreviewingVoice(null); };
+        audio.onerror = () => { URL.revokeObjectURL(url); previewAudioRef.current = null; setPreviewingVoice(null); };
+        void audio.play();
+      })
+      .catch(() => setPreviewingVoice(null));
+  };
 
   const handleTestVoice = () => {
     if (testingVoice) {
@@ -417,7 +436,7 @@ export function SettingsScreen() {
     const checkInt = async () => {
       const [px, ha, rag] = await Promise.allSettled([
         apiRequest<{ healthy?: boolean }>('/proxmox/health', { includeUser: true }),
-        apiRequest<{ healthy?: boolean }>('/home/health', { includeUser: true }),
+        apiRequest<{ healthy?: boolean }>('/home-assistant/health', { includeUser: true }),
         apiRequest<{ counts?: Record<string, number> }>('/rag/status'),
       ]);
       setIntStatus({
@@ -507,30 +526,45 @@ export function SettingsScreen() {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {voices.map(v => {
               const selected = (prefs.tts_voice ?? '') === v.id;
+              const previewing = previewingVoice === v.id;
               return (
-                <button key={v.id} onClick={() => {
-                  const next = { ...prefs, tts_voice: v.id };
-                  setPrefs(next);
-                  setStoredPreferences(next);
-                  if (getSessionToken()) {
-                    apiRequest('/auth/me/preferences', { method: 'PUT', includeUser: true, body: next })
-                      .catch(() => undefined);
-                  }
-                }}
-                  style={{
-                    display: 'flex', alignItems: 'center', gap: 10,
-                    background: selected ? J.bg3 : J.bg2,
-                    border: `1px solid ${selected ? J.amber : J.border}`,
-                    borderRadius: 8, padding: '9px 14px', cursor: 'pointer',
-                    textAlign: 'left', transition: 'all .15s',
-                  }}>
-                  <span style={{ fontSize: 16, lineHeight: 1 }}>{v.flag}</span>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontSize: 13, color: J.text, fontWeight: selected ? 600 : 400 }}>{v.name}</div>
-                    {v.id && <div style={{ fontSize: 11, color: J.textMuted, fontFamily: 'JetBrains Mono,monospace' }}>{v.id}</div>}
-                  </div>
-                  {selected && <span style={{ fontSize: 11, color: J.amber, fontWeight: 600 }}>ACTIVE</span>}
-                </button>
+                <div key={v.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <button onClick={() => {
+                    const next = { ...prefs, tts_voice: v.id };
+                    setPrefs(next);
+                    setStoredPreferences(next);
+                    if (getSessionToken()) {
+                      apiRequest('/auth/me/preferences', { method: 'PUT', includeUser: true, body: next })
+                        .catch(() => undefined);
+                    }
+                  }}
+                    style={{
+                      flex: 1, display: 'flex', alignItems: 'center', gap: 10,
+                      background: selected ? J.bg3 : J.bg2,
+                      border: `1px solid ${selected ? J.amber : J.border}`,
+                      borderRadius: 8, padding: '9px 14px', cursor: 'pointer',
+                      textAlign: 'left', transition: 'all .15s',
+                    }}>
+                    <span style={{ fontSize: 16, lineHeight: 1 }}>{v.flag}</span>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, color: J.text, fontWeight: selected ? 600 : 400 }}>{v.name}</div>
+                      {v.id && <div style={{ fontSize: 11, color: J.textMuted, fontFamily: 'JetBrains Mono,monospace' }}>{v.id}</div>}
+                    </div>
+                    {selected && <span style={{ fontSize: 11, color: J.amber, fontWeight: 600 }}>ACTIVE</span>}
+                  </button>
+                  <button
+                    onClick={e => { e.stopPropagation(); handlePreviewVoice(v.id); }}
+                    title="Preview voice"
+                    style={{
+                      flexShrink: 0, width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      background: previewing ? J.amberDim : J.bg2,
+                      border: `1px solid ${previewing ? J.amber : J.border}`,
+                      borderRadius: 7, cursor: 'pointer', fontSize: 13, color: previewing ? J.amber : J.textMuted,
+                      transition: 'all .15s',
+                    }}>
+                    {previewing ? '■' : '▶'}
+                  </button>
+                </div>
               );
             })}
           </div>

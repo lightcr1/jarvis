@@ -163,24 +163,29 @@ function AddModal({ onClose }: { onClose: () => void }) {
 type LiveStatus = 'checking' | 'online' | 'offline' | 'connected';
 type LiveStatusMap = Record<string, LiveStatus>;
 
+type HealthInfo = { version?: string; uptime_sec?: number; alert_engine?: boolean; wakeword_engine?: string };
+
 export function ServiceHubScreen({ onNavigate }: { onNavigate: (screen: string) => void }) {
   useJ();
   const [cat, setCat]             = useState('All');
   const [showAdd, setShowAdd]     = useState(false);
   const [liveStatus, setLiveStatus] = useState<LiveStatusMap>({ ha: 'checking', proxmox: 'checking', github: 'checking', wikijs: 'checking' });
+  const [healthInfo, setHealthInfo] = useState<HealthInfo>({});
 
   useEffect(() => {
     Promise.allSettled([
       apiRequest<{ healthy?: boolean }>('/proxmox/health', { includeUser: true }),
-      apiRequest<{ healthy?: boolean }>('/home/health', { includeUser: true }),
+      apiRequest<{ healthy?: boolean }>('/home-assistant/health', { includeUser: true }),
       apiRequest<{ counts?: Record<string, number> }>('/rag/status'),
-    ]).then(([px, ha, rag]) => {
+      apiRequest<HealthInfo>('/health'),
+    ]).then(([px, ha, rag, health]) => {
       setLiveStatus({
         proxmox: px.status === 'fulfilled' ? 'online' : 'offline',
         ha:      ha.status === 'fulfilled' ? 'online' : 'offline',
         github:  rag.status === 'fulfilled' ? 'online' : 'offline',
         wikijs:  rag.status === 'fulfilled' ? 'online' : 'offline',
       });
+      if (health.status === 'fulfilled') setHealthInfo(health.value);
     });
   }, []);
 
@@ -208,7 +213,7 @@ export function ServiceHubScreen({ onNavigate }: { onNavigate: (screen: string) 
           <MetricCard label="Core"         value={connected}        sublabel="Always-on services"    icon={<IconGrid size={14} />} />
           <MetricCard label="Online"       value={online}           sublabel="Integrations reachable" icon={<IconActivity size={14} />} accent={J.success} />
           <MetricCard label="Offline"      value={offline}          sublabel="Unreachable / unset"    icon={<IconCode size={14} />} accent={offline > 0 ? J.error : undefined} />
-          <MetricCard label="Total"        value={SERVICES.length}  sublabel="Registered services"    icon={<IconShield size={14} />} />
+          <MetricCard label="Version"      value={healthInfo.version ?? '—'}  sublabel={healthInfo.uptime_sec != null ? `up ${Math.floor(healthInfo.uptime_sec / 60)}m` : 'Server info'} icon={<IconShield size={14} />} />
         </div>
         <div style={{ display: 'flex', gap: 6, marginBottom: 18, flexWrap: 'wrap' }}>
           {CATS.map(c => (
