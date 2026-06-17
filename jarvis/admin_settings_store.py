@@ -29,6 +29,17 @@ class AdminSettingsStore:
                 "confirmation_ttl_sec": 300,
                 "remote_allowed_cidrs": [],
             },
+            "provider": {
+                "default_provider": "openrouter",
+                "openrouter_enabled": True,
+                "usd_to_chf_rate": 0.90,
+                "model_prices": {},
+                "global_daily_budget_chf": 0.0,
+                "global_monthly_budget_chf": 0.0,
+                "kill_switch": False,
+                "disable_expensive_models": False,
+                "expensive_threshold_chf": 0.10,
+            },
         }
 
     def _normalize(self, payload: dict | None) -> dict:
@@ -44,6 +55,9 @@ class AdminSettingsStore:
         home_assistant = candidate.get("home_assistant")
         if not isinstance(home_assistant, dict):
             home_assistant = {}
+        provider_raw = candidate.get("provider")
+        if not isinstance(provider_raw, dict):
+            provider_raw = {}
 
         token_ttl_raw = usage_limits.get("token_ttl_min", base["usage_limits"]["token_ttl_min"])
         max_active_raw = usage_limits.get("max_active_tokens", base["usage_limits"]["max_active_tokens"])
@@ -93,6 +107,45 @@ class AdminSettingsStore:
             if cidr and cidr not in normalized_cidrs:
                 normalized_cidrs.append(cidr)
 
+        # Provider section normalization
+        bp = base["provider"]
+        _KNOWN_PROVIDERS = {"openrouter", "anthropic", "openai", "gemini", "mistral", "deepseek", "local"}
+        default_provider = str(provider_raw.get("default_provider") or bp["default_provider"]).strip().lower()
+        if default_provider not in _KNOWN_PROVIDERS:
+            default_provider = bp["default_provider"]
+        try:
+            usd_to_chf_rate = float(provider_raw.get("usd_to_chf_rate") or bp["usd_to_chf_rate"])
+            if usd_to_chf_rate <= 0:
+                usd_to_chf_rate = bp["usd_to_chf_rate"]
+        except (TypeError, ValueError):
+            usd_to_chf_rate = bp["usd_to_chf_rate"]
+        model_prices_raw = provider_raw.get("model_prices", bp["model_prices"])
+        model_prices = {}
+        if isinstance(model_prices_raw, dict):
+            for k, v in model_prices_raw.items():
+                if isinstance(v, dict):
+                    try:
+                        model_prices[str(k)] = {
+                            "in": max(0.0, float(v.get("in", 0))),
+                            "out": max(0.0, float(v.get("out", 0))),
+                            "tier": str(v.get("tier", "medium")),
+                            "expensive": bool(v.get("expensive", False)),
+                        }
+                    except (TypeError, ValueError):
+                        pass
+        try:
+            global_daily_budget_chf = max(0.0, float(provider_raw.get("global_daily_budget_chf") or 0))
+        except (TypeError, ValueError):
+            global_daily_budget_chf = bp["global_daily_budget_chf"]
+        try:
+            global_monthly_budget_chf = max(0.0, float(provider_raw.get("global_monthly_budget_chf") or 0))
+        except (TypeError, ValueError):
+            global_monthly_budget_chf = bp["global_monthly_budget_chf"]
+        try:
+            expensive_threshold_chf = max(0.0, float(provider_raw.get("expensive_threshold_chf") or bp["expensive_threshold_chf"]))
+        except (TypeError, ValueError):
+            expensive_threshold_chf = bp["expensive_threshold_chf"]
+
         return {
             "usage_limits": {
                 "token_ttl_min": token_ttl_min,
@@ -108,6 +161,17 @@ class AdminSettingsStore:
             "home_assistant": {
                 "confirmation_ttl_sec": confirmation_ttl_sec,
                 "remote_allowed_cidrs": normalized_cidrs,
+            },
+            "provider": {
+                "default_provider": default_provider,
+                "openrouter_enabled": bool(provider_raw.get("openrouter_enabled", bp["openrouter_enabled"])),
+                "usd_to_chf_rate": usd_to_chf_rate,
+                "model_prices": model_prices,
+                "global_daily_budget_chf": global_daily_budget_chf,
+                "global_monthly_budget_chf": global_monthly_budget_chf,
+                "kill_switch": bool(provider_raw.get("kill_switch", bp["kill_switch"])),
+                "disable_expensive_models": bool(provider_raw.get("disable_expensive_models", bp["disable_expensive_models"])),
+                "expensive_threshold_chf": expensive_threshold_chf,
             },
         }
 
@@ -137,6 +201,11 @@ class AdminSettingsStore:
         home_assistant = payload.get("home_assistant")
         if isinstance(home_assistant, dict):
             merged["home_assistant"].update(home_assistant)
+        provider = payload.get("provider")
+        if isinstance(provider, dict):
+            current_provider = merged.get("provider") or {}
+            current_provider.update(provider)
+            merged["provider"] = current_provider
         self.data = self._normalize(merged)
         self._save()
         return self.get()

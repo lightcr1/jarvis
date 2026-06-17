@@ -12,6 +12,8 @@ from .api_models import (
     AdminSettingsIn,
     AdminUserCreateIn,
     AdminUserUpdateIn,
+    TopUpIn,
+    UserLimitsIn,
     UserPasswordIn,
 )
 from .router_dependencies import LiveRef
@@ -447,6 +449,10 @@ def build_admin_router(deps: dict) -> APIRouter:
                 "users": current("permission_store").list_user_permissions(),
             },
             "settings": current("admin_settings_store").get(),
+            "credits": (current("credit_store").data if "credit_store" in deps else {}),
+            "user_limits": (current("user_limits_store").data if "user_limits_store" in deps else {}),
+            # byok_store excluded — users must re-enter API keys after restore
+            # usage_log excluded — high-volume, not suitable for backup
         }
         ts = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d_%H%M%S")
         filename = f"jarvis_backup_{ts}.json"
@@ -512,7 +518,88 @@ def build_admin_router(deps: dict) -> APIRouter:
             current("admin_settings_store").update(settings)
             restored["settings"] = 1
 
+        credits_data = payload.get("credits")
+        if isinstance(credits_data, dict) and "credit_store" in deps:
+            cs = current("credit_store")
+            if isinstance(credits_data.get("balances"), dict):
+                cs.data["balances"] = credits_data["balances"]
+            if isinstance(credits_data.get("ledger"), list):
+                cs.data["ledger"] = credits_data["ledger"]
+            cs._save()
+            restored["credits"] = len(cs.data.get("balances", {}))
+
+        user_limits_data = payload.get("user_limits")
+        if isinstance(user_limits_data, dict) and "user_limits_store" in deps:
+            uls = current("user_limits_store")
+            if isinstance(user_limits_data.get("limits"), dict):
+                uls.data["limits"] = user_limits_data["limits"]
+                uls._save()
+                restored["user_limits"] = len(uls.data["limits"])
+
         current("audit_log").write("admin_backup_restored", {"restored": restored, "admin_user_id": x_jarvis_user_id})
         return {"ok": True, "restored": restored}
+
+    @router.post("/admin/credits/topup")
+    def admin_credits_topup(
+        payload: TopUpIn,
+        x_jarvis_user_id: str | None = Header(default=None),
+        x_jarvis_role: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        entry = current("credit_store").top_up(
+            payload.user_id,
+            payload.amount_chf,
+            note=payload.note,
+            actor=x_jarvis_user_id or "admin",
+        )
+        current("audit_log").write(
+            "credit_topup",
+            {"user_id": payload.user_id, "amount_chf": payload.amount_chf, "admin_user_id": x_jarvis_user_id},
+        )
+        return {"ok": True, "entry": entry}
+
+    @router.get("/admin/credits/{user_id}")
+    def admin_credits_get(
+        user_id: str,
+        x_jarvis_user_id: str | None = Header(default=None),
+        x_jarvis_role: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        balance = current("credit_store").get_balance(user_id)
+        ledger = current("credit_store").list_ledger(user_id, limit=20)
+        return {"user_id": user_id, "balance_chf": balance, "ledger": ledger}
+
+    @router.put("/admin/users/{user_id}/limits")
+    def admin_user_limits_update(
+        user_id: str,
+        payload: UserLimitsIn,
+        x_jarvis_user_id: str | None = Header(default=None),
+        x_jarvis_role: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        updated = current("user_limits_store").update(user_id, payload.model_dump(exclude_none=True))
+        current("audit_log").write("user_limits_updated", {"user_id": user_id, "admin_user_id": x_jarvis_user_id})
+        return updated
+
+    @router.get("/admin/usage")
+    def admin_usage(
+        user_id: str | None = None,
+        provider: str | None = None,
+        days: int = 7,
+        x_jarvis_user_id: str | None = Header(default=None),
+        x_jarvis_role: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        import time as _time
+        since_ts = int(_time.time()) - days * 86400
+        usage_store = current("usage_log_store")
+        aggregate = usage_store.aggregate(user_id=user_id, provider=provider, since_ts=since_ts)
+        daily_buckets = usage_store.daily_buckets(user_id=user_id, days=days)
+        recent = usage_store.recent(user_id=user_id, limit=50)
+        return {"aggregate": aggregate, "daily_buckets": daily_buckets, "recent": recent}
 
     return router

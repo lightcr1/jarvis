@@ -618,7 +618,16 @@ def wakeword_phrases() -> set[str]:
 
 
 def cloud_configured() -> bool:
-    return bool(os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY"))
+    if os.getenv("JARVIS_USE_AI_ROUTER", "1").strip() not in ("0", "false", "no"):
+        return True
+    return bool(
+        os.getenv("OPENAI_API_KEY")
+        or os.getenv("GEMINI_API_KEY")
+        or os.getenv("OPENROUTER_API_KEY")
+        or os.getenv("ANTHROPIC_API_KEY")
+        or os.getenv("MISTRAL_API_KEY")
+        or os.getenv("DEEPSEEK_API_KEY")
+    )
 
 
 def summary_response(summary: str, data: dict | None = None) -> dict:

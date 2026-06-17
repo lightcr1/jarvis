@@ -148,6 +148,7 @@ export function LogsPage() {
             <option value="service_system">service_system</option>
           </select>
           <button onClick={() => void load()} style={{ ...btn(true), padding: "5px 14px" }}>Apply</button>
+          <button onClick={() => void load()} style={{ ...btn(), padding: "5px 12px" }}>↺ Refresh</button>
           <button onClick={() => setFilterEvent("ha_entity_action_requested")} style={btn()}>HA actions</button>
           <button onClick={() => setFilterEvent("ha_automation_created")} style={btn()}>HA automations</button>
           {events.length > 0 && (

@@ -43,6 +43,7 @@ from jarvis.audio_services import (
 from jarvis.ai_clients import (
     SYSTEM_PROMPT,
     build_context_reply,
+    get_anthropic,
     get_gemini,
     get_openai,
     get_provider,
@@ -86,6 +87,10 @@ from jarvis.permission_store import PermissionStore, KNOWN_PERMISSIONS
 from jarvis.admin_password_store import AdminPasswordStore
 from jarvis.admin_settings_store import AdminSettingsStore
 from jarvis.user_preferences_store import UserPreferencesStore
+from jarvis.byok_store import ByokKeyStore
+from jarvis.usage_log_store import UsageLogStore
+from jarvis.credit_store import CreditStore
+from jarvis.user_limits_store import UserLimitsStore
 from jarvis.api_admin import build_admin_router
 from jarvis.api_auth_chat import build_auth_chat_router
 from jarvis.api_alerts import build_alerts_router, get_alert_broadcaster
@@ -160,6 +165,10 @@ permission_store = PermissionStore()
 admin_password_store = AdminPasswordStore()
 admin_settings_store = AdminSettingsStore()
 user_preferences_store = UserPreferencesStore()
+byok_store = ByokKeyStore()
+usage_log_store = UsageLogStore()
+credit_store = CreditStore()
+user_limits_store = UserLimitsStore()
 memory_store = MemoryStore()
 status_hub = JarvisStatusHub()
 home_assistant_store = HomeAssistantStore()
@@ -568,6 +577,10 @@ def _write_auto_backup() -> str:
         "group_permissions": permission_store.list_group_permissions(),
         "user_permissions": permission_store.list_user_permissions(),
         "settings": admin_settings_store.get(),
+        "credits": credit_store.data,
+        "user_limits": user_limits_store.data,
+        # byok_store excluded — users must re-enter API keys after restore
+        # usage_log excluded — high-volume, not suitable for backup
     }
     filename.write_text(_json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 

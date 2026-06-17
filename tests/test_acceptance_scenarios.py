@@ -448,6 +448,8 @@ def _build_full_app(
         "local_ai_stub_reply": lambda t: f"local:{t}",
         "local_ai_chat_reply": lambda msgs, **_k: f"local:{msgs[-1]['content'] if msgs else ''}",
         "status_hub": status_hub,
+        "byok_store": None,
+                    "get_anthropic": lambda: None,
         "get_gemini": lambda: None,
         "get_openai": lambda: None,
         "gemini_model": lambda: "gemini",

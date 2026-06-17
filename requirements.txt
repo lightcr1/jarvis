@@ -3,6 +3,9 @@ uvicorn[standard]
 pydantic
 openai
 google-genai
+anthropic
+cryptography
 faster-whisper
 python-multipart
 edge-tts
+psutil

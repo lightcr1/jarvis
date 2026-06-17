@@ -42,6 +42,13 @@ export type AdminStatusSummary = {
   settings: Record<string, unknown>;
 };
 
+export type ModelPrice = {
+  in_usd_per_1k: number;
+  out_usd_per_1k: number;
+  tier: string;
+  expensive: boolean;
+};
+
 export type AdminSettings = {
   usage_limits: {
     token_ttl_min: number;
@@ -57,6 +64,17 @@ export type AdminSettings = {
   home_assistant: {
     confirmation_ttl_sec: number;
     remote_allowed_cidrs: string[];
+  };
+  provider?: {
+    default_provider: string;
+    openrouter_enabled: boolean;
+    usd_to_chf_rate: number;
+    kill_switch: boolean;
+    disable_expensive_models: boolean;
+    expensive_threshold_chf: number;
+    global_daily_budget_chf: number;
+    global_monthly_budget_chf: number;
+    model_prices: Record<string, ModelPrice>;
   };
 };
 

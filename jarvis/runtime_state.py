@@ -68,14 +68,14 @@ class ChatHistoryStore:
 
     def _migrate_json(self, configured: str | None) -> None:
         if configured:
-            json_path = Path(configured)
+            json_path = Path(configured).with_suffix(".json")
         else:
             json_path = default_writable_path("chat_history.json")
         if not json_path.exists():
             return
         try:
             data = json.loads(json_path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
+        except (OSError, ValueError, json.JSONDecodeError):
             return
         sessions = data.get("sessions", {})
         if not sessions:

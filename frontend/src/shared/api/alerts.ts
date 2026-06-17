@@ -14,7 +14,7 @@ export type AlertRule = {
   id: string;
   name: string;
   enabled: boolean;
-  metric: "cpu" | "ram" | "disk" | "ha_entity";
+  metric: "cpu" | "ram" | "disk" | "ha_health" | "ha_entity";
   condition: "above" | "below" | "equals" | "contains";
   threshold: number | string;
   duration_seconds: number;

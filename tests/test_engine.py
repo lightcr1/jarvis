@@ -330,6 +330,9 @@ class EngineFallbackTests(unittest.TestCase):
         self.tmpdir = tempfile.TemporaryDirectory()
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("GEMINI_API_KEY", None)
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ["JARVIS_USE_AI_ROUTER"] = "0"
         os.environ["ALLOWED_TARGETS"] = "local"
         os.environ["COOLDOWN_RESTART_SECONDS"] = "0"
         os.environ["COOLDOWN_CRITICAL_SECONDS"] = "0"
@@ -339,6 +342,9 @@ class EngineFallbackTests(unittest.TestCase):
     def tearDown(self):
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("GEMINI_API_KEY", None)
+        os.environ.pop("OPENROUTER_API_KEY", None)
+        os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ.pop("JARVIS_USE_AI_ROUTER", None)
         self.tmpdir.cleanup()
 
     def test_fallback_offline_when_no_cloud(self):

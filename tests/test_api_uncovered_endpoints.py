@@ -389,6 +389,8 @@ def _make_auth_deps(
         "local_ai_stub_reply": lambda t: f"local:{t}",
         "local_ai_chat_reply": lambda msgs, **k: "local:reply",
         "status_hub": JarvisStatusHub(),
+        "byok_store": None,
+                    "get_anthropic": lambda: None,
         "get_gemini": lambda: None,
         "get_openai": lambda: None,
         "gemini_model": lambda: "gemini",

@@ -64,6 +64,20 @@ _DEFAULT_RULES: list[dict] = [
         "ha_attribute": None,
         "message_template": "Disk capacity on the primary volume is at {value:.0f}%. Attention recommended.",
     },
+    {
+        "id": "default-ha-unreachable",
+        "name": "Home Assistant unreachable",
+        "enabled": True,
+        "metric": "ha_health",
+        "condition": "equals",
+        "threshold": "unreachable",
+        "duration_seconds": 180,
+        "severity": "warning",
+        "cooldown_seconds": 600,
+        "ha_entity_id": None,
+        "ha_attribute": None,
+        "message_template": "Home Assistant has been unreachable for {duration} seconds.",
+    },
 ]
 
 
@@ -150,7 +164,7 @@ class AlertRulesStore:
 
 def _normalize_rule(payload: dict) -> dict:
     metric = str(payload.get("metric") or "cpu").lower()
-    if metric not in {"cpu", "ram", "disk", "ha_entity"}:
+    if metric not in {"cpu", "ram", "disk", "ha_health", "ha_entity"}:
         metric = "cpu"
     condition = str(payload.get("condition") or "above").lower()
     if condition not in {"above", "below", "equals", "contains"}:

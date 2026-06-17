@@ -1,7 +1,10 @@
 import json as _json
+import logging as _logging
 import os as _os
 import time as _time
 from datetime import datetime, date as _date
+
+_log = _logging.getLogger(__name__)
 
 from fastapi import APIRouter, Header, HTTPException
 from fastapi.responses import StreamingResponse
@@ -9,9 +12,13 @@ from fastapi.responses import StreamingResponse
 from .rate_limiter import _rate
 
 from .ai_clients import build_system_prompt
+from .ai_router import AIRouter
+from .secret_crypto import SecretEncryptionUnavailable
 from .api_models import (
     AdminLoginIn,
     AdminLoginOut,
+    ByokKeyIn,
+    ByokKeyOut,
     ChatIn,
     ChatOut,
     ChatSessionCreateIn,
@@ -53,11 +60,18 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
     format_rag_reply = deps["format_rag_reply"]
     rag_llm_answer = deps["rag_llm_answer"]
     build_context_reply = deps["build_context_reply"]
-    get_provider = deps["get_provider"]
-    local_ai_chat_reply = deps["local_ai_chat_reply"]
-    local_ai_stub_reply = deps["local_ai_stub_reply"]
-    get_gemini = deps["get_gemini"]
-    get_openai = deps["get_openai"]
+    _ai_router_enabled = _os.getenv("JARVIS_USE_AI_ROUTER", "1").strip() not in ("0", "false", "no", "")
+
+    def _make_ai_router() -> AIRouter:
+        return AIRouter(
+            byok_store=deps.get("byok_store") and current("byok_store"),
+            usage_log_store=deps.get("usage_log_store") and current("usage_log_store"),
+            credit_store=deps.get("credit_store") and current("credit_store"),
+            user_limits_store=deps.get("user_limits_store") and current("user_limits_store"),
+            admin_settings_store=deps.get("admin_settings_store") and current("admin_settings_store"),
+            build_context_reply=build_context_reply,
+            rate_limiter=_rate,
+        )
 
     def auth_capabilities(user_id: str, role: str) -> dict[str, bool]:
         effective_permissions = set(resolve_effective_permissions(role, user_id, current("membership_store"), current("permission_store")))
@@ -177,6 +191,47 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         current("audit_log").write("user_password_changed", {"user_id": user_id})
         return {"ok": True}
 
+    @router.get("/auth/me/keys")
+    def auth_list_keys(x_jarvis_session: str | None = Header(default=None)):
+        session = require_identity_session(x_jarvis_session)
+        return {"keys": current("byok_store").list_masked(session["user"]["id"])}
+
+    @router.put("/auth/me/keys/{provider}")
+    def auth_set_key(provider: str, payload: ByokKeyIn, x_jarvis_session: str | None = Header(default=None)):
+        session = require_identity_session(x_jarvis_session)
+        user_id = session["user"]["id"]
+        try:
+            masked_record = current("byok_store").set_key(user_id, provider, payload.api_key)
+        except SecretEncryptionUnavailable as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        current("audit_log").write("byok_key_set", {"user_id": user_id, "provider": provider})
+        return {"key": masked_record}
+
+    @router.delete("/auth/me/keys/{provider}")
+    def auth_delete_key(provider: str, x_jarvis_session: str | None = Header(default=None)):
+        session = require_identity_session(x_jarvis_session)
+        user_id = session["user"]["id"]
+        deleted = current("byok_store").delete_key(user_id, provider)
+        if deleted:
+            current("audit_log").write("byok_key_deleted", {"user_id": user_id, "provider": provider})
+        return {"deleted": deleted}
+
+    @router.get("/auth/me/billing")
+    def auth_me_billing(x_jarvis_session: str | None = Header(default=None)):
+        session = require_identity_session(x_jarvis_session)
+        user_id = session["user"]["id"]
+        balance_chf = current("credit_store").get_balance(user_id)
+        limits = current("user_limits_store").get(user_id)
+        recent_usage = current("usage_log_store").recent(user_id=user_id, limit=10)
+        return {
+            "user_id": user_id,
+            "balance_chf": balance_chf,
+            "limits": limits,
+            "recent_usage": recent_usage,
+        }
+
     @router.post("/admin/session")
     def admin_session(x_jarvis_session: str | None = Header(default=None)):
         session = require_identity_session(x_jarvis_session)
@@ -247,6 +302,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         x_jarvis_guest_key: str | None = Header(default=None),
         x_jarvis_mode: str | None = Header(default=None),
         x_jarvis_role: str | None = Header(default=None),
+        x_jarvis_confirm: str | None = Header(default=None),
     ):
         text = (payload.text or "").strip()
         source = (payload.source or "text").strip().lower()
@@ -371,59 +427,57 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                 current("chat_history").append_message(session_id, "jarvis", summary, owner_key=owner_key, owner_user_id=effective_user_id)
                 return {"reply": summary, "data": data, "session_id": session_id}
 
-            provider = get_provider()
-
-            try:
-                if provider == "local":
-                    user_prefs = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
-                    display_name = (user_prefs or {}).get("display_name")
-                    history = _get_llm_history(session_id, owner_key)
-                    reply = local_ai_chat_reply(
-                        history + [{"role": "user", "content": text}],
-                        build_system_prompt(display_name, voice_mode=(source == "voice" or mode == "orb")),
-                    )
-                    current("chat_history").append_message(session_id, "jarvis", reply, owner_key=owner_key, owner_user_id=effective_user_id)
-                    return {"reply": reply, "session_id": session_id}
-
-                if provider == "gemini":
-                    gemini = get_gemini()
-                    history = _get_llm_history(session_id, owner_key)
-                    gemini_history = [
-                        {"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]}
-                        for m in history
-                    ]
-                    resp = gemini.models.generate_content(
-                        model=deps["gemini_model"](),
-                        contents=gemini_history + [{"role": "user", "parts": [{"text": text}]}],
-                    )
-                    out = (getattr(resp, "text", "") or "").strip() or "On it. (No output returned.)"
-                    current("chat_history").append_message(session_id, "jarvis", out, owner_key=owner_key, owner_user_id=effective_user_id)
-                    return {"reply": out, "session_id": session_id}
-
+            # ── AI Router path (JARVIS_USE_AI_ROUTER=1) ──────────────────────
+            if _ai_router_enabled:
+                router_obj = _make_ai_router()
+                is_voice = source == "voice" or mode == "orb"
+                history = _get_llm_history(session_id, owner_key)
+                decision = router_obj.resolve(
+                    user_id=effective_user_id,
+                    role=role,
+                    text=text,
+                    history_len=len(history),
+                    voice_mode=is_voice,
+                )
+                confirmed = (x_jarvis_confirm or "").strip().lower() == "billing"
+                pf = router_obj.preflight(decision, user_id=effective_user_id, confirmed=confirmed)
+                if not pf.allowed:
+                    if pf.requires_confirmation:
+                        reply_text = f"This request uses {decision.model} (~{decision.estimated_cost_chf:.4f} CHF). Confirm by resending with X-Jarvis-Confirm: billing."
+                        current("chat_history").append_message(session_id, "jarvis", reply_text, owner_key=owner_key, owner_user_id=effective_user_id)
+                        return {"reply": reply_text, "data": {"billing_confirmation": pf.billing_confirmation}, "session_id": session_id}
+                    reply_text = build_context_reply(text)
+                    current("chat_history").append_message(session_id, "jarvis", reply_text, owner_key=owner_key, owner_user_id=effective_user_id)
+                    return {"reply": reply_text, "data": {"billing_blocked": pf.reason}, "session_id": session_id}
                 user_prefs = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
                 display_name = (user_prefs or {}).get("display_name")
-                history = _get_llm_history(session_id, owner_key)
-                client = get_openai()
-                resp = client.chat.completions.create(
-                    model=deps["openai_model"](),
-                    messages=[{"role": "system", "content": build_system_prompt(display_name, voice_mode=(source == "voice" or mode == "orb"))}] + history + [{"role": "user", "content": text}],
-                    temperature=float(deps["openai_temperature"]()),
-                    max_tokens=int(deps["openai_max_tokens"]()),
-                )
-                out = (resp.choices[0].message.content or "").strip()
-                current("chat_history").append_message(session_id, "jarvis", out, owner_key=owner_key, owner_user_id=effective_user_id)
-                return {"reply": out, "session_id": session_id}
-            except Exception:
-                reply = build_context_reply(text)
-                current("chat_history").append_message(session_id, "jarvis", reply, owner_key=owner_key, owner_user_id=effective_user_id)
-                return {
-                    "reply": reply,
-                    "data": {
-                        "route": "offline_assistant",
-                        "reason": "cloud_unavailable",
-                    },
-                    "session_id": session_id,
-                }
+                sys_prompt = build_system_prompt(display_name, voice_mode=is_voice)
+                messages = history + [{"role": "user", "content": text}]
+                try:
+                    reply_text = router_obj.run_once(decision, messages=messages, system_prompt=sys_prompt, max_tokens=pf.clamped_max_tokens)
+                    current("chat_history").append_message(session_id, "jarvis", reply_text, owner_key=owner_key, owner_user_id=effective_user_id)
+                    router_obj.finalize(decision, user_id=effective_user_id, conversation_id=session_id, input_tokens=len(text) // 4, output_tokens=len(reply_text) // 4)
+                    return {"reply": reply_text, "data": {"model_tier": decision.tier.value, "provider": decision.provider}, "session_id": session_id}
+                except Exception:
+                    _log.exception("AI router provider error [%s/%s uid=%s]", decision.provider, decision.model, effective_user_id)
+                    router_obj.finalize(decision, user_id=effective_user_id, conversation_id=session_id, input_tokens=0, output_tokens=0, status="error", error="provider_error")
+                    fallback_dec = router_obj.resolve_system_fallback(decision)
+                    if fallback_dec:
+                        try:
+                            reply_text = router_obj.run_once(fallback_dec, messages=messages, system_prompt=sys_prompt, max_tokens=fallback_dec.clamped_max_tokens)
+                            current("chat_history").append_message(session_id, "jarvis", reply_text, owner_key=owner_key, owner_user_id=effective_user_id)
+                            router_obj.finalize(fallback_dec, user_id=effective_user_id, conversation_id=session_id, input_tokens=len(text) // 4, output_tokens=len(reply_text) // 4)
+                            return {"reply": reply_text, "data": {"model_tier": fallback_dec.tier.value, "provider": fallback_dec.provider, "byok_fallback": True}, "session_id": session_id}
+                        except Exception:
+                            _log.exception("AI router fallback error [%s/%s uid=%s]", fallback_dec.provider, fallback_dec.model, effective_user_id)
+                    fallback = build_context_reply(text)
+                    current("chat_history").append_message(session_id, "jarvis", fallback, owner_key=owner_key, owner_user_id=effective_user_id)
+                    return {"reply": fallback, "data": {"route": "offline_assistant", "reason": "cloud_unavailable"}, "session_id": session_id}
+
+            # AI router disabled — use offline fallback
+            reply = build_context_reply(text)
+            current("chat_history").append_message(session_id, "jarvis", reply, owner_key=owner_key, owner_user_id=effective_user_id)
+            return {"reply": reply, "data": {"route": "offline_assistant", "reason": "router_disabled"}, "session_id": session_id}
         finally:
             current("status_hub").end(status_token)
 
@@ -435,6 +489,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         x_jarvis_guest_key: str | None = Header(default=None),
         x_jarvis_mode: str | None = Header(default=None),
         x_jarvis_role: str | None = Header(default=None),
+        x_jarvis_confirm: str | None = Header(default=None),
     ):
         text = (payload.text or "").strip()
         source = (payload.source or "text").strip().lower()
@@ -576,87 +631,82 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                     yield f"data: {_json.dumps({'type': 'done', 'reply': r, 'session_id': sid, 'data': d})}\n\n"
                 return StreamingResponse(_engine(), media_type="text/event-stream")
 
-            provider = get_provider()
+            # ── AI Router streaming path (JARVIS_USE_AI_ROUTER=1) ────────────
+            if _ai_router_enabled:
+                router_obj = _make_ai_router()
+                is_voice_r = source == "voice" or mode == "orb"
+                history_r = _get_llm_history(session_id, owner_key)
+                decision_r = router_obj.resolve(
+                    user_id=effective_user_id,
+                    role=role,
+                    text=text,
+                    history_len=len(history_r),
+                    voice_mode=is_voice_r,
+                )
+                confirmed_r = (x_jarvis_confirm or "").strip().lower() == "billing"
+                pf_r = router_obj.preflight(decision_r, user_id=effective_user_id, confirmed=confirmed_r)
 
-            if provider == "local":
-                try:
-                    user_prefs = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
-                    display_name = (user_prefs or {}).get("display_name")
-                    history = _get_llm_history(session_id, owner_key)
-                    reply = local_ai_chat_reply(
-                        history + [{"role": "user", "content": text}],
-                        build_system_prompt(display_name, voice_mode=(source == "voice" or mode == "orb")),
-                    )
-                except Exception:
-                    reply = build_context_reply(text)
-                current("chat_history").append_message(session_id, "jarvis", reply, owner_key=owner_key, owner_user_id=effective_user_id)
-                def _local(r=reply, sid=session_id):
-                    yield f"data: {_json.dumps({'type': 'done', 'reply': r, 'session_id': sid})}\n\n"
-                return StreamingResponse(_local(), media_type="text/event-stream")
+                if not pf_r.allowed:
+                    if pf_r.requires_confirmation:
+                        _conf_reply = f"This request uses {decision_r.model} (~{decision_r.estimated_cost_chf:.4f} CHF). Confirm by resending with X-Jarvis-Confirm: billing."
+                        current("chat_history").append_message(session_id, "jarvis", _conf_reply, owner_key=owner_key, owner_user_id=effective_user_id)
+                        def _billing_confirm(r=_conf_reply, bc=pf_r.billing_confirmation, sid=session_id):
+                            yield f"data: {_json.dumps({'type': 'done', 'reply': r, 'session_id': sid, 'data': {'billing_confirmation': bc}})}\n\n"
+                        return StreamingResponse(_billing_confirm(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+                    _block_reply = build_context_reply(text)
+                    current("chat_history").append_message(session_id, "jarvis", _block_reply, owner_key=owner_key, owner_user_id=effective_user_id)
+                    def _billing_block(r=_block_reply, reason=pf_r.reason, sid=session_id):
+                        yield f"data: {_json.dumps({'type': 'done', 'reply': r, 'session_id': sid, 'data': {'billing_blocked': reason}})}\n\n"
+                    return StreamingResponse(_billing_block(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
-            if provider == "gemini":
-                try:
-                    gemini = get_gemini()
-                    gemini_history = [
-                        {"role": "user" if m["role"] == "user" else "model", "parts": [{"text": m["content"]}]}
-                        for m in _get_llm_history(session_id, owner_key)
-                    ]
-                    resp = gemini.models.generate_content(
-                        model=deps["gemini_model"](),
-                        contents=gemini_history + [{"role": "user", "parts": [{"text": text}]}],
-                    )
-                    out = (getattr(resp, "text", "") or "").strip() or "On it. (No output returned.)"
-                    current("chat_history").append_message(session_id, "jarvis", out, owner_key=owner_key, owner_user_id=effective_user_id)
-                    def _gemini(r=out, sid=session_id):
-                        yield f"data: {_json.dumps({'type': 'done', 'reply': r, 'session_id': sid})}\n\n"
-                    return StreamingResponse(_gemini(), media_type="text/event-stream")
-                except Exception:
-                    reply = build_context_reply(text)
-                    current("chat_history").append_message(session_id, "jarvis", reply, owner_key=owner_key, owner_user_id=effective_user_id)
-                    def _gemini_err(r=reply, sid=session_id):
-                        yield f"data: {_json.dumps({'type': 'done', 'reply': r, 'session_id': sid, 'data': {'route': 'offline_assistant', 'reason': 'cloud_unavailable'}})}\n\n"
-                    return StreamingResponse(_gemini_err(), media_type="text/event-stream")
+                user_prefs_r = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
+                display_name_r = (user_prefs_r or {}).get("display_name")
+                sys_prompt_r = build_system_prompt(display_name_r, voice_mode=is_voice_r)
+                messages_r = history_r + [{"role": "user", "content": text}]
+                stream_status_token_r = status_token
+                status_token = None
 
-            # OpenAI — stream tokens
-            user_prefs = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
-            display_name = (user_prefs or {}).get("display_name")
-            sys_prompt = build_system_prompt(display_name, voice_mode=(source == "voice" or mode == "orb"))
+                def router_stream(txt=text, sid=session_id, ok=owner_key, ouid=effective_user_id, dec=decision_r, ro=router_obj, msgs=messages_r, sp=sys_prompt_r, mt=pf_r.clamped_max_tokens, stk=stream_status_token_r):
+                    try:
+                        full = ""
+                        for chunk in ro.run_stream(dec, messages=msgs, system_prompt=sp, max_tokens=mt):
+                            full += chunk
+                            yield f"data: {_json.dumps({'type': 'token', 'token': chunk})}\n\n"
+                        current("chat_history").append_message(sid, "jarvis", full, owner_key=ok, owner_user_id=ouid)
+                        ro.finalize(dec, user_id=ouid, conversation_id=sid, input_tokens=len(txt) // 4, output_tokens=len(full) // 4)
+                        yield f"data: {_json.dumps({'type': 'done', 'reply': full, 'session_id': sid, 'data': {'model_tier': dec.tier.value, 'provider': dec.provider}})}\n\n"
+                    except Exception:
+                        _log.exception("AI router stream error [%s/%s uid=%s]", dec.provider, dec.model, ouid)
+                        ro.finalize(dec, user_id=ouid, conversation_id=sid, input_tokens=0, output_tokens=0, status="error", error="provider_error")
+                        fb_dec = ro.resolve_system_fallback(dec)
+                        if fb_dec:
+                            try:
+                                fb_text = ro.run_once(fb_dec, messages=msgs, system_prompt=sp, max_tokens=mt)
+                                current("chat_history").append_message(sid, "jarvis", fb_text, owner_key=ok, owner_user_id=ouid)
+                                ro.finalize(fb_dec, user_id=ouid, conversation_id=sid, input_tokens=len(txt) // 4, output_tokens=len(fb_text) // 4)
+                                yield f"data: {_json.dumps({'type': 'token', 'token': fb_text})}\n\n"
+                                yield f"data: {_json.dumps({'type': 'done', 'reply': fb_text, 'session_id': sid, 'data': {'model_tier': fb_dec.tier.value, 'provider': fb_dec.provider, 'byok_fallback': True}})}\n\n"
+                                return
+                            except Exception:
+                                _log.exception("AI router fallback stream error [%s/%s uid=%s]", fb_dec.provider, fb_dec.model, ouid)
+                        fallback = build_context_reply(txt)
+                        current("chat_history").append_message(sid, "jarvis", fallback, owner_key=ok, owner_user_id=ouid)
+                        yield f"data: {_json.dumps({'type': 'done', 'reply': fallback, 'session_id': sid, 'data': {'route': 'offline_assistant', 'reason': 'cloud_unavailable'}})}\n\n"
+                    finally:
+                        current("status_hub").end(stk)
 
-            history = _get_llm_history(session_id, owner_key)
+                return StreamingResponse(
+                    router_stream(),
+                    media_type="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+                )
 
-            stream_status_token = status_token
-            status_token = None
-
-            def openai_stream(txt=text, sid=session_id, ok=owner_key, ouid=effective_user_id, sp=sys_prompt, hist=history, stk=stream_status_token):
-                try:
-                    client = get_openai()
-                    stream = client.chat.completions.create(
-                        model=deps["openai_model"](),
-                        messages=[{"role": "system", "content": sp}] + hist + [{"role": "user", "content": txt}],
-                        temperature=float(deps["openai_temperature"]()),
-                        max_tokens=int(deps["openai_max_tokens"]()),
-                        stream=True,
-                    )
-                    full = ""
-                    for chunk in stream:
-                        delta = (chunk.choices[0].delta.content or "") if chunk.choices else ""
-                        if delta:
-                            full += delta
-                            yield f"data: {_json.dumps({'type': 'token', 'token': delta})}\n\n"
-                    current("chat_history").append_message(sid, "jarvis", full, owner_key=ok, owner_user_id=ouid)
-                    yield f"data: {_json.dumps({'type': 'done', 'reply': full, 'session_id': sid})}\n\n"
-                except Exception:
-                    fallback = build_context_reply(txt)
-                    current("chat_history").append_message(sid, "jarvis", fallback, owner_key=ok, owner_user_id=ouid)
-                    yield f"data: {_json.dumps({'type': 'done', 'reply': fallback, 'session_id': sid, 'data': {'route': 'offline_assistant', 'reason': 'cloud_unavailable'}})}\n\n"
-                finally:
-                    current("status_hub").end(stk)
-
-            return StreamingResponse(
-                openai_stream(),
-                media_type="text/event-stream",
-                headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-            )
+            # AI router disabled — use offline fallback
+            reply = build_context_reply(text)
+            current("chat_history").append_message(session_id, "jarvis", reply, owner_key=owner_key, owner_user_id=effective_user_id)
+            def _router_disabled(r=reply, sid=session_id):
+                yield f"data: {_json.dumps({'type': 'done', 'reply': r, 'session_id': sid, 'data': {'route': 'offline_assistant', 'reason': 'router_disabled'}})}\n\n"
+            return StreamingResponse(_router_disabled(), media_type="text/event-stream", headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
         finally:
             current("status_hub").end(status_token)
 
@@ -699,6 +749,15 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         if not session:
             raise HTTPException(404, "session not found")
         current("chat_history").clear_pending_home_assistant_action(session_id, owner_key=owner_key, owner_user_id=owner_user_id)
+        return {"ok": True, "id": session_id}
+
+    @router.post("/chat/sessions/{session_id}/pending-billing/clear")
+    def clear_pending_billing(session_id: str, x_jarvis_session: str | None = Header(default=None), x_jarvis_guest_key: str | None = Header(default=None)):
+        """Dismiss an expensive-model billing confirmation dialog. Stateless — confirmation is per-request."""
+        owner_key, _ = chat_owner_key(x_jarvis_session, x_jarvis_guest_key)
+        session = current("chat_history").get_session(session_id, owner_key=owner_key)
+        if not session:
+            raise HTTPException(404, "session not found")
         return {"ok": True, "id": session_id}
 
     @router.delete("/chat/sessions/{session_id}")

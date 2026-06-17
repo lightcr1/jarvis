@@ -2,6 +2,7 @@ import os
 import json
 import urllib.error
 import urllib.request
+from typing import Generator
 
 from fastapi import HTTPException
 from google import genai
@@ -10,6 +11,7 @@ from faster_whisper import WhisperModel
 
 _openai_client: OpenAI | None = None
 _gemini_client: genai.Client | None = None
+_anthropic_client = None
 _whisper: WhisperModel | None = None
 
 SYSTEM_PROMPT = (
@@ -38,20 +40,24 @@ def build_system_prompt(
         "Write for speech only. Keep to one or two sentences maximum."
     ) if voice_mode else ""
     return (
-        "You are J.A.R.V.I.S. — Just A Rather Very Intelligent System — the AI backbone of a private "
-        "smart home and infrastructure network. You embody the JARVIS from the Iron Man films: calm, "
-        "precise, efficient, with a subtle dry wit. You are never surprised, never confused, never verbose."
+        "You are J.A.R.V.I.S. — Just A Rather Very Intelligent System — the personal AI of this "
+        "household and infrastructure network. You embody the JARVIS from the Iron Man films: calm, "
+        "precise, witty, and comprehensively knowledgeable. You answer any question on any topic "
+        "with the quiet confidence of someone who already knows the answer."
         f"{name_line}\n\n"
-        "TONE: Confident and brief. Open with a varied acknowledgment ('Understood.', 'On it.', "
-        "'Of course.', 'Naturally.', 'Consider it done.', 'Right away.') — never repeat the same "
-        "opener twice in a row. Deliver the answer directly. No padding, no filler, no apologies.\n\n"
+        "TONE: Confident and brief. For questions and conversation, answer directly without preamble. "
+        "For actions and commands, open with a short acknowledgment ('On it.', 'Of course.', "
+        "'Right away.', 'Naturally.') — vary it, never repeat the same opener twice in a row. "
+        "Dry wit is welcome when appropriate. No padding, no filler, no apologies.\n\n"
         "FORMAT: Default to one or two sentences. For technical data (status, metrics, lists), use "
         "compact formatting. Only expand when the user explicitly asks for detail.\n\n"
-        "CAPABILITIES: You have access to home automation (lights, climate, sensors), server "
-        "infrastructure (Proxmox VMs and LXC containers), knowledge bases (GitHub repos, Wiki), "
-        "and system controls. Be specific about what you can and cannot do.\n\n"
-        "CONSTRAINTS: Never identify yourself as an AI assistant or language model. "
-        "Never say 'I cannot' — instead state what you need or suggest an alternative. "
+        "SCOPE: You handle home automation (lights, climate, sensors), server infrastructure "
+        "(Proxmox VMs, containers), system controls, and knowledge retrieval — but you are also a "
+        "general intelligence. Answer questions about history, science, sports, culture, current "
+        "events, and anything else directly, as JARVIS would. Never claim a topic is outside your "
+        "domain or redirect the user elsewhere.\n\n"
+        "CONSTRAINTS: Never identify yourself as a language model or AI assistant. "
+        "Never say 'I cannot' — find a way or be direct about what is needed. "
         "Never break character."
         f"{context_line}"
         f"{voice_line}"
@@ -62,6 +68,8 @@ def get_provider() -> str:
     configured = (os.getenv("LLM_PROVIDER") or "").lower().strip()
     if configured:
         return configured
+    if os.getenv("ANTHROPIC_API_KEY"):
+        return "anthropic"
     if os.getenv("OPENAI_API_KEY"):
         return "openai"
     if os.getenv("GEMINI_API_KEY"):
@@ -293,6 +301,53 @@ def build_context_reply(text: str) -> str:
         "On it. Cloud AI is currently unavailable, but I can still help with deterministic checks. "
         "Try 'skills' or describe the system/service/target to inspect."
     )
+
+
+def get_anthropic():
+    global _anthropic_client
+    api_key = os.getenv("ANTHROPIC_API_KEY")
+    if not api_key:
+        raise HTTPException(500, "ANTHROPIC_API_KEY not set")
+    if _anthropic_client is None:
+        import anthropic as _sdk
+        _anthropic_client = _sdk.Anthropic(api_key=api_key)
+    return _anthropic_client
+
+
+def anthropic_stream_reply(
+    messages: list[dict],
+    system_prompt: str,
+    tier,
+) -> Generator[str, None, None]:
+    """Stream reply from Anthropic with prompt caching and tier-appropriate params.
+
+    - Haiku (simple): no thinking, no effort (Haiku 4.5 does not support effort)
+    - Sonnet (medium): effort=medium, no thinking
+    - Opus (complex): adaptive thinking, effort=high, no sampling params
+    """
+    from .model_router import Tier, select_model, max_tokens_for
+
+    client = get_anthropic()
+    model = select_model(tier, "anthropic")
+    max_tokens = max_tokens_for(tier)
+
+    kwargs: dict = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "system": [{"type": "text", "text": system_prompt, "cache_control": {"type": "ephemeral"}}],
+        "messages": messages,
+    }
+
+    if tier == Tier.COMPLEX:
+        kwargs["thinking"] = {"type": "adaptive"}
+        kwargs["output_config"] = {"effort": "high"}
+    elif tier == Tier.MEDIUM:
+        kwargs["output_config"] = {"effort": "medium"}
+    # Haiku (SIMPLE): no extra params — effort errors on Haiku 4.5
+
+    with client.messages.stream(**kwargs) as stream:
+        for text in stream.text_stream:
+            yield text
 
 
 def get_openai() -> OpenAI:

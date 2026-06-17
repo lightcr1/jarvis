@@ -197,6 +197,8 @@ class RouterDependencyTests(unittest.TestCase):
             get_provider=lambda: "local",
             local_ai_chat_reply=lambda messages, system_prompt: "reply",
             local_ai_stub_reply=lambda text: "reply",
+            byok_store=None,
+            get_anthropic=lambda: None,
             get_gemini=lambda: None,
             get_openai=lambda: None,
             gemini_model=lambda: "gemini",

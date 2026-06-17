@@ -2506,7 +2506,14 @@ def format_rag_reply(intent: dict, hits: list[dict]) -> str:
 
 
 def cloud_llm_available() -> bool:
-    return bool((os.getenv("OPENAI_API_KEY") or "").strip() or (os.getenv("GEMINI_API_KEY") or "").strip())
+    return bool(
+        (os.getenv("ANTHROPIC_API_KEY") or "").strip()
+        or (os.getenv("OPENAI_API_KEY") or "").strip()
+        or (os.getenv("GEMINI_API_KEY") or "").strip()
+        or (os.getenv("OPENROUTER_API_KEY") or "").strip()
+        or (os.getenv("MISTRAL_API_KEY") or "").strip()
+        or (os.getenv("DEEPSEEK_API_KEY") or "").strip()
+    )
 
 
 def rag_needs_smart_llm(text: str) -> bool:

@@ -7,10 +7,11 @@ import {
 } from './jarvis-shared';
 import {
   listChatSessions, createChatSession, streamChatMessage, getChatSession,
-  renameChatSession, synthesizeSpeech, getDailyBriefing,
+  renameChatSession, deleteChatSession, synthesizeSpeech, getDailyBriefing,
 } from '../shared/api/chat';
 import type { ChatSessionListItem } from '../shared/api/chat';
-import { getStoredPreferences, setStoredPreferences, getStoredUser } from '../shared/api/client';
+import { getStoredPreferences, setStoredPreferences, getStoredUser, apiRequest } from '../shared/api/client';
+import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
 type Msg = {
   id: number;
@@ -308,8 +309,14 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
   const [sending, setSending] = useState(false);
   const [sidebar, setSidebar] = useState(true);
   const [timerCount, setTimerCount] = useState(0);
+  const [billingConfirm, setBillingConfirm] = useState<{
+    provider: string; model: string; estimated_cost_chf: number; balance_chf: number;
+    pendingText: string;
+  } | null>(null);
+  const [lastRoute, setLastRoute] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -383,7 +390,7 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
     }
   };
 
-  const handleSend = async (text: string) => {
+  const handleSend = async (text: string, _extraHeaders?: Record<string, string>) => {
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     const t = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
     const userMsgId = Date.now();
@@ -405,6 +412,16 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
         } else if (event.type === 'done') {
           const final = event.reply || accumulated;
           setMsgs(p => p.map(m => m.id === replyId ? { ...m, content: final } : m));
+          if ((event as Record<string, unknown>)['billing_confirmation']) {
+            const bc = (event as Record<string, unknown>)['billing_confirmation'] as Record<string, unknown>;
+            setBillingConfirm({
+              provider: String(bc['provider'] ?? ''),
+              model: String(bc['model'] ?? ''),
+              estimated_cost_chf: Number(bc['estimated_cost_chf'] ?? 0),
+              balance_chf: Number(bc['balance_chf'] ?? 0),
+              pendingText: text,
+            });
+          }
           if (!sessionId && event.session_id) {
             const newSid = event.session_id;
             setSessionId(newSid);
@@ -420,6 +437,10 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
             if (pu.display_name) showToast(`Name saved: ${pu.display_name}`, 'success');
             else if (pu.location) showToast(`Location saved: ${pu.location}`, 'success');
             else if (pu.notes) showToast('Note saved', 'success');
+          }
+          if (event.data) {
+            const route = (event.data as Record<string, unknown>)['route'] as string | undefined;
+            if (route && route !== 'reminder' && route !== 'skill') setLastRoute(route);
           }
           if (event.data && (event.data as Record<string, unknown>)['route'] === 'reminder') {
             const rd = event.data as Record<string, unknown>;
@@ -471,6 +492,24 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
     }
   };
 
+  const handleDeleteSession = async (e: React.MouseEvent, targetId: string) => {
+    e.stopPropagation();
+    try {
+      await deleteChatSession(targetId);
+      setGroups(prev => prev.map(group => ({
+        ...group,
+        items: group.items.filter(item => item.id !== targetId),
+      })).filter(group => group.items.length > 0));
+      if (sessionId === targetId) {
+        setSessionId(null);
+        setMsgs([]);
+        setActive('New Chat');
+      }
+    } catch {
+      showToast('Failed to delete chat', 'error');
+    }
+  };
+
   return (
     <div style={{ display: 'flex', flex: 1, overflow: 'hidden', height: '100%' }}>
       {/* Sidebar */}
@@ -499,9 +538,9 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
                 <div style={{ fontSize: 10, color: J.textMuted, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 600, padding: '2px 8px 5px' }}>{sec.section}</div>
                 {sec.items.map(item => (
                   <div key={item.id}
-                    style={{ width: '100%', textAlign: 'left', background: active === item.title ? J.bg2 : 'none', border: active === item.title ? `1px solid ${J.border}` : '1px solid transparent', borderRadius: 7, padding: '6px 9px', fontSize: 12, color: active === item.title ? J.text : J.textSec, cursor: 'pointer', marginBottom: 1, display: 'block', transition: 'all .1s' }}
-                    onMouseEnter={e => { if (active !== item.title && editingId !== item.id) e.currentTarget.style.background = J.bg2; }}
-                    onMouseLeave={e => { if (active !== item.title && editingId !== item.id) e.currentTarget.style.background = 'none'; }}>
+                    style={{ position: 'relative', width: '100%', textAlign: 'left', background: active === item.title ? J.bg2 : (hoveredSessionId === item.id ? J.bg2 : 'none'), border: active === item.title ? `1px solid ${J.border}` : '1px solid transparent', borderRadius: 7, padding: '6px 9px', fontSize: 12, color: active === item.title ? J.text : J.textSec, cursor: 'pointer', marginBottom: 1, display: 'block', transition: 'all .1s' }}
+                    onMouseEnter={() => setHoveredSessionId(item.id)}
+                    onMouseLeave={() => setHoveredSessionId(null)}>
                     {editingId === item.id ? (
                       <input
                         autoFocus
@@ -521,13 +560,24 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
                         style={{ width: '100%', borderRadius: 6, padding: '3px 6px', fontSize: 12 }}
                       />
                     ) : (
-                      <button
-                        onClick={() => void handleSelectSession(item)}
-                        onDoubleClick={() => { setEditingId(item.id); setEditingTitle(item.title); }}
-                        style={{ width: '100%', textAlign: 'left', background: 'none', border: 'none', padding: 0, fontSize: 12, color: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}
-                      >
-                        {item.title}
-                      </button>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+                        <button
+                          onClick={() => void handleSelectSession(item)}
+                          onDoubleClick={() => { setEditingId(item.id); setEditingTitle(item.title); }}
+                          style={{ flex: 1, textAlign: 'left', background: 'none', border: 'none', padding: 0, fontSize: 12, color: 'inherit', cursor: 'pointer', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0 }}
+                        >
+                          {item.title}
+                        </button>
+                        {hoveredSessionId === item.id && (
+                          <button
+                            onClick={e => void handleDeleteSession(e, item.id)}
+                            title="Delete chat"
+                            style={{ flexShrink: 0, background: 'none', border: 'none', cursor: 'pointer', color: J.textMuted, padding: '1px 3px', borderRadius: 4, fontSize: 14, lineHeight: 1, display: 'flex', alignItems: 'center' }}
+                            onMouseEnter={e => { e.currentTarget.style.color = J.error; e.currentTarget.style.background = J.errorDim; }}
+                            onMouseLeave={e => { e.currentTarget.style.color = J.textMuted; e.currentTarget.style.background = 'none'; }}
+                          >×</button>
+                        )}
+                      </div>
                     )}
                   </div>
                 ))}
@@ -550,7 +600,12 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
           <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
             <button onClick={() => setSidebar(v => !v)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: J.textMuted, padding: 3, display: 'flex' }}><IconMenu size={15} /></button>
             <span style={{ fontSize: 14, fontWeight: 500, color: J.text }}>{active}</span>
-            <StatusBadge status="local" size="xs" />
+            {lastRoute && (
+              <StatusBadge
+                status={/openrouter|anthropic|openai|gemini|mistral|deepseek/.test(lastRoute) ? 'cloud' : 'local'}
+                size="xs"
+              />
+            )}
           </div>
           <div style={{ display: 'flex', gap: 5, alignItems: 'center' }}>
             {timerCount > 0 && (
@@ -601,6 +656,50 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
 
         <Composer onSend={text => void handleSend(text)} sending={sending} textareaRef={composerRef} />
       </div>
+
+      {billingConfirm && (
+        <OverlayDialog
+          title="Confirm AI Request"
+          eyebrow="Billing"
+          onClose={() => setBillingConfirm(null)}
+          actions={
+            <>
+              <button
+                onClick={() => setBillingConfirm(null)}
+                style={{ padding: '6px 14px', fontSize: 12, borderRadius: 4, cursor: 'pointer', background: 'transparent', color: J.textSec, border: `1px solid ${J.border}` }}
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const pendingText = billingConfirm.pendingText;
+                  setBillingConfirm(null);
+                  void (async () => {
+                    try {
+                      if (sessionId) {
+                        await apiRequest(`/chat/sessions/${sessionId}/pending-billing/clear`, { method: 'POST', includeUser: true }).catch(() => {});
+                      }
+                      void handleSend(pendingText, { 'X-Jarvis-Confirm': 'billing' });
+                    } catch {
+                      showToast('Failed to confirm request.', 'error');
+                    }
+                  })();
+                }}
+                style={{ padding: '6px 16px', fontSize: 12, fontWeight: 600, borderRadius: 4, cursor: 'pointer', background: J.amber, color: J.bg0, border: 'none' }}
+              >
+                Confirm
+              </button>
+            </>
+          }
+        >
+          <p style={{ fontSize: 13, color: J.textSec, lineHeight: 1.6 }}>
+            This will use <strong style={{ color: J.text }}>{billingConfirm.model}</strong>{' '}
+            via <strong style={{ color: J.text }}>{billingConfirm.provider}</strong>{' '}
+            (~CHF {billingConfirm.estimated_cost_chf.toFixed(4)}).{' '}
+            Your balance: <strong style={{ color: J.amber }}>CHF {billingConfirm.balance_chf.toFixed(4)}</strong>.
+          </p>
+        </OverlayDialog>
+      )}
     </div>
   );
 }

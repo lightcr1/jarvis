@@ -1,8 +1,9 @@
 import { useState, useEffect, useRef } from 'react';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey } from './jarvis-shared';
 import { getStoredPreferences, setStoredPreferences, getSessionToken, apiRequest, type UserPreferences } from '../shared/api/client';
 import { synthesizeSpeech } from '../shared/api/chat';
 import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
+import { fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, type BillingInfo, type ByokKey } from '../shared/api/billing';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
 type IntegrationState = 'checking' | 'online' | 'offline' | 'unconfigured';
@@ -14,6 +15,7 @@ const CATS = [
   { id: 'chat',         label: 'Chat',         icon: <IconChat size={13} /> },
   { id: 'voice',        label: 'Voice',        icon: <IconMic size={13} /> },
   { id: 'memory',       label: 'Memory',       icon: <IconMemory size={13} /> },
+  { id: 'billing',      label: 'AI & Billing', icon: <IconKey size={13} /> },
   { id: 'integrations', label: 'Integrations', icon: <IconGrid size={13} /> },
   { id: 'security',     label: 'Security',     icon: <IconShield size={13} /> },
   { id: 'developer',    label: 'Developer',    icon: <IconCode size={13} /> },
@@ -351,6 +353,172 @@ function SecurityPanel() {
   </>);
 }
 
+const BYOK_PROVIDERS = ['openrouter', 'anthropic', 'openai', 'gemini', 'mistral', 'deepseek'] as const;
+
+function AIBillingPanel() {
+  useJ();
+  const isLoggedIn = !!getSessionToken();
+  const [billing, setBilling] = useState<BillingInfo | null>(null);
+  const [byokKeys, setByokKeys] = useState<ByokKey[]>([]);
+  const [keyInputs, setKeyInputs] = useState<Record<string, string>>({});
+  const [saving, setSaving] = useState<Record<string, boolean>>({});
+  const [error, setError] = useState('');
+
+  const reload = () => {
+    if (!isLoggedIn) return;
+    Promise.all([fetchMyBilling(), fetchMyByokKeys()])
+      .then(([b, k]) => { setBilling(b); setByokKeys(k.keys); })
+      .catch(() => setError('Failed to load billing info.'));
+  };
+
+  useEffect(() => { reload(); }, []);
+
+  const handleSetKey = async (provider: string) => {
+    const key = (keyInputs[provider] || '').trim();
+    if (!key) return;
+    setSaving(p => ({ ...p, [provider]: true }));
+    try {
+      const res = await setByokKey(provider, key);
+      setByokKeys(prev => [...prev.filter(k => k.provider !== provider), res.key]);
+      setKeyInputs(p => ({ ...p, [provider]: '' }));
+    } catch {
+      setError(`Failed to save key for ${provider}.`);
+    } finally {
+      setSaving(p => ({ ...p, [provider]: false }));
+    }
+  };
+
+  const handleDeleteKey = async (provider: string) => {
+    setSaving(p => ({ ...p, [provider]: true }));
+    try {
+      await deleteByokKey(provider);
+      setByokKeys(prev => prev.filter(k => k.provider !== provider));
+    } catch {
+      setError(`Failed to delete key for ${provider}.`);
+    } finally {
+      setSaving(p => ({ ...p, [provider]: false }));
+    }
+  };
+
+  if (!isLoggedIn) {
+    return (
+      <div style={{ padding: '18px 0', color: J.textMuted, fontSize: 13 }}>
+        AI Billing requires a logged-in account.
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {error && (
+        <div style={{ padding: '10px 14px', borderRadius: 7, background: J.errorDim ?? J.bg3, border: `1px solid ${J.error}`, color: J.error, fontSize: 13, marginBottom: 12 }}>
+          {error}
+          <button onClick={() => setError('')} style={{ marginLeft: 10, background: 'none', border: 'none', cursor: 'pointer', color: J.error, fontSize: 13 }}>×</button>
+        </div>
+      )}
+
+      {/* Balance */}
+      <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
+        <div style={{ fontSize: 14, color: J.text, marginBottom: 4 }}>Balance</div>
+        <div style={{ fontFamily: 'JetBrains Mono,monospace', fontSize: 22, fontWeight: 700, color: J.amber }}>
+          CHF {billing ? billing.balance_chf.toFixed(4) : '—'}
+        </div>
+        {billing && billing.balance_chf < 1.0 && (
+          <div style={{ marginTop: 8, padding: '8px 12px', borderRadius: 6, background: J.amberDim, border: `1px solid ${J.amber}`, color: J.amber, fontSize: 12 }}>
+            Balance low. Contact admin to top up.
+          </div>
+        )}
+      </div>
+
+      {/* BYOK section */}
+      <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
+        <div style={{ fontSize: 14, color: J.text, marginBottom: 4 }}>API Keys (BYOK)</div>
+        <div style={{ fontSize: 12, color: J.textMuted, marginBottom: 12 }}>
+          Provide your own API keys to use providers directly. Keys are stored encrypted on the server.
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+          {BYOK_PROVIDERS.map(provider => {
+            const existing = byokKeys.find(k => k.provider === provider);
+            const isSaving = saving[provider] ?? false;
+            return (
+              <div key={provider} style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+                <div style={{ width: 90, fontSize: 13, color: J.text, fontWeight: 500, flexShrink: 0 }}>{provider}</div>
+                {existing ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1, flexWrap: 'wrap' }}>
+                    <code style={{ fontSize: 11, color: J.textSec, background: J.bg3, padding: '3px 8px', borderRadius: 4, letterSpacing: '0.04em' }}>{existing.masked}</code>
+                    <button
+                      onClick={() => void handleDeleteKey(provider)}
+                      disabled={isSaving}
+                      style={{ padding: '4px 10px', fontSize: 11, borderRadius: 5, cursor: 'pointer', background: 'none', border: `1px solid ${J.border}`, color: J.error, opacity: isSaving ? 0.5 : 1 }}
+                    >
+                      {isSaving ? '…' : 'Delete'}
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
+                    <input
+                      type="password"
+                      className="j-input"
+                      placeholder={`${provider} API key`}
+                      value={keyInputs[provider] ?? ''}
+                      onChange={e => setKeyInputs(p => ({ ...p, [provider]: e.target.value }))}
+                      style={{ flex: 1, borderRadius: 6, padding: '6px 10px', fontSize: 12 }}
+                    />
+                    <button
+                      onClick={() => void handleSetKey(provider)}
+                      disabled={isSaving || !(keyInputs[provider] ?? '').trim()}
+                      style={{ padding: '6px 14px', fontSize: 12, borderRadius: 6, cursor: 'pointer', background: J.amber, color: J.bg0, border: 'none', fontWeight: 600, opacity: isSaving || !(keyInputs[provider] ?? '').trim() ? 0.5 : 1 }}
+                    >
+                      {isSaving ? '…' : 'Set'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Recent usage */}
+      {billing && billing.recent_usage.length > 0 && (
+        <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
+          <div style={{ fontSize: 14, color: J.text, marginBottom: 8 }}>Recent Usage</div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+            {(billing.recent_usage as Array<Record<string, unknown>>).slice(0, 5).map((u, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 11, color: J.textSec, padding: '4px 0', borderBottom: `1px solid ${J.border}` }}>
+                <span style={{ fontFamily: 'JetBrains Mono,monospace', color: J.textMuted }}>{typeof u['provider'] === 'string' ? u['provider'] : '—'}</span>
+                <span style={{ flex: 1 }}>{typeof u['model'] === 'string' ? u['model'] : '—'}</span>
+                <span style={{ fontFamily: 'JetBrains Mono,monospace', color: J.amber }}>
+                  CHF {typeof u['estimated_cost_chf'] === 'number' ? u['estimated_cost_chf'].toFixed(6) : '0.000000'}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {billing && billing.limits && Object.keys(billing.limits).length > 0 && (
+        <div style={{ padding: '13px 0' }}>
+          <div style={{ fontSize: 14, color: J.text, marginBottom: 8 }}>Spending Limits</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
+            {(['chf_per_day', 'chf_per_month'] as const).map(key => {
+              const val = (billing.limits as Record<string, unknown>)[key];
+              return (
+                <div key={key} style={{ background: J.bg3, borderRadius: 7, padding: '8px 12px', border: `1px solid ${J.border}` }}>
+                  <div style={{ fontSize: 10, color: J.textMuted, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>{key.replace(/_/g, ' ')}</div>
+                  <div style={{ fontSize: 14, fontWeight: 600, color: J.text }}>
+                    {typeof val === 'number' && val > 0 ? `CHF ${val.toFixed(2)}` : 'Unlimited'}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function SettingsScreen() {
   useJ();
   const [cat, setCat] = useState('appearance');
@@ -602,6 +770,8 @@ export function SettingsScreen() {
     </>),
 
     memory: (<MemoryPanel />),
+
+    billing: (<AIBillingPanel />),
 
     integrations: (<>
       <Integration name="Proxmox" status={intStatus.proxmox === 'checking' ? 'checking' : intStatus.proxmox === 'online' ? 'online' : 'offline'} note="Via JARVIS_PROXMOX_HOST env var" icon={<IconSettings size={14} />} />

@@ -55,6 +55,11 @@ def build_auth_chat_deps(state: object) -> dict:
         "get_provider": state.get_provider,
         "local_ai_chat_reply": state.local_ai_chat_reply,
         "local_ai_stub_reply": state.local_ai_stub_reply,
+        "byok_store": live_attr(state, "byok_store"),
+        "usage_log_store": live_attr(state, "usage_log_store"),
+        "credit_store": live_attr(state, "credit_store"),
+        "user_limits_store": live_attr(state, "user_limits_store"),
+        "get_anthropic": state.get_anthropic,
         "get_gemini": state.get_gemini,
         "get_openai": state.get_openai,
         "gemini_model": lambda: state.os.getenv("GEMINI_MODEL") or "gemini-2.5-flash",
@@ -91,6 +96,10 @@ def build_admin_deps(state: object) -> dict:
         "settings_env_summary": state._settings_env_summary,
         "admin_settings_store": live_attr(state, "admin_settings_store"),
         "chat_history": live_attr(state, "chat_history"),
+        "usage_log_store": live_attr(state, "usage_log_store"),
+        "credit_store": live_attr(state, "credit_store"),
+        "user_limits_store": live_attr(state, "user_limits_store"),
+        "byok_store": live_attr(state, "byok_store"),
     }
 
 

@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from "react";
 import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
-import { J, useJ, IconMoon, IconSun } from "../../screens/jarvis-shared";
+import { getStoredPreferences } from "../api/client";
+import { J, useJ, IconMoon, IconSun, applyTheme } from "../../screens/jarvis-shared";
 
 const NAV_LINKS = [
   { to: "/chat",                label: "← Back to Chat", end: false },
@@ -12,6 +13,9 @@ const NAV_LINKS = [
   { to: "/dashboard/status",    label: "Status",         end: false },
   { to: "/dashboard/logs",      label: "Logs",           end: false },
   { to: "/dashboard/settings",  label: "Settings",       end: false },
+  { to: "/dashboard/provider",  label: "AI Provider",    end: false },
+  { to: "/dashboard/usage",     label: "Usage",          end: false },
+  { to: "/dashboard/docs",      label: "Docs",           end: false },
 ];
 
 export function AdminShell() {
@@ -21,6 +25,11 @@ export function AdminShell() {
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState("");
   const isDark = (preferences.theme ?? "dark") === "dark";
+
+  useEffect(() => {
+    const storedTheme = getStoredPreferences().theme;
+    if (storedTheme) applyTheme(storedTheme as "dark" | "light");
+  }, []);
 
   useEffect(() => {
     if (loading) return;
@@ -113,7 +122,11 @@ export function AdminShell() {
             <div style={{ fontSize: 14, fontWeight: 600, color: J.text }}>Admin Control Panel</div>
           </div>
           <button
-            onClick={() => void savePreferences({ ...preferences, theme: isDark ? "light" : "dark" })}
+            onClick={() => {
+              const next = isDark ? "light" : "dark";
+              applyTheme(next);
+              void savePreferences({ ...preferences, theme: next });
+            }}
             title={isDark ? "Switch to light mode" : "Switch to dark mode"}
             style={{
               width: 32, height: 32, borderRadius: 7, background: "transparent",

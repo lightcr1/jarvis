@@ -118,6 +118,19 @@ def settings_env_summary(*, admin_settings_store, wakeword_enabled, wakeword_phr
                 "source": "env" if remote_allowed_cidrs_env is not None else "settings",
             },
         },
+        "provider_keys": {
+            p: bool(os.getenv(k))
+            for p, k in {
+                "openrouter": "OPENROUTER_API_KEY",
+                "anthropic": "ANTHROPIC_API_KEY",
+                "openai": "OPENAI_API_KEY",
+                "gemini": "GEMINI_API_KEY",
+                "mistral": "MISTRAL_API_KEY",
+                "deepseek": "DEEPSEEK_API_KEY",
+            }.items()
+        },
+        "secret_key_configured": bool(os.getenv("JARVIS_SECRET_KEY")),
+        "ai_router_enabled": os.getenv("JARVIS_USE_AI_ROUTER", "1").strip() not in ("0", "false", "no", ""),
     }
 
 

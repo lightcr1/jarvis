@@ -173,15 +173,30 @@ export function UsersPage() {
 
       {/* ── Toolbar ── */}
       <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-        <input
-          value={search}
-          onChange={e => setSearch(e.target.value)}
-          placeholder="Search users…"
-          style={{
-            flex: 1, minWidth: 180, padding: "6px 10px", fontSize: 13, borderRadius: 4,
-            background: J.bg2, border: `1px solid ${J.border}`, color: J.text, outline: "none",
-          }}
-        />
+        <div style={{ flex: 1, minWidth: 180, position: "relative", display: "flex", alignItems: "center" }}>
+          <input
+            value={search}
+            onChange={e => setSearch(e.target.value)}
+            placeholder="Search users…"
+            style={{
+              width: "100%", boxSizing: "border-box",
+              padding: search ? "6px 30px 6px 10px" : "6px 10px",
+              fontSize: 13, borderRadius: 4,
+              background: J.bg2, border: `1px solid ${J.border}`, color: J.text, outline: "none",
+            }}
+          />
+          {search && (
+            <button
+              onClick={() => setSearch("")}
+              style={{
+                position: "absolute", right: 6, top: "50%", transform: "translateY(-50%)",
+                background: "none", border: "none", cursor: "pointer",
+                color: J.textMuted, fontSize: 14, lineHeight: 1, padding: "0 2px",
+              }}
+              aria-label="Clear search"
+            >×</button>
+          )}
+        </div>
         <button onClick={() => setShowCreate(v => !v)} style={{
           padding: "6px 14px", fontSize: 12, fontWeight: 600, borderRadius: 4, cursor: "pointer",
           background: showCreate ? J.amberDim : J.amber, color: showCreate ? J.amber : J.bg0,

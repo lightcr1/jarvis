@@ -171,8 +171,13 @@ export function JarvisApp() {
     if (requested && publicScreens.includes(requested)) return requested;
     return 'login';
   });
-  // Show greeting on every fresh app open (not suppressed — fires each load by design)
-  const [showGreeting, setShowGreeting] = useState(() => !!(getSessionToken() || isGuestMode()));
+  const GREETING_COOLDOWN_MS = 4 * 60 * 60 * 1000;
+  const GREETING_KEY = 'jarvis_last_greeting';
+  const _greetingDue = () => {
+    const last = localStorage.getItem(GREETING_KEY);
+    return !last || Date.now() - Number(last) > GREETING_COOLDOWN_MS;
+  };
+  const [showGreeting, setShowGreeting] = useState(() => !!(getSessionToken() || isGuestMode()) && _greetingDue());
   const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
@@ -192,13 +197,15 @@ export function JarvisApp() {
     if (prefs.accent_color) applyAccent(prefs.accent_color);
     applyCompact(prefs.compact_mode ?? false);
     setScreen('chat');
-    setShowGreeting(true); // greet on every login
+    localStorage.setItem(GREETING_KEY, String(Date.now()));
+    setShowGreeting(true);
     shouldShowOnboarding().then(show => { if (show) setShowOnboarding(true); }).catch(() => {});
   };
 
   const handleGuestLogin = () => {
     setGuestMode();
     setScreen('chat');
+    localStorage.setItem(GREETING_KEY, String(Date.now()));
     setShowGreeting(true);
   };
 
@@ -231,7 +238,7 @@ export function JarvisApp() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
-      {showGreeting && <GreetingOverlay onDismiss={() => setShowGreeting(false)} />}
+      {showGreeting && <GreetingOverlay onDismiss={() => { setShowGreeting(false); localStorage.setItem(GREETING_KEY, String(Date.now())); }} />}
       {showOnboarding && <OnboardingModal onDismiss={() => setShowOnboarding(false)} />}
       <ToastContainer />
       <NavRail current={screen} onNav={setScreen} onLogout={handleLogout} />

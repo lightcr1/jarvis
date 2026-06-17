@@ -66,6 +66,23 @@ def _read_disk_percent() -> float | None:
         return None
 
 
+def _read_ha_health(ha_store: object | None) -> str | None:
+    """Returns 'ok' when HA is reachable or None if no HA store is configured.
+
+    The store tracks the last known connection state so no live HTTP call is made here.
+    """
+    if ha_store is None:
+        return None
+    try:
+        status = ha_store.connection_status() if callable(getattr(ha_store, "connection_status", None)) else None
+        if status is None:
+            return None
+        reachable = status.get("connected") or status.get("ok") or False
+        return "ok" if reachable else "unreachable"
+    except Exception:
+        return None
+
+
 def _read_ha_entity_value(ha_store: object | None, entity_id: str, attribute: str | None) -> str | float | None:
     if ha_store is None:
         return None
@@ -187,6 +204,8 @@ class AlertEngine:
             return _read_ram_percent()
         if metric == "disk":
             return _read_disk_percent()
+        if metric == "ha_health":
+            return _read_ha_health(self._ha_store)
         if metric == "ha_entity":
             entity_id = rule.get("ha_entity_id")
             if not entity_id:

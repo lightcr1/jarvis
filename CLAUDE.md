@@ -257,7 +257,7 @@ jarvis/
 ### Admin — Settings, Audit, Sessions, Backup
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/admin/settings` | admin | Global settings |
+| GET | `/admin/settings` | admin | Global settings (includes `provider` section) |
 | PUT | `/admin/settings` | admin | Update global settings |
 | GET | `/admin/status/summary` | admin | System + store stats |
 | GET | `/admin/sessions` | admin | Active session list |
@@ -267,6 +267,23 @@ jarvis/
 | GET | `/admin/audit/count` | admin | Single event-type count |
 | GET | `/admin/backup` | admin | Export full backup JSON |
 | POST | `/admin/backup/restore` | admin | Restore from backup JSON |
+
+### Admin — Credits, Limits, Usage
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| POST | `/admin/credits/topup` | admin | Add CHF credit to a user's balance |
+| GET | `/admin/credits/{user_id}` | admin | View user balance + ledger |
+| PUT | `/admin/users/{id}/limits` | admin | Set per-user spending limits |
+| GET | `/admin/usage` | admin | Usage aggregate + daily buckets + recent records |
+| GET | `/admin/users/{id}/keys` | admin | List BYOK provider presence for a user (masked only) |
+
+### User — Billing & BYOK
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/auth/me/billing` | session | Own balance, limits, recent usage |
+| GET | `/auth/me/keys` | session | Own BYOK key list (masked) |
+| PUT | `/auth/me/keys/{provider}` | session | Store/replace provider API key (encrypted at rest) |
+| DELETE | `/auth/me/keys/{provider}` | session | Remove stored provider key |
 
 ### Home Assistant
 | Method | Path | Auth | Description |
@@ -422,13 +439,27 @@ LLM providers (env `LLM_PROVIDER`): `openai`, `gemini`, `local`
 | Variable | Default | Purpose |
 |---|---|---|
 | `JARVIS_PASSPHRASE` | — | Guest/device unlock passphrase |
-| `OPENAI_API_KEY` | — | Chat LLM (if using OpenAI) |
+| `OPENAI_API_KEY` | — | Chat LLM (if using OpenAI directly) |
 | `GEMINI_API_KEY` | — | Chat LLM or cloud STT |
 
-### Optional — LLM
+### AI Provider & Routing
 | Variable | Default | Purpose |
 |---|---|---|
-| `LLM_PROVIDER` | auto-detect | `openai`, `gemini`, `local` |
+| `JARVIS_SECRET_KEY` | — | Fernet master key for BYOK API key encryption (generate with `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`) |
+| `OPENROUTER_API_KEY` | — | Default cloud provider (OpenRouter) — recommended over direct keys |
+| `ANTHROPIC_API_KEY` | — | Direct Anthropic key (fallback when OpenRouter not set) |
+| `MISTRAL_API_KEY` | — | Direct Mistral key (fallback) |
+| `DEEPSEEK_API_KEY` | — | Direct DeepSeek key (fallback) |
+| `JARVIS_USE_AI_ROUTER` | `1` | Set `0` to disable the AI router and use offline fallback only |
+| `JARVIS_BYOK_STORE_PATH` | /var/lib/jarvis/ | BYOK encrypted key store JSON path |
+| `JARVIS_CREDIT_STORE_PATH` | /var/lib/jarvis/ | Credit balance + ledger JSON path |
+| `JARVIS_USER_LIMITS_STORE_PATH` | /var/lib/jarvis/ | Per-user spending limits JSON path |
+| `JARVIS_USAGE_LOG_PATH` | /var/lib/jarvis/ | Append-only usage JSONL log path |
+
+### Optional — LLM (legacy direct provider)
+| Variable | Default | Purpose |
+|---|---|---|
+| `LLM_PROVIDER` | auto-detect | `openai`, `gemini`, `local` (used when AI router is disabled) |
 | `OPENAI_MODEL` | gpt-4o | Model override |
 | `OPENAI_MAX_TOKENS` | 1024 | Max response tokens |
 | `GEMINI_MODEL` | gemini-2.0-flash | Model override |

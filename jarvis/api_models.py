@@ -133,16 +133,38 @@ class AdminHomeAssistantSettingsIn(BaseModel):
     remote_allowed_cidrs: list[str] = Field(default_factory=list)
 
 
+class AdminModelPriceIn(BaseModel):
+    in_price: float = Field(default=0.0, ge=0, alias="in")
+    out_price: float = Field(default=0.0, ge=0, alias="out")
+    tier: str = Field(default="medium")
+    expensive: bool = False
+
+    model_config = {"populate_by_name": True}
+
+
+class AdminProviderSettingsIn(BaseModel):
+    default_provider: str = "openrouter"
+    openrouter_enabled: bool = True
+    usd_to_chf_rate: float = Field(default=0.90, gt=0)
+    model_prices: dict[str, AdminModelPriceIn] = Field(default_factory=dict)
+    global_daily_budget_chf: float = Field(default=0.0, ge=0)
+    global_monthly_budget_chf: float = Field(default=0.0, ge=0)
+    kill_switch: bool = False
+    disable_expensive_models: bool = False
+    expensive_threshold_chf: float = Field(default=0.10, ge=0)
+
+
 class AdminSettingsIn(BaseModel):
     usage_limits: AdminUsageLimitsIn = Field(default_factory=AdminUsageLimitsIn)
     voice: AdminVoiceSettingsIn = Field(default_factory=AdminVoiceSettingsIn)
     home_assistant: AdminHomeAssistantSettingsIn = Field(default_factory=AdminHomeAssistantSettingsIn)
+    provider: AdminProviderSettingsIn = Field(default_factory=AdminProviderSettingsIn)
 
 
 class AlertRuleCreate(BaseModel):
     name: str = Field(min_length=1)
     enabled: bool = True
-    metric: str = Field(default="cpu", pattern="^(cpu|ram|disk|ha_entity)$")
+    metric: str = Field(default="cpu", pattern="^(cpu|ram|disk|ha_health|ha_entity)$")
     condition: str = Field(default="above", pattern="^(above|below|equals|contains)$")
     threshold: float | str = 80.0
     duration_seconds: int = Field(default=0, ge=0)
@@ -202,3 +224,30 @@ class MemorySummaryResponse(BaseModel):
     aliases: list[MemoryAliasResponse] = Field(default_factory=list)
     note_count: int = 0
     alias_count: int = 0
+
+
+
+class ByokKeyIn(BaseModel):
+    api_key: str = Field(min_length=8)
+
+
+class ByokKeyOut(BaseModel):
+    provider: str
+    masked: str
+    label: str | None = None
+    created_at: int
+
+
+class TopUpIn(BaseModel):
+    user_id: str = Field(min_length=1)
+    amount_chf: float = Field(gt=0)
+    note: str = ""
+
+
+class UserLimitsIn(BaseModel):
+    chf_per_day: float | None = Field(default=None, ge=0)
+    chf_per_month: float | None = Field(default=None, ge=0)
+    tokens_per_request: int | None = Field(default=None, ge=0)
+    requests_per_min: int | None = Field(default=None, ge=1, le=300)
+    expensive_models_per_day: int | None = Field(default=None, ge=0)
+    allowed_models: list[str] | None = None

@@ -76,6 +76,7 @@ function AlertRuleForm({
           <option value="cpu">CPU</option>
           <option value="ram">RAM</option>
           <option value="disk">Disk</option>
+          <option value="ha_health">Home Assistant health</option>
           <option value="ha_entity">Home Assistant entity</option>
         </select>
       </Field>
