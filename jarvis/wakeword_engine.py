@@ -170,6 +170,14 @@ class OpenWakeWordEngine:
             logger.debug("OpenWakeWord mic loop stopped")
 
 
+def _is_openwakeword_available() -> bool:
+    try:
+        import openwakeword  # type: ignore[import]  # noqa: F401
+        return True
+    except ImportError:
+        return False
+
+
 def create_wakeword_engine(
     settings: dict,
 ) -> NullWakewordEngine | SoftwareWakewordEngine | OpenWakeWordEngine:

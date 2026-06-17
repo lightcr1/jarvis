@@ -1,9 +1,9 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useCallback } from 'react';
 import {
   J, useJ, IconSearch, IconCode, IconServer, IconShield, IconActivity,
   IconMemory, IconBulb, IconSettings, IconMic, IconKey,
 } from './jarvis-shared';
-import { getStoredUser } from '../shared/api/client';
+import { getStoredUser, apiRequest } from '../shared/api/client';
 import { getRagStatus, RagStatus } from '../shared/api/chat';
 import { fetchHomeAssistantHealth, HomeAssistantHealth } from '../shared/api/homeAssistant';
 
@@ -830,6 +830,88 @@ function resolveHaState(data: HomeAssistantHealth | null, error: boolean): Integ
   return data!.integration?.configured && data!.integration?.healthy ? 'active' : 'inactive';
 }
 
+function ragDocCount(data: RagStatus | null): number {
+  if (!data) return 0;
+  return Object.values(data.counts).reduce((sum, n) => sum + n, 0);
+}
+
+interface StatusChipProps {
+  label: string;
+  detail: string;
+  state: 'ok' | 'warn' | 'error' | 'loading';
+}
+
+function StatusChip({ label, detail, state }: StatusChipProps) {
+  const color = state === 'ok' ? J.success : state === 'warn' ? J.warn : state === 'error' ? J.error : J.textMuted;
+  const bg    = state === 'ok' ? J.successDim : state === 'warn' ? J.warnDim : state === 'error' ? J.errorDim : J.bg4;
+  const dot   = state === 'loading' ? '…' : state === 'ok' ? '✓' : '✗';
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 5, background: bg, border: `1px solid ${color}33`, borderRadius: 6, padding: '4px 9px', fontSize: 11 }}>
+      <span style={{ color, fontWeight: 700 }}>{dot}</span>
+      <span style={{ color: J.text, fontWeight: 600 }}>{label}:</span>
+      <span style={{ color: J.textSec }}>{detail}</span>
+    </div>
+  );
+}
+
+interface StatusSummaryBarProps {
+  coreOnline: boolean | null;
+  haState: IntegrationState;
+  ragState: IntegrationState;
+  ragData: RagStatus | null;
+  lastUpdated: number | null;
+  onRefresh: () => void;
+  refreshing: boolean;
+}
+
+function formatTimeAgo(ts: number): string {
+  const secs = Math.floor((Date.now() - ts) / 1000);
+  if (secs < 5) return 'just now';
+  if (secs < 60) return `${secs}s ago`;
+  return `${Math.floor(secs / 60)}m ago`;
+}
+
+function StatusSummaryBar({ coreOnline, haState, ragState, ragData, lastUpdated, onRefresh, refreshing }: StatusSummaryBarProps) {
+  const [, forceRender] = useState(0);
+  useEffect(() => {
+    if (!lastUpdated) return;
+    const id = setInterval(() => forceRender(n => n + 1), 10_000);
+    return () => clearInterval(id);
+  }, [lastUpdated]);
+
+  const haDetail = haState === 'loading' ? 'checking' : haState === 'active' ? 'Connected' : haState === 'inactive' ? 'Not configured' : 'Unknown';
+  const haChipState: StatusChipProps['state'] = haState === 'active' ? 'ok' : haState === 'loading' ? 'loading' : haState === 'inactive' ? 'warn' : 'error';
+
+  const docCount = ragDocCount(ragData);
+  const ragDetail = ragState === 'loading' ? 'checking' : ragState === 'active' ? `${docCount} doc${docCount !== 1 ? 's' : ''} indexed` : ragState === 'inactive' ? 'Not configured' : 'Unknown';
+  const ragChipState: StatusChipProps['state'] = ragState === 'active' ? 'ok' : ragState === 'loading' ? 'loading' : ragState === 'inactive' ? 'warn' : 'error';
+
+  const coreChipState: StatusChipProps['state'] = coreOnline === null ? 'loading' : coreOnline ? 'ok' : 'error';
+  const coreDetail = coreOnline === null ? 'checking' : coreOnline ? 'Online' : 'Offline';
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 20, padding: '10px 14px', background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 10 }}>
+      <StatusChip label="JARVIS Core" detail={coreDetail} state={coreChipState} />
+      <StatusChip label="Home Assistant" detail={haDetail} state={haChipState} />
+      <StatusChip label="Knowledge Base" detail={ragDetail} state={ragChipState} />
+      <StatusChip label="Voice" detail="Ready" state="ok" />
+      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+        {lastUpdated && (
+          <span style={{ fontSize: 11, color: J.textMuted }}>Updated {formatTimeAgo(lastUpdated)}</span>
+        )}
+        <button
+          onClick={onRefresh}
+          disabled={refreshing}
+          title="Refresh status"
+          style={{ background: 'none', border: `1px solid ${J.border}`, borderRadius: 6, padding: '3px 8px', cursor: refreshing ? 'default' : 'pointer', color: J.textSec, fontSize: 13, opacity: refreshing ? 0.5 : 1, lineHeight: 1 }}
+        >
+          {refreshing ? '…' : '↺'}
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function DocsScreen() {
   useJ();
   const [section, setSection] = useState<SectionId>('overview');
@@ -838,15 +920,36 @@ export function DocsScreen() {
   const [ragError, setRagError] = useState(false);
   const [haData, setHaData] = useState<HomeAssistantHealth | null>(null);
   const [haError, setHaError] = useState(false);
+  const [coreOnline, setCoreOnline] = useState<boolean | null>(null);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [refreshing, setRefreshing] = useState(false);
 
-  useEffect(() => {
-    getRagStatus()
-      .then(d => setRagData(d))
-      .catch(() => setRagError(true));
-    fetchHomeAssistantHealth()
-      .then(d => setHaData(d))
-      .catch(() => setHaError(true));
+  const fetchStatuses = useCallback(() => {
+    setRefreshing(true);
+    Promise.allSettled([
+      apiRequest<{ status: string }>('/health'),
+      getRagStatus(),
+      fetchHomeAssistantHealth(),
+    ]).then(([healthRes, ragRes, haRes]) => {
+      setCoreOnline(healthRes.status === 'fulfilled');
+      if (ragRes.status === 'fulfilled') {
+        setRagData(ragRes.value);
+        setRagError(false);
+      } else {
+        setRagError(true);
+      }
+      if (haRes.status === 'fulfilled') {
+        setHaData(haRes.value);
+        setHaError(false);
+      } else {
+        setHaError(true);
+      }
+      setLastUpdated(Date.now());
+      setRefreshing(false);
+    });
   }, []);
+
+  useEffect(() => { fetchStatuses(); }, [fetchStatuses]);
 
   const integrations: IntegrationStatuses = {
     rag: resolveRagState(ragData, ragError),
@@ -890,6 +993,15 @@ export function DocsScreen() {
 
       {/* Content */}
       <div style={{ flex: 1, overflowY: 'auto', padding: '32px 40px', maxWidth: 860 }}>
+        <StatusSummaryBar
+          coreOnline={coreOnline}
+          haState={integrations.homeAssistant}
+          ragState={integrations.rag}
+          ragData={ragData}
+          lastUpdated={lastUpdated}
+          onRefresh={fetchStatuses}
+          refreshing={refreshing}
+        />
         {section === 'skills' && (
           <div style={{ marginBottom: 18 }}>
             <div style={{ position: 'relative' }}>

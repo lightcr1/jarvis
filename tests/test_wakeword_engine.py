@@ -178,5 +178,116 @@ class TestSettingsStoreWakewordFields(unittest.TestCase):
         self.assertEqual(store.get()["voice"]["wakeword_engine"], "software")
 
 
+class TestAdminWakewordStatusEndpoint(unittest.TestCase):
+    def _build_client(self):
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from jarvis.api_admin import build_admin_router
+        from jarvis.admin_settings_store import AdminSettingsStore
+        from jarvis.user_store import UserStore
+        from jarvis.audit_log_store import AuditLogStore
+        from jarvis.group_store import GroupStore
+        from jarvis.membership_store import MembershipStore
+        from jarvis.permission_store import PermissionStore, KNOWN_PERMISSIONS
+        from jarvis.admin_password_store import AdminPasswordStore
+        from jarvis.user_preferences_store import UserPreferencesStore
+
+        import uuid as _uuid
+        tmpdir = tempfile.mkdtemp()
+        os.environ["JARVIS_ADMIN_SETTINGS_PATH"] = os.path.join(tmpdir, "settings.json")
+        os.environ["JARVIS_USER_STORE_PATH"] = os.path.join(tmpdir, "users.json")
+        tokens: dict = {"valid-admin-tok": float("inf")}
+        user_store = UserStore()
+        admin_user = user_store.create_user(f"ww_admin_{_uuid.uuid4().hex[:8]}", role="admin", enabled=True)
+
+        def _require_admin(uid, role, auth, *, allow_bootstrap=False):
+            from jarvis.session_auth import bearer_token_from_header
+            from fastapi import HTTPException
+            tok = bearer_token_from_header(auth)
+            if tok not in tokens:
+                raise HTTPException(401, "admin token required")
+            if not uid:
+                raise HTTPException(401, "admin user required")
+            return uid, "admin"
+
+        app = FastAPI()
+        app.include_router(build_admin_router({
+            "require_admin_access": _require_admin,
+            "prepare_audit_filters": lambda *a, **kw: {"event": None, "role": None, "actor_user_id": None, "token_fingerprint": None},
+            "validate_audit_query": lambda *a: None,
+            "normalize_role": lambda r: r or "admin",
+            "audit_admin_event": lambda *a, **kw: None,
+            "known_permissions": KNOWN_PERMISSIONS,
+            "get_active_user_or_raise": lambda store, uid: store.get_user(uid),
+            "build_permission_context": lambda *a: {},
+            "permission_decision": lambda *a: {"allowed": True},
+            "settings_env_summary": lambda: {},
+            "admin_settings_store": AdminSettingsStore(),
+            "identity_tokens": tokens,
+            "user_store": user_store,
+            "group_store": GroupStore(),
+            "membership_store": MembershipStore(),
+            "permission_store": PermissionStore(),
+            "audit_log": AuditLogStore(),
+            "admin_password_store": AdminPasswordStore(),
+            "user_preferences_store": UserPreferencesStore(),
+            "chat_history": type("CH", (), {"delete_all_sessions": lambda s, k: 0})(),
+            "usage_log_store": type("UL", (), {"aggregate": lambda *a, **kw: {}, "daily_buckets": lambda *a, **kw: [], "recent": lambda *a, **kw: []})(),
+            "credit_store": type("CS", (), {"top_up": lambda *a, **kw: {}, "get_balance": lambda *a: 0, "list_ledger": lambda *a, **kw: [], "data": {}})(),
+            "user_limits_store": type("ULS", (), {"update": lambda *a, **kw: {}, "data": {}})(),
+            "byok_store": type("BK", (), {"list_keys": lambda *a: []})(),
+        }))
+        return TestClient(app), admin_user["id"]
+
+    def setUp(self):
+        self._orig_settings_path = os.environ.get("JARVIS_ADMIN_SETTINGS_PATH")
+        for var in ["JARVIS_WAKEWORD_ENABLED", "JARVIS_WAKEWORD_ENGINE", "JARVIS_WAKEWORD_PHRASE"]:
+            os.environ.pop(var, None)
+
+    def tearDown(self):
+        if self._orig_settings_path is not None:
+            os.environ["JARVIS_ADMIN_SETTINGS_PATH"] = self._orig_settings_path
+        else:
+            os.environ.pop("JARVIS_ADMIN_SETTINGS_PATH", None)
+        os.environ.pop("JARVIS_USER_STORE_PATH", None)
+
+    def test_wakeword_status_requires_auth(self):
+        client, _ = self._build_client()
+        resp = client.get("/admin/wakeword/status")
+        self.assertIn(resp.status_code, (401, 403))
+
+    def test_wakeword_status_returns_structure(self):
+        client, admin_id = self._build_client()
+        headers = {
+            "Authorization": "Bearer valid-admin-tok",
+            "X-Jarvis-User-Id": admin_id,
+            "X-Jarvis-Role": "admin",
+        }
+        resp = client.get("/admin/wakeword/status", headers=headers)
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertIn("enabled", data)
+        self.assertIn("engine", data)
+        self.assertIn("phrase", data)
+        self.assertIn("openwakeword_available", data)
+        self.assertIsInstance(data["openwakeword_available"], bool)
+        self.assertIn("sensitivity", data)
+        self.assertIn("engine_source", data)
+
+
+class TestIsOpenwakewordAvailable(unittest.TestCase):
+    def test_returns_bool(self):
+        from jarvis.wakeword_engine import _is_openwakeword_available
+        result = _is_openwakeword_available()
+        self.assertIsInstance(result, bool)
+
+    def test_returns_false_when_not_installed(self):
+        with patch.dict(sys.modules, {"openwakeword": None}):
+            from importlib import reload
+            import jarvis.wakeword_engine as ww_mod
+            reload(ww_mod)
+            self.assertFalse(ww_mod._is_openwakeword_available())
+
+
 if __name__ == "__main__":
     unittest.main()

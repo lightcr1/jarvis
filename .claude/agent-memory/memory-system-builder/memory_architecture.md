@@ -33,3 +33,5 @@ The JARVIS memory subsystem stores data in `memory.json` at `JARVIS_MEMORY_PATH`
 **Why:** Follows the exact same pattern as `user_store.py` but adds atomicity (user_store uses direct `write_text`, memory_store uses tmp+replace). Atomic writes are critical because notes/aliases are user-facing persistent data.
 
 **How to apply:** When adding new JSON stores, use `MemoryStore` as the reference for atomic writes. `UserStore` is the reference for non-atomic (lower-risk) stores.
+
+**Implementation status (V37, verified 2026-06-17):** Fully implemented and passing. `jarvis/memory_store.py`, `jarvis/api_memory.py`, `tests/test_api_memory.py` (32 tests), `frontend/src/shared/api/memory.ts`, MemoryPanel in `frontend/src/screens/SettingsScreen.tsx`. All 1386 tests green.

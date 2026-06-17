@@ -60,7 +60,7 @@ def ensure_default_admin_seeded(
     return None
 
 
-def settings_env_summary(*, admin_settings_store, wakeword_enabled, wakeword_phrase, get_stt_provider) -> dict[str, object]:
+def settings_env_summary(*, admin_settings_store, wakeword_enabled, wakeword_phrase, get_stt_provider, get_wakeword_engine: object = None) -> dict[str, object]:
     settings = admin_settings_store.get()
     ttl_value = env_int(
         "JARVIS_TOKEN_TTL_MIN",
@@ -102,6 +102,12 @@ def settings_env_summary(*, admin_settings_store, wakeword_enabled, wakeword_phr
             "wakeword_phrase": {
                 "value": wakeword_phrase(),
                 "source": "env" if os.getenv("JARVIS_WAKEWORD_PHRASE") is not None else "settings",
+            },
+            "wakeword_engine": {
+                "value": (get_wakeword_engine() if callable(get_wakeword_engine) else None)
+                    or os.getenv("JARVIS_WAKEWORD_ENGINE", "")
+                    or settings["voice"].get("wakeword_engine", "software"),
+                "source": "env" if os.getenv("JARVIS_WAKEWORD_ENGINE") is not None else "settings",
             },
             "stt_provider": {
                 "value": get_stt_provider(),

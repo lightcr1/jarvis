@@ -27,6 +27,6 @@ Lifespan: `alert_engine.start()` before yield, `alert_engine.stop()` after.
 
 **Dependency injection:** `build_alerts_deps()` in `router_dependencies.py` now includes `alert_rules_store`, `alert_engine`, `require_admin_access`, and `audit_admin_event`.
 
-**Metric reading:** CPU via `/proc/stat` (psutil fallback), RAM via `jarvis.skill_utils.parse_meminfo`, disk via `jarvis.skill_utils.disk_usage`. HA entity state via `HomeAssistantStore.get_managed_entity()`.
+**Metric reading:** CPU via psutil (with `/proc/stat` fallback — psutil is in requirements.txt), RAM via `jarvis.skill_utils.parse_meminfo`, disk via `jarvis.skill_utils.disk_usage`. HA entity state via `HomeAssistantStore.get_managed_entity()`. HA health via `HomeAssistantStore.connection_status()` returning "ok" or "unreachable".
 
 **Why:** Deferred items — HA WebSocket subscription vs polling decision: currently polls the cached store (no new HTTP). If HA store is empty or entity missing, rule is silently skipped with a debug log.

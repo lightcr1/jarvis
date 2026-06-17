@@ -9,3 +9,5 @@ faster-whisper
 python-multipart
 edge-tts
 psutil
+# optional: pip install openwakeword for hardware wakeword detection (always-on mic keyword spotting)
+# openwakeword

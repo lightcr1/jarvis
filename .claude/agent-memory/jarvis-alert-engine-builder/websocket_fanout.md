@@ -23,7 +23,7 @@ metadata:
   "rule_id": "rule-<uuid12>",
   "rule_name": "High CPU",
   "severity": "warning|info|critical",
-  "metric": "cpu|ram|disk|ha_entity",
+  "metric": "cpu|ram|disk|ha_health|ha_entity",
   "current_value": 92.4,
   "threshold": 90.0,
   "message": "CPU utilization has exceeded 90%...",

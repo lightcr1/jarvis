@@ -756,3 +756,213 @@ class TestAtticAreaRouting(unittest.TestCase):
             role="admin",
         )
         self.assertIsNone(result)
+
+
+class TestNewDeviceSynonyms(unittest.TestCase):
+    def test_lighting_normalizes_to_light(self):
+        self.assertEqual(_normalize_device_kind("lighting"), "light")
+
+    def test_lock_normalizes_to_lock(self):
+        self.assertEqual(_normalize_device_kind("lock"), "lock")
+
+    def test_front_door_normalizes_to_lock(self):
+        self.assertEqual(_normalize_device_kind("front door"), "lock")
+
+    def test_back_door_normalizes_to_lock(self):
+        self.assertEqual(_normalize_device_kind("back door"), "lock")
+
+    def test_outlet_normalizes_to_switch(self):
+        self.assertEqual(_normalize_device_kind("outlet"), "switch")
+
+    def test_socket_normalizes_to_switch(self):
+        self.assertEqual(_normalize_device_kind("socket"), "switch")
+
+    def test_screen_normalizes_to_media(self):
+        self.assertEqual(_normalize_device_kind("screen"), "media")
+
+    def test_display_normalizes_to_media(self):
+        self.assertEqual(_normalize_device_kind("display"), "media")
+
+    def test_curtains_normalizes_to_cover(self):
+        self.assertEqual(_normalize_device_kind("curtains"), "cover")
+
+    def test_roller_blind_normalizes_to_cover(self):
+        self.assertEqual(_normalize_device_kind("roller blind"), "cover")
+
+    def test_fan_normalizes_to_fan(self):
+        self.assertEqual(_normalize_device_kind("fan"), "fan")
+
+    def test_ceiling_fan_normalizes_to_fan(self):
+        self.assertEqual(_normalize_device_kind("ceiling fan"), "fan")
+
+    def test_ventilation_normalizes_to_fan(self):
+        self.assertEqual(_normalize_device_kind("ventilation"), "fan")
+
+    def test_heat_normalizes_to_climate(self):
+        self.assertEqual(_normalize_device_kind("heat"), "climate")
+
+    def test_temperature_normalizes_to_climate(self):
+        self.assertEqual(_normalize_device_kind("temperature"), "climate")
+
+
+class TestNewAreaSynonyms(unittest.TestCase):
+    def test_main_room_normalizes_to_living_room(self):
+        self.assertEqual(_normalize_area("main room"), "living_room")
+
+    def test_foyer_normalizes_to_hall(self):
+        self.assertEqual(_normalize_area("foyer"), "hall")
+
+    def test_corridor_normalizes_to_hall(self):
+        self.assertEqual(_normalize_area("corridor"), "hall")
+
+    def test_bath_normalizes_to_bathroom(self):
+        self.assertEqual(_normalize_area("bath"), "bathroom")
+
+    def test_restroom_normalizes_to_bathroom(self):
+        self.assertEqual(_normalize_area("restroom"), "bathroom")
+
+    def test_work_room_normalizes_to_office(self):
+        self.assertEqual(_normalize_area("work room"), "office")
+
+    def test_workroom_normalizes_to_office(self):
+        self.assertEqual(_normalize_area("workroom"), "office")
+
+    def test_patio_normalizes_to_garden(self):
+        self.assertEqual(_normalize_area("patio"), "garden")
+
+    def test_outdoor_normalizes_to_garden(self):
+        self.assertEqual(_normalize_area("outdoor"), "garden")
+
+    def test_outside_normalizes_to_garden(self):
+        self.assertEqual(_normalize_area("outside"), "garden")
+
+    def test_kitchenette_normalizes_to_kitchen(self):
+        self.assertEqual(_normalize_area("kitchenette"), "kitchen")
+
+    def test_bed_room_normalizes_to_bedroom(self):
+        self.assertEqual(_normalize_area("bed room"), "bedroom")
+
+
+class TestGermanSplitVerbSchalteEin(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.service, self.admin_id = _make_service(self.tmpdir.name)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_schalte_licht_ein_routes_to_entity_action(self):
+        _add_entity(self.service, entity_id="light.living.1", label="Wohnzimmer Licht", kind="light", area="living_room")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "schalte das Licht ein",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertEqual(data.get("action"), "entity_action")
+
+    def test_schalte_licht_im_wohnzimmer_ein(self):
+        _add_entity(self.service, entity_id="light.living.1", label="Wohnzimmer Licht", kind="light", area="living_room")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "schalte das Licht im Wohnzimmer ein",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertIn(data.get("action"), ("entity_action", "area_entity_action"))
+
+    def test_schalte_alle_lichter_ein(self):
+        _add_entity(self.service, entity_id="light.a.1", label="Licht A", kind="light", area="hall")
+        _add_entity(self.service, entity_id="light.b.1", label="Licht B", kind="light", area="kitchen")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "schalte alle Lichter ein",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertEqual(data.get("action"), "area_entity_action")
+        self.assertEqual(data.get("total"), 2)
+
+    def test_schalte_licht_aus_still_works(self):
+        _add_entity(self.service, entity_id="light.living.1", label="Wohnzimmer Licht", kind="light", area="living_room")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "schalte das Licht aus",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertEqual(data.get("action"), "entity_action")
+
+
+class TestGermanTimePatterns(unittest.TestCase):
+    def test_um_8_is_time_reference(self):
+        self.assertTrue(_has_time_reference("um 8"))
+
+    def test_um_8_uhr_is_time_reference(self):
+        self.assertTrue(_has_time_reference("um 8 Uhr"))
+
+    def test_morgen_um_9_is_time_reference(self):
+        self.assertTrue(_has_time_reference("morgen um 9"))
+
+    def test_um_8_parses_hour(self):
+        iso = parse_iso_from_text("morgen um 8")
+        self.assertEqual(iso[11:16], "08:00")
+
+    def test_um_20_parses_hour(self):
+        iso = parse_iso_from_text("heute um 20")
+        self.assertEqual(iso[11:16], "20:00")
+
+    def test_um_20_is_not_false_negative(self):
+        self.assertTrue(_has_time_reference("Termin um 20 Uhr"))
+
+    def test_naechsten_freitag_is_time_reference(self):
+        self.assertTrue(_has_time_reference("nächsten Freitag"))
+
+    def test_no_time_reference_unchanged(self):
+        self.assertFalse(_has_time_reference("schalte das licht aus"))
+
+
+class TestNewSynonymExtraction(unittest.TestCase):
+    def test_extract_kind_lighting(self):
+        self.assertEqual(_extract_device_kind_from_text("turn off all lighting"), "light")
+
+    def test_extract_kind_screen(self):
+        self.assertEqual(_extract_device_kind_from_text("switch off the screen"), "media")
+
+    def test_extract_kind_curtains(self):
+        self.assertEqual(_extract_device_kind_from_text("close the curtains"), "cover")
+
+    def test_extract_kind_fan(self):
+        self.assertEqual(_extract_device_kind_from_text("turn off the fan"), "fan")
+
+    def test_extract_kind_ceiling_fan(self):
+        self.assertEqual(_extract_device_kind_from_text("turn off the ceiling fan"), "fan")
+
+    def test_extract_area_foyer(self):
+        self.assertEqual(_extract_area_from_text("turn off lights in the foyer"), "hall")
+
+    def test_extract_area_corridor(self):
+        self.assertEqual(_extract_area_from_text("lights in the corridor"), "hall")
+
+    def test_extract_area_patio(self):
+        self.assertEqual(_extract_area_from_text("turn off lights on the patio"), None)
+
+    def test_extract_area_restroom(self):
+        self.assertEqual(_extract_area_from_text("turn off lights in the restroom"), "bathroom")
+
+    def test_extract_area_kitchenette(self):
+        self.assertEqual(_extract_area_from_text("lights in the kitchenette"), "kitchen")
+
+    def test_area_matches_foyer_to_hall(self):
+        self.assertTrue(_area_matches("foyer", "hall"))
+
+    def test_area_matches_patio_to_garden(self):
+        self.assertTrue(_area_matches("patio", "garden"))

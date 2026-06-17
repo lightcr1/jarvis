@@ -13,7 +13,7 @@ Alert rules are stored in `alert_rules.json` (default `/var/lib/jarvis/alert_rul
   "id": "rule-<uuid12>",
   "name": "string",
   "enabled": true,
-  "metric": "cpu|ram|disk|ha_entity",
+  "metric": "cpu|ram|disk|ha_health|ha_entity",
   "condition": "above|below|equals|contains",
   "threshold": 90.0,
   "duration_seconds": 300,
@@ -32,6 +32,7 @@ Template variables: `{metric}`, `{value}`, `{threshold}`, `{duration}`, `{name}`
 - `default-cpu-critical`: CPU > 95% for 60s → critical
 - `default-ram-warning`: RAM > 85% for 120s → warning
 - `default-disk-critical`: Disk > 90% (no duration) → critical
+- `default-ha-unreachable`: HA health equals "unreachable" for 180s → warning
 
 **Pydantic models** in `jarvis/api_models.py`: `AlertRuleCreate`, `AlertRuleUpdate`.
 

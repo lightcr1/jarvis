@@ -401,6 +401,34 @@ def build_admin_router(deps: dict) -> APIRouter:
         audit_admin_event("admin_settings_updated", actor_user_id, caller_role, {"token_ttl_min": updated["usage_limits"]["token_ttl_min"], "max_active_tokens": updated["usage_limits"]["max_active_tokens"], "wakeword_enabled": updated["voice"]["wakeword_enabled"], "wakeword_phrase": updated["voice"]["wakeword_phrase"], "stt_provider": updated["voice"]["stt_provider"]})
         return {"settings": updated, "effective": settings_env_summary()}
 
+    @router.get("/admin/wakeword/status")
+    def admin_wakeword_status(
+        x_jarvis_user_id: str | None = Header(default=None),
+        x_jarvis_role: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        import os as _os
+        try:
+            from jarvis.wakeword_engine import _is_openwakeword_available
+            oww_available = _is_openwakeword_available()
+        except Exception:
+            oww_available = False
+        settings = current("admin_settings_store").get()
+        voice = settings.get("voice", {})
+        env_engine = (_os.getenv("JARVIS_WAKEWORD_ENGINE") or "").strip().lower()
+        active_engine = env_engine or voice.get("wakeword_engine", "software")
+        env_enabled = _os.getenv("JARVIS_WAKEWORD_ENABLED", "").strip().lower()
+        enabled = (env_enabled not in {"0", "false", "no", "off"}) if env_enabled else bool(voice.get("wakeword_enabled", False))
+        return {
+            "enabled": enabled,
+            "engine": active_engine,
+            "phrase": (_os.getenv("JARVIS_WAKEWORD_PHRASE") or "").strip().lower() or voice.get("wakeword_phrase", "hey jarvis"),
+            "openwakeword_available": oww_available,
+            "sensitivity": voice.get("wakeword_sensitivity", 0.5),
+            "engine_source": "env" if env_engine else "settings",
+        }
+
     @router.get("/admin/sessions")
     def admin_list_sessions(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
         import time as _time

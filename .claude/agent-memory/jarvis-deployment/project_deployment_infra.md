@@ -68,3 +68,24 @@ Permissions: `root:jarvis 640` — jarvis group can read, no world access.
 - "Environment separation (dev/test/prod)" — covered by `config/dev.env.example` and `config/prod.env.example`
 
 **How to apply:** Use `deploy/` files as canonical. The old `systemd/` directory is a prior model and should not be confused with these.
+
+## Nginx reverse proxy + HTTPS (added V37)
+
+- Nginx config: `deploy/nginx/jarvis.conf`
+- Setup script (LAN / mkcert): `scripts/setup-https.sh`
+- Setup script (public domain / Let's Encrypt): `scripts/setup-https-letsencrypt.sh`
+
+Key nginx decisions:
+- 80 → 443 redirect lives in its own server block (not a rewrite in the SSL block) — compatible with nginx 1.18 and 1.24
+- `/ws/` gets a dedicated location block with `Upgrade` + `Connection: upgrade` headers and 3600s read/send timeouts for long-lived WebSocket connections
+- `location /` has `proxy_buffering off` to support SSE streaming from `/chat/stream`
+- `client_max_body_size 50M` — audio uploads for STT
+- LAN cert paths: `/etc/jarvis/ssl/cert.pem` and `key.pem` (mkcert, v1.4.4 linux-amd64 binary)
+- Let's Encrypt cert paths: `/etc/letsencrypt/live/<domain>/fullchain.pem` (patched into conf by setup-https-letsencrypt.sh via sed)
+- server_name covers: `jarvissrv01 jarvissrv01.local localhost` — add public FQDN when switching to Let's Encrypt
+
+`deploy.sh` reloads nginx only when: (1) nginx is installed AND (2) `/etc/nginx/sites-enabled/jarvis` symlink exists. Safe to run on machines without nginx.
+
+Operator steps after `scripts/setup-https.sh`:
+1. Visit `https://jarvissrv01` in browser
+2. Import mkcert CA cert on each client device (`mkcert -CAROOT` shows path) to clear browser warnings

@@ -159,6 +159,22 @@ def transcribe_local(audio_path: str, whisper_getter) -> str:
     return " ".join([seg.text.strip() for seg in segments]).strip()
 
 
+def get_wakeword_status(settings_getter) -> dict:
+    from jarvis.wakeword_engine import _is_openwakeword_available  # type: ignore[attr-defined]
+    enabled = wakeword_enabled(settings_getter)
+    phrase = wakeword_phrase(settings_getter)
+    engine_cfg = settings_getter().get("voice", {}).get("wakeword_engine", "software")
+    env_engine = (os.getenv("JARVIS_WAKEWORD_ENGINE") or "").strip().lower()
+    active_engine = env_engine or engine_cfg
+    oww_available = _is_openwakeword_available()
+    return {
+        "enabled": enabled,
+        "engine": active_engine,
+        "phrase": phrase,
+        "openwakeword_available": oww_available,
+    }
+
+
 def transcribe_gemini(audio_bytes: bytes, content_type: str | None, gemini_getter) -> str:
     client = gemini_getter()
     model_name = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"

@@ -25,11 +25,15 @@ DEVICE_KIND_SYNONYMS: dict[str, str] = {
     "heizung": "climate",
     "heater": "climate",
     "heating": "climate",
+    "heat": "climate",
     "boiler": "climate",
     "thermostat": "climate",
+    "temperature": "climate",
+    "temperatur": "climate",
     # lights
     "lights": "light",
     "light": "light",
+    "lighting": "light",
     "lamp": "light",
     "lamps": "light",
     "lampe": "light",
@@ -39,10 +43,13 @@ DEVICE_KIND_SYNONYMS: dict[str, str] = {
     "bulb": "light",
     "bulbs": "light",
     "leuchtmittel": "light",
+    "beleuchtung": "light",
     # media
     "tv": "media",
     "telly": "media",
     "television": "media",
+    "screen": "media",
+    "display": "media",
     "fernseher": "media",
     "fernsehen": "media",
     "speaker": "media",
@@ -54,22 +61,40 @@ DEVICE_KIND_SYNONYMS: dict[str, str] = {
     "shutters": "cover",
     "shade": "cover",
     "shades": "cover",
+    "curtains": "cover",
+    "curtain": "cover",
+    "roller blind": "cover",
     "rollo": "cover",
     "rolllade": "cover",
     "rollläden": "cover",
     "jalousie": "cover",
+    "vorhang": "cover",
+    "vorhänge": "cover",
     # locks
+    "lock": "lock",
     "door lock": "lock",
+    "front door": "lock",
+    "back door": "lock",
     "türschloss": "lock",
     "schloss": "lock",
-    # switches / appliances
+    "haustür": "lock",
+    # fans
+    "fan": "fan",
+    "ceiling fan": "fan",
+    "ventilation": "fan",
+    "ventilator": "fan",
+    "lüfter": "fan",
+    # switches / appliances (note: "switch" as a word is excluded — it's a verb in most HA commands)
+    "plug": "switch",
+    "socket": "switch",
+    "outlet": "switch",
+    "power": "switch",
     "fridge": "switch",
     "refrigerator": "switch",
     "kuehlschrank": "switch",
     "kühlschrank": "switch",
-    "socket": "switch",
-    "plug": "switch",
     "steckdose": "switch",
+    "schalter": "switch",
 }
 
 AREA_SYNONYMS: dict[str, str] = {
@@ -78,32 +103,41 @@ AREA_SYNONYMS: dict[str, str] = {
     "lounge": "living_room",
     "sitting room": "living_room",
     "front room": "living_room",
+    "main room": "living_room",
     "wohnzimmer": "living_room",
     "wohnraum": "living_room",
     # bedroom
     "master bedroom": "bedroom",
     "main bedroom": "bedroom",
+    "bed room": "bedroom",
     "schlafzimmer": "bedroom",
     "schlafraum": "bedroom",
     # bathroom
     "loo": "bathroom",
     "toilet": "bathroom",
     "wc": "bathroom",
+    "bath": "bathroom",
+    "restroom": "bathroom",
     "badezimmer": "bathroom",
     "bad": "bathroom",
     "duschbad": "bathroom",
     # office / study
     "study": "office",
     "home office": "office",
+    "work room": "office",
+    "workroom": "office",
     "büro": "office",
     "arbeitszimmer": "office",
     "homeoffice": "office",
     # kitchen
+    "kitchenette": "kitchen",
     "küche": "kitchen",
     "kueche": "kitchen",
     # hallway
     "hallway": "hall",
     "entrance": "hall",
+    "foyer": "hall",
+    "corridor": "hall",
     "flur": "hall",
     "diele": "hall",
     "eingang": "hall",
@@ -122,6 +156,9 @@ AREA_SYNONYMS: dict[str, str] = {
     "garden": "garden",
     "yard": "garden",
     "backyard": "garden",
+    "outside": "garden",
+    "outdoor": "garden",
+    "patio": "garden",
     "garten": "garden",
     "terrasse": "garden",
     "terrace": "garden",
@@ -279,6 +316,7 @@ def _has_time_reference(text: str) -> bool:
         re.search(r"\b(\d{1,2})[:.](\d{2})\b", lowered)
         or re.search(r"\b(\d{1,2})[./-](\d{1,2})(?:[./-](\d{2,4}))?\b", lowered)
         or re.search(r"\bat\s+\d{1,2}\b", lowered)
+        or re.search(r"\bum\s+\d{1,2}\b", lowered)
         or re.search(r"\bin\s+\d+\s+(?:minutes?|hours?|minuten?|stunden?)\b", lowered)
         or any(token in lowered for token in _TIME_TOKENS_DE)
         or any(token in lowered for token in _TIME_TOKENS_EN)
@@ -328,7 +366,7 @@ def _parse_target_time(lowered: str) -> tuple[int, int]:
     hhmm_match = re.search(r"\b(\d{1,2})[:.](\d{2})\b", lowered)
     if hhmm_match:
         return int(hhmm_match.group(1)), int(hhmm_match.group(2))
-    bare_hour_match = re.search(r"\bat\s+(\d{1,2})\b", lowered)
+    bare_hour_match = re.search(r"\b(?:at|um)\s+(\d{1,2})\b", lowered)
     if bare_hour_match:
         return int(bare_hour_match.group(1)), 0
     if "midnight" in lowered:
@@ -466,6 +504,9 @@ def _find_entities_by_area_kind(
 
 def _device_action_from_text(normalized: str, kind: str) -> str | None:
     actions = {str(item.get("action") or "") for item in DEVICE_ACTION_PROFILES.get(kind, {}).get("actions", [])}
+    # German split verb: 'schalte X ein' (turn on)
+    if "turn_on" in actions and re.search(r"\bschalte\b.{0,60}\bein\b", normalized):
+        return "turn_on"
     candidates = (
         ("turn_off", ("turn off", "ausschalt", " aus", "aus ", "deaktivier", "abschalten", "ausmachen")),
         ("turn_on", ("turn on", "einschalt", " an", "an ", "aktivier", "anschalten", "anmachen")),
@@ -689,10 +730,14 @@ def _resolve_area_scoped_action(ctx: HomeAssistantChatContext) -> dict[str, obje
 
 
 def _action_from_normalized(text: str) -> str | None:
+    # German split verb: 'schalte X ein' (turn on) — must be checked before the candidate list
+    # because ' ein' would otherwise not match any turn_on variant.
+    if re.search(r"\bschalte\b.{0,60}\bein\b", text):
+        return "turn_on"
     candidates = (
         ("turn_off", ("turn off", "ausschalten", "ausmachen", "abschalten", " aus", "aus ", "deaktivier")),
         ("turn_on", ("turn on", "einschalten", "anschalten", "anmachen", " an ", " an", "aktivier")),
-        ("unlock", ("entriegel", "entriegl", "entsperr", " unlock", "oeffne schloss", "oeffne schloss")),
+        ("unlock", ("entriegel", "entriegl", "entsperr", " unlock", "oeffne schloss")),
         ("lock", ("verriegel", "sperr", " lock")),
         ("open", ("oeffne", "aufmach")),
         ("close", ("schliess", "zumach")),

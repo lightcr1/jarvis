@@ -275,12 +275,17 @@ def _env_int(name: str, default: int, minimum: int | None = None) -> int:
     return runtime_env_int(name, default, minimum)
 
 
+def _get_wakeword_engine_name() -> str:
+    return type(wakeword_engine).__name__
+
+
 def _settings_env_summary() -> dict[str, object]:
     return runtime_settings_env_summary(
         admin_settings_store=admin_settings_store,
         wakeword_enabled=wakeword_enabled,
         wakeword_phrase=wakeword_phrase,
         get_stt_provider=get_stt_provider,
+        get_wakeword_engine=_get_wakeword_engine_name,
     )
 
 
