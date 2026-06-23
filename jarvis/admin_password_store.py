@@ -42,16 +42,25 @@ class AdminPasswordStore:
     def has_password(self, user_id: str) -> bool:
         return user_id in self.data.get("credentials", {})
 
-    def set_password(self, user_id: str, password: str, *, rounds: int = 120_000) -> None:
+    @staticmethod
+    def hash_password(password: str, *, rounds: int = 120_000) -> dict:
         salt = secrets.token_bytes(16)
         derived = hashlib.pbkdf2_hmac("sha256", (password or "").encode("utf-8"), salt, rounds)
-        self.data.setdefault("credentials", {})[user_id] = {
+        return {
             "salt": base64.b64encode(salt).decode("ascii"),
             "hash": base64.b64encode(derived).decode("ascii"),
             "rounds": rounds,
             "updated_at": int(time.time()),
         }
+
+    def set_record(self, user_id: str, record: dict) -> None:
+        entry = {**record, "updated_at": int(time.time())}
+        self.data.setdefault("credentials", {})[user_id] = entry
         self._save()
+
+    def set_password(self, user_id: str, password: str, *, rounds: int = 120_000) -> None:
+        record = self.hash_password(password, rounds=rounds)
+        self.set_record(user_id, record)
 
     def verify_password(self, user_id: str, password: str) -> bool:
         record = self.data.get("credentials", {}).get(user_id)

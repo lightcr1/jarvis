@@ -11,18 +11,24 @@ import { ProxmoxScreen } from './ProxmoxScreen';
 import { ServiceHubScreen } from './ServiceHubScreen';
 import { SettingsScreen } from './SettingsScreen';
 import { DocsScreen } from './DocsScreen';
-import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode } from '../shared/api/client';
+import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode } from '../shared/api/client';
 import { useJarvisAlerts } from '../shared/api/alerts';
 import { useJarvisLiveStatus } from '../shared/api/status';
 
 type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'services' | 'settings' | 'docs';
 
-const NAV: Array<{ id: Screen; label: string; icon: (p: { size?: number }) => JSX.Element }> = [
+const NAV_ALL: Array<{ id: Screen; label: string; icon: (p: { size?: number }) => JSX.Element }> = [
   { id: 'chat',     label: 'Chat',     icon: IconChat     },
   { id: 'orb',      label: 'Voice',    icon: IconOrb      },
   { id: 'home',     label: 'Home',     icon: IconHome     },
   { id: 'proxmox',  label: 'Proxmox',  icon: IconServer   },
   { id: 'services', label: 'Services', icon: IconGrid     },
+  { id: 'docs',     label: 'Docs',     icon: IconBook     },
+  { id: 'settings', label: 'Settings', icon: IconSettings },
+];
+
+const NAV_GUEST: Array<{ id: Screen; label: string; icon: (p: { size?: number }) => JSX.Element }> = [
+  { id: 'chat',     label: 'Chat',     icon: IconChat     },
   { id: 'docs',     label: 'Docs',     icon: IconBook     },
   { id: 'settings', label: 'Settings', icon: IconSettings },
 ];
@@ -43,13 +49,13 @@ const NAV: Array<{ id: Screen; label: string; icon: (p: { size?: number }) => JS
   document.head.appendChild(s);
 })();
 
-function NavRail({ current, onNav, onLogout }: { current: Screen; onNav: (s: Screen) => void; onLogout: () => void }) {
+function NavRail({ current, onNav, onLogout, nav, isGuest, isAdmin }: { current: Screen; onNav: (s: Screen) => void; onLogout: () => void; nav: typeof NAV_ALL; isGuest: boolean; isAdmin: boolean }) {
   const [showMenu, setShowMenu] = useState(false);
   const [hovered, setHovered] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(() => (getStoredPreferences().theme ?? 'dark') === 'dark');
   const prefs = getStoredPreferences();
   const user = getStoredUser();
-  const userInitial = ((prefs.display_name || user?.username || 'G')[0] ?? 'G').toUpperCase();
+  const userInitial = ((prefs.display_name || user?.username || (isGuest ? 'G' : 'G'))[0] ?? 'G').toUpperCase();
 
   const toggleTheme = () => {
     const next = isDark ? 'light' : 'dark';
@@ -66,7 +72,7 @@ function NavRail({ current, onNav, onLogout }: { current: Screen; onNav: (s: Scr
         J
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
-        {NAV.map(item => {
+        {nav.map(item => {
           const active = current === item.id;
           return (
             <div key={item.id} style={{ position: 'relative' }}>
@@ -111,18 +117,22 @@ function NavRail({ current, onNav, onLogout }: { current: Screen; onNav: (s: Scr
                 <span style={{ opacity: 0.5 }}>{isDark ? <IconSun size={13} /> : <IconMoon size={13} />}</span>
               </button>
               <div style={{ height: 1, background: J.border, margin: '0 10px' }} />
-              <button onClick={() => { setShowMenu(false); onNav('settings'); }}
-                style={{ width: '100%', textAlign: 'left', padding: '10px 14px', background: 'none', border: 'none', color: J.textSec, fontSize: 13, cursor: 'pointer' }}
-                onMouseEnter={e => { e.currentTarget.style.background = J.bg3; e.currentTarget.style.color = J.text; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = J.textSec; }}>
-                Settings
-              </button>
-              <button onClick={() => { setShowMenu(false); window.location.href = '/dashboard'; }}
-                style={{ width: '100%', textAlign: 'left', padding: '10px 14px', background: 'none', border: 'none', color: J.textSec, fontSize: 13, cursor: 'pointer' }}
-                onMouseEnter={e => { e.currentTarget.style.background = J.bg3; e.currentTarget.style.color = J.text; }}
-                onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = J.textSec; }}>
-                Admin Dashboard
-              </button>
+              {!isGuest && (
+                <button onClick={() => { setShowMenu(false); onNav('settings'); }}
+                  style={{ width: '100%', textAlign: 'left', padding: '10px 14px', background: 'none', border: 'none', color: J.textSec, fontSize: 13, cursor: 'pointer' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = J.bg3; e.currentTarget.style.color = J.text; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = J.textSec; }}>
+                  Settings
+                </button>
+              )}
+              {isAdmin && (
+                <button onClick={() => { setShowMenu(false); window.location.href = '/dashboard'; }}
+                  style={{ width: '100%', textAlign: 'left', padding: '10px 14px', background: 'none', border: 'none', color: J.textSec, fontSize: 13, cursor: 'pointer' }}
+                  onMouseEnter={e => { e.currentTarget.style.background = J.bg3; e.currentTarget.style.color = J.text; }}
+                  onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = J.textSec; }}>
+                  Admin Dashboard
+                </button>
+              )}
               <div style={{ height: 1, background: J.border, margin: '0 10px' }} />
               <button onClick={() => { setShowMenu(false); onLogout(); }}
                 style={{ width: '100%', textAlign: 'left', padding: '10px 14px', background: 'none', border: 'none', color: J.error, fontSize: 13, cursor: 'pointer' }}
@@ -138,12 +148,11 @@ function NavRail({ current, onNav, onLogout }: { current: Screen; onNav: (s: Scr
   );
 }
 
-const NAV_BOTTOM = NAV.filter(n => ['chat', 'orb', 'home', 'services', 'settings'].includes(n.id));
-
-function BottomNav({ current, onNav }: { current: Screen; onNav: (s: Screen) => void }) {
+function BottomNav({ current, onNav, nav }: { current: Screen; onNav: (s: Screen) => void; nav: typeof NAV_ALL }) {
+  const bottomItems = nav.filter(n => ['chat', 'orb', 'home', 'services', 'settings', 'docs'].includes(n.id)).slice(0, 5);
   return (
     <nav className="nav-bottom" aria-label="Main navigation" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 60, background: J.bg1, borderTop: `1px solid ${J.border}`, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', zIndex: 100, paddingBottom: 'env(safe-area-inset-bottom)' }}>
-      {NAV_BOTTOM.map(item => {
+      {bottomItems.map(item => {
         const active = current === item.id;
         return (
           <button key={item.id} onClick={() => onNav(item.id)}
@@ -161,6 +170,9 @@ export function JarvisApp() {
   useJ(); // re-render when theme changes
   const liveStatus = useJarvisLiveStatus();
   const { alerts, dismissAlert } = useJarvisAlerts();
+  const guest = isGuestMode();
+  const storedUser = getStoredUser();
+  const isAdmin = storedUser?.role === 'admin';
   const [screen, setScreen] = useState<Screen>(() => {
     const params = new URLSearchParams(window.location.search);
     const req = params.get('screen') as Screen | null;
@@ -171,6 +183,8 @@ export function JarvisApp() {
     if (requested && publicScreens.includes(requested)) return requested;
     return 'login';
   });
+
+  const nav = guest ? NAV_GUEST : NAV_ALL;
   const GREETING_COOLDOWN_MS = 4 * 60 * 60 * 1000;
   const GREETING_KEY = 'jarvis_last_greeting';
   const _greetingDue = () => {
@@ -185,10 +199,26 @@ export function JarvisApp() {
     if (prefs.theme) applyTheme(prefs.theme);
     if (prefs.accent_color) applyAccent(prefs.accent_color);
     applyCompact(prefs.compact_mode ?? false);
-    // Check onboarding on initial load if already authenticated
     if (getSessionToken()) {
       shouldShowOnboarding().then(show => { if (show) setShowOnboarding(true); }).catch(() => {});
     }
+  }, []);
+
+  // Auto-redirect to login when the server restarts (session no longer valid)
+  useEffect(() => {
+    const handleSessionExpired = () => {
+      clearGuestMode();
+      setScreen('login');
+    };
+    window.addEventListener('jarvis:session-expired', handleSessionExpired);
+    return () => window.removeEventListener('jarvis:session-expired', handleSessionExpired);
+  }, []);
+
+  // Allow any screen to reopen the setup guide via a custom event
+  useEffect(() => {
+    const handleShowOnboarding = () => setShowOnboarding(true);
+    window.addEventListener('jarvis:show-onboarding', handleShowOnboarding);
+    return () => window.removeEventListener('jarvis:show-onboarding', handleShowOnboarding);
   }, []);
 
   const handleLogin = () => {
@@ -211,12 +241,16 @@ export function JarvisApp() {
 
   const handleLogout = () => {
     clearStoredIdentity();
+    clearGuestMode();
     setScreen('login');
   };
 
   const navigate = (s: string) => {
     const valid: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'services', 'settings', 'docs', 'login'];
-    if (valid.includes(s as Screen)) setScreen(s as Screen);
+    if (!valid.includes(s as Screen)) return;
+    const guestAllowed: Screen[] = ['chat', 'docs', 'settings', 'login'];
+    if (guest && !guestAllowed.includes(s as Screen)) return;
+    setScreen(s as Screen);
   };
 
   // Mobile bottom-nav padding
@@ -241,7 +275,7 @@ export function JarvisApp() {
       {showGreeting && <GreetingOverlay onDismiss={() => { setShowGreeting(false); localStorage.setItem(GREETING_KEY, String(Date.now())); }} />}
       {showOnboarding && <OnboardingModal onDismiss={() => setShowOnboarding(false)} />}
       <ToastContainer />
-      <NavRail current={screen} onNav={setScreen} onLogout={handleLogout} />
+      <NavRail current={screen} onNav={navigate as (s: Screen) => void} onLogout={handleLogout} nav={nav} isGuest={guest} isAdmin={isAdmin} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', paddingBottom: mobilePad ? 60 : 0, position: 'relative' }}>
         {screen !== 'chat' && screen !== 'orb' && (
           <div style={{ position: 'absolute', top: 10, right: 14, zIndex: 30, display: 'flex', alignItems: 'center', gap: 7, background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 999, padding: '6px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
@@ -272,7 +306,7 @@ export function JarvisApp() {
           ))}
         </div>
       </div>
-      <BottomNav current={screen} onNav={setScreen} />
+      <BottomNav current={screen} onNav={navigate as (s: Screen) => void} nav={nav} />
     </div>
   );
 }

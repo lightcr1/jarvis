@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey } from './jarvis-shared';
-import { getStoredPreferences, setStoredPreferences, getSessionToken, apiRequest, type UserPreferences } from '../shared/api/client';
+import { getStoredPreferences, setStoredPreferences, getSessionToken, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
 import { synthesizeSpeech } from '../shared/api/chat';
 import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
 import { fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, type BillingInfo, type ByokKey } from '../shared/api/billing';
@@ -521,6 +521,8 @@ function AIBillingPanel() {
 
 export function SettingsScreen() {
   useJ();
+  const isGuest = isGuestMode();
+  const availableCats = isGuest ? CATS.filter(c => c.id === 'appearance') : CATS;
   const [cat, setCat] = useState('appearance');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -645,7 +647,7 @@ export function SettingsScreen() {
     applyTheme('dark');
   };
 
-  const current = CATS.find(c => c.id === cat);
+  const current = availableCats.find(c => c.id === cat);
 
   const panels: Record<string, React.ReactNode> = {
     appearance: (<>
@@ -832,7 +834,7 @@ export function SettingsScreen() {
     <div style={{ flex: 1, display: 'flex', overflow: 'hidden', background: J.bg1 }}>
       <div style={{ width: 180, flexShrink: 0, borderRight: `1px solid ${J.border}`, padding: '16px 8px', overflowY: 'auto' }}>
         <div style={{ fontSize: 10, color: J.textMuted, letterSpacing: '0.06em', textTransform: 'uppercase', fontWeight: 600, padding: '2px 10px 10px' }}>Settings</div>
-        {CATS.map(c => (
+        {availableCats.map(c => (
           <button key={c.id} onClick={() => setCat(c.id)}
             style={{ width: '100%', textAlign: 'left', background: cat === c.id ? J.bg2 : 'none', border: cat === c.id ? `1px solid ${J.border}` : '1px solid transparent', color: cat === c.id ? J.text : J.textSec, borderRadius: 8, padding: '8px 11px', fontSize: 13, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2, transition: 'all .1s' }}
             onMouseEnter={e => { if (cat !== c.id) e.currentTarget.style.background = J.bg2; }}
@@ -843,6 +845,11 @@ export function SettingsScreen() {
         ))}
       </div>
       <div style={{ flex: 1, overflowY: 'auto', padding: '28px 36px', maxWidth: 600 }}>
+        {isGuest && (
+          <div style={{ background: J.amberDim, border: `1px solid ${J.borderAccent}`, borderRadius: 10, padding: '12px 16px', marginBottom: 20, fontSize: 13, color: J.amber }}>
+            Guest mode — sign in for full settings access.
+          </div>
+        )}
         <h2 style={{ fontSize: 18, fontWeight: 600, color: J.text, marginBottom: 3 }}>{current?.label}</h2>
         <p style={{ fontSize: 13, color: J.textMuted, marginBottom: 24 }}>Configure {current?.label?.toLowerCase()} preferences</p>
         {panels[cat]}

@@ -1,4 +1,8 @@
-from pydantic import BaseModel, Field
+import re as _re
+
+from pydantic import BaseModel, Field, field_validator
+
+_EMAIL_RE = _re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
 class ChatIn(BaseModel):
@@ -251,3 +255,37 @@ class UserLimitsIn(BaseModel):
     requests_per_min: int | None = Field(default=None, ge=1, le=300)
     expensive_models_per_day: int | None = Field(default=None, ge=0)
     allowed_models: list[str] | None = None
+
+
+class SignupIn(BaseModel):
+    username: str = Field(min_length=3, max_length=64)
+    email: str = Field(min_length=3, max_length=254)
+    password: str = Field(min_length=6)
+
+    @field_validator("email")
+    @classmethod
+    def validate_email(cls, v: str) -> str:
+        if not _EMAIL_RE.match(v.strip()):
+            raise ValueError("invalid email address")
+        return v.strip().lower()
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v: str) -> str:
+        cleaned = v.strip()
+        if not cleaned:
+            raise ValueError("username cannot be blank")
+        return cleaned
+
+
+class SignupVerifyIn(BaseModel):
+    email: str
+    code: str = Field(min_length=6, max_length=6, pattern=r"^\d{6}$")
+
+
+class SignupResendIn(BaseModel):
+    email: str
+
+
+class SignupConfigOut(BaseModel):
+    enabled: bool

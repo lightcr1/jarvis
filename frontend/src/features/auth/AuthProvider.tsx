@@ -117,7 +117,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     },
     ensureAdminAccess: async () => {
-      if (user?.role !== "admin") throw new Error("Admin role required");
+      // Read from localStorage (set synchronously during login) rather than the
+      // React closure, which may still hold the pre-login null value on the first click.
+      const role = getStoredUser()?.role;
+      if (role !== "admin") throw new Error("Admin role required");
       const payload = await issueAdminSession();
       setAdminToken(payload.token, payload.expires_in_sec);
     },

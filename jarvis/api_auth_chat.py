@@ -23,11 +23,22 @@ from .api_models import (
     ChatOut,
     ChatSessionCreateIn,
     ChatSessionUpdateIn,
+    SignupConfigOut,
+    SignupIn,
+    SignupResendIn,
+    SignupVerifyIn,
     UnlockIn,
     UnlockOut,
     UserChangePasswordIn,
     UserLoginIn,
     UserPreferencesIn,
+)
+from .email_service import EmailServiceUnavailable, is_configured as _email_configured, send_verification_email as _send_verification_email
+from .pending_signup_store import (
+    PendingSignupStore as _PendingSignupStore,
+    SignupCodeExpired,
+    SignupCodeInvalid,
+    SignupCodeLocked,
 )
 from .home_assistant.chat_intents import execute_home_assistant_chat_intent
 from .router_dependencies import LiveRef
@@ -157,6 +168,106 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         if token:
             current("identity_tokens").pop(token, None)
         return {"ok": True}
+
+    # ── Self-service signup ──────────────────────────────────────────────────
+
+    def _signup_enabled() -> bool:
+        if _os.getenv("JARVIS_SIGNUP_ENABLED", "").strip() in ("0", "false", "no"):
+            return False
+        return _email_configured()
+
+    @router.get("/auth/signup/config", response_model=SignupConfigOut)
+    def signup_config():
+        return SignupConfigOut(enabled=_signup_enabled())
+
+    @router.post("/auth/signup")
+    def signup_request(payload: SignupIn):
+        if not _signup_enabled():
+            raise HTTPException(503, "Self-service signup is not available")
+        if not _rate.allow(f"signup:{payload.email}", limit=5, window=900):
+            raise HTTPException(429, "Too many signup attempts — try again later")
+
+        user_store = current("user_store")
+        pending: _PendingSignupStore = current("pending_signup_store")
+
+        if user_store.find_by_username(payload.username) or pending.username_pending(payload.username):
+            raise HTTPException(409, "Username already taken")
+        if user_store.find_by_email(payload.email) or pending.email_pending(payload.email):
+            raise HTTPException(409, "Email already registered")
+        cred = current("admin_password_store").hash_password(payload.password)
+        code = pending.generate_code()
+        pending.put(payload.email, payload.username, cred, code)
+
+        try:
+            _send_verification_email(payload.email, code)
+        except EmailServiceUnavailable as exc:
+            _log.error("Signup email failed: %s", exc)
+            raise HTTPException(503, "Email delivery failed — please try again later") from exc
+
+        current("audit_log").write("signup_requested", {"email_hash": payload.email[:3] + "***", "username": payload.username})
+        return {"ok": True, "email": payload.email}
+
+    @router.post("/auth/signup/verify")
+    def signup_verify(payload: SignupVerifyIn):
+        if not _signup_enabled():
+            raise HTTPException(503, "Self-service signup is not available")
+        if not _rate.allow(f"signup_verify:{payload.email}", limit=10, window=600):
+            raise HTTPException(429, "Too many verification attempts")
+
+        pending: _PendingSignupStore = current("pending_signup_store")
+        try:
+            record = pending.verify_code(payload.email, payload.code)
+        except SignupCodeExpired:
+            raise HTTPException(410, "Verification code has expired — please sign up again")
+        except SignupCodeLocked:
+            raise HTTPException(429, "Too many failed attempts — please sign up again")
+        except SignupCodeInvalid as exc:
+            raise HTTPException(400, str(exc))
+
+        user_store = current("user_store")
+        admin_pw = current("admin_password_store")
+
+        if user_store.find_by_username(record["username"]):
+            pending.delete(payload.email)
+            raise HTTPException(409, "Username was just taken — please sign up again with a different username")
+        if user_store.find_by_email(payload.email):
+            pending.delete(payload.email)
+            raise HTTPException(409, "Email already registered")
+
+        created = user_store.create_user(record["username"], role="standard_user", enabled=True, email=payload.email)
+        admin_pw.set_record(created["id"], record["cred"])
+        pending.delete(payload.email)
+
+        issued = issue_identity_token(created["id"], created["role"])
+        preferences = current("user_preferences_store").get(created["id"])
+        current("audit_log").write("signup_completed", {"user_id": created["id"], "username": created["username"]})
+        return {
+            **issued,
+            "user": {"id": created["id"], "username": created["username"], "role": created["role"]},
+            "preferences": preferences,
+            "capabilities": auth_capabilities(created["id"], created["role"]),
+        }
+
+    @router.post("/auth/signup/resend")
+    def signup_resend(payload: SignupResendIn):
+        if not _signup_enabled():
+            raise HTTPException(503, "Self-service signup is not available")
+        if not _rate.allow(f"signup_resend:{payload.email}", limit=3, window=600):
+            raise HTTPException(429, "Too many resend requests — wait a while")
+
+        pending: _PendingSignupStore = current("pending_signup_store")
+        record = pending.get(payload.email)
+        if not record:
+            raise HTTPException(404, "No pending signup found for this email")
+
+        new_code = pending.generate_code()
+        pending.put(payload.email, record["username"], record["cred"], new_code)
+        try:
+            _send_verification_email(payload.email, new_code)
+        except EmailServiceUnavailable as exc:
+            raise HTTPException(503, "Email delivery failed") from exc
+
+        return {"ok": True, "email": payload.email}
 
     @router.get("/auth/me")
     def auth_me(x_jarvis_session: str | None = Header(default=None)):

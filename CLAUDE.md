@@ -456,6 +456,14 @@ LLM providers (env `LLM_PROVIDER`): `openai`, `gemini`, `local`
 | `JARVIS_USER_LIMITS_STORE_PATH` | /var/lib/jarvis/ | Per-user spending limits JSON path |
 | `JARVIS_USAGE_LOG_PATH` | /var/lib/jarvis/ | Append-only usage JSONL log path |
 
+### Optional — Email & Self-service signup
+| Variable | Default | Purpose |
+|---|---|---|
+| `RESEND_API_KEY` | — | Resend.com API key for outbound email (required for self-service signup) |
+| `JARVIS_EMAIL_FROM` | — | "From" address for outbound email, e.g. `JARVIS <onboarding@yourdomain.com>` |
+| `JARVIS_SIGNUP_ENABLED` | auto | Set `0` to disable self-service signup even when email is configured |
+| `JARVIS_SIGNUP_CODE_TTL_SEC` | `900` | How long a signup verification code stays valid (seconds) |
+
 ### Optional — LLM (legacy direct provider)
 | Variable | Default | Purpose |
 |---|---|---|
@@ -544,6 +552,7 @@ All data is stored locally by default at `/var/lib/jarvis/` (falls back to `/tmp
 | `user_preferences.json` | JSON | Per-user preferences |
 | `memory.json` | JSON | Engine memory (notes, aliases, feedback) |
 | `proxmox_hosts.json` | JSON | Configured Proxmox hosts |
+| `pending_signups.json` | JSON | Short-lived self-service signup records (email → hashed code + hashed password, auto-pruned) |
 | `/var/lib/jarvis/auto_backups/` | JSON | Rolling auto-backups (7 kept) |
 
 ---

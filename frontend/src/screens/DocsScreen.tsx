@@ -230,12 +230,21 @@ function OverviewSection() {
   return (
     <>
       <div style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 12, padding: '22px 24px', marginBottom: 24 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
-          <div style={{ width: 44, height: 44, borderRadius: 11, background: J.amberDim, border: `1px solid ${J.borderAccent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, color: J.amber }}>J</div>
-          <div>
-            <div style={{ fontSize: 18, fontWeight: 700, color: J.text, letterSpacing: '-0.01em' }}>J.A.R.V.I.S.</div>
-            <div style={{ fontSize: 12, color: J.textMuted }}>Just A Rather Very Intelligent System</div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 14, marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+            <div style={{ width: 44, height: 44, borderRadius: 11, background: J.amberDim, border: `1px solid ${J.borderAccent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18, fontWeight: 700, color: J.amber }}>J</div>
+            <div>
+              <div style={{ fontSize: 18, fontWeight: 700, color: J.text, letterSpacing: '-0.01em' }}>J.A.R.V.I.S.</div>
+              <div style={{ fontSize: 12, color: J.textMuted }}>Just A Rather Very Intelligent System</div>
+            </div>
           </div>
+          <button
+            onClick={() => window.dispatchEvent(new CustomEvent('jarvis:show-onboarding'))}
+            style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', borderRadius: 8, border: `1px solid ${J.border}`, background: J.bg3, color: J.textSec, cursor: 'pointer', fontSize: 12, fontWeight: 500, transition: 'all .12s' }}
+            onMouseEnter={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = J.borderAccent; (e.currentTarget as HTMLButtonElement).style.color = J.amber; }}
+            onMouseLeave={e => { (e.currentTarget as HTMLButtonElement).style.borderColor = J.border; (e.currentTarget as HTMLButtonElement).style.color = J.textSec; }}>
+            <IconBulb size={13} /> Setup Guide
+          </button>
         </div>
         <P>JARVIS is a privacy-first, locally-running AI assistant. All conversations, preferences, and processing happen on your own hardware — nothing leaves your network unless a skill explicitly calls an external API (weather, news, currency rates, etc.).</P>
         <P>Built on FastAPI + React, JARVIS routes requests through a fast skill engine first and falls back to a local or cloud LLM for open-ended queries.</P>

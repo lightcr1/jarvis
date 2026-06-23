@@ -48,6 +48,15 @@ class UserStore:
                 return user
         return None
 
+    def find_by_email(self, email: str) -> dict | None:
+        normalized = (email or "").strip().lower()
+        if not normalized:
+            return None
+        for user in self.data.get("users", {}).values():
+            if (user.get("email") or "").strip().lower() == normalized:
+                return user
+        return None
+
     def _username_exists(self, username: str, *, exclude_user_id: str | None = None) -> bool:
         normalized = (username or "").strip().lower()
         for uid, user in self.data.get("users", {}).items():
@@ -57,7 +66,18 @@ class UserStore:
                 return True
         return False
 
-    def create_user(self, username: str, role: str = "standard_user", enabled: bool = True) -> dict:
+    def _email_exists(self, email: str, *, exclude_user_id: str | None = None) -> bool:
+        normalized = (email or "").strip().lower()
+        if not normalized:
+            return False
+        for uid, user in self.data.get("users", {}).items():
+            if exclude_user_id and uid == exclude_user_id:
+                continue
+            if (user.get("email") or "").strip().lower() == normalized:
+                return True
+        return False
+
+    def create_user(self, username: str, role: str = "standard_user", enabled: bool = True, email: str | None = None) -> dict:
         now = int(time.time())
         uid = f"usr-{uuid.uuid4().hex[:12]}"
         username_clean = (username or "").strip() or uid
@@ -66,7 +86,10 @@ class UserStore:
         role_clean = (role or "standard_user").strip().lower()
         if role_clean not in VALID_ROLES:
             raise ValueError("invalid role")
-        item = {
+        email_clean = (email or "").strip().lower() or None
+        if email_clean and self._email_exists(email_clean):
+            raise ValueError("email already registered")
+        item: dict = {
             "id": uid,
             "username": username_clean,
             "role": role_clean,
@@ -74,6 +97,8 @@ class UserStore:
             "created_at": now,
             "updated_at": now,
         }
+        if email_clean:
+            item["email"] = email_clean
         self.data.setdefault("users", {})[uid] = item
         self._save()
         return item

@@ -3,7 +3,7 @@ import {
   J, useJ, AppPrefs, stripMarkdown, StatusBadge, Spinner,
   showToast, useAutoResize,
   IconMic, IconSettings, IconPlus, IconSearch, IconSend,
-  IconAttach, IconTool, IconChevDown, IconMenu, IconCopy, IconCheck,
+  IconAttach, IconTool, IconChevDown, IconMenu, IconCopy, IconCheck, IconX,
 } from './jarvis-shared';
 import {
   listChatSessions, createChatSession, streamChatMessage, getChatSession,
@@ -219,7 +219,7 @@ const SLASH_COMMANDS = [
   { cmd: '/http',     full: 'http status ',        desc: 'HTTP health check for a URL' },
 ];
 
-function Composer({ onSend, sending, textareaRef }: { onSend: (v: string) => void; sending: boolean; textareaRef?: React.RefObject<HTMLTextAreaElement> }) {
+function Composer({ onSend, sending, onStop, textareaRef }: { onSend: (v: string) => void; sending: boolean; onStop?: () => void; textareaRef?: React.RefObject<HTMLTextAreaElement> }) {
   const [val, setVal] = useState('');
   const [mode, setMode] = useState('auto');
   const [slashIdx, setSlashIdx] = useState(0);
@@ -282,7 +282,17 @@ function Composer({ onSend, sending, textareaRef }: { onSend: (v: string) => voi
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             {sending ? (
-              <Spinner size={14} />
+              <>
+                <Spinner size={14} />
+                {onStop && (
+                  <button onClick={onStop} title="Stop generation"
+                    style={{ background: J.bg3, border: `1px solid ${J.border}`, borderRadius: 7, padding: '4px 10px', fontSize: 12, color: J.error, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5, fontWeight: 500 }}
+                    onMouseEnter={e => { e.currentTarget.style.background = J.errorDim; e.currentTarget.style.borderColor = J.error; }}
+                    onMouseLeave={e => { e.currentTarget.style.background = J.bg3; e.currentTarget.style.borderColor = J.border; }}>
+                    <IconX size={11} /> Stop
+                  </button>
+                )}
+              </>
             ) : (
               <span style={{ fontSize: 11, color: J.textMuted, display: 'flex', alignItems: 'center', gap: 4 }}>
                 <span style={{ width: 5, height: 5, borderRadius: '50%', background: J.success, display: 'inline-block' }} />
@@ -321,6 +331,7 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
   const endRef = useRef<HTMLDivElement>(null);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -390,12 +401,19 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
     }
   };
 
+  const handleStop = () => {
+    if (abortRef.current) { abortRef.current.abort(); abortRef.current = null; }
+  };
+
   const handleSend = async (text: string, _extraHeaders?: Record<string, string>) => {
     if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
     const t = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
     const userMsgId = Date.now();
     setMsgs(p => [...p, { id: userMsgId, role: 'user', content: text, time: t }]);
     setSending(true);
+
+    const ctrl = new AbortController();
+    abortRef.current = ctrl;
 
     const replyId = userMsgId + 1;
     const replyTime = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
@@ -404,7 +422,7 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
     try {
       let accumulated = '';
       let firstToken = true;
-      for await (const event of streamChatMessage(text, 'web', 'chat', sessionId)) {
+      for await (const event of streamChatMessage(text, 'web', 'chat', sessionId, ctrl.signal)) {
         if (event.type === 'token') {
           if (firstToken) { accumulated = ''; firstToken = false; }
           accumulated += event.token;
@@ -470,8 +488,14 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
       // If no tokens arrived and content is still the cursor, replace with fallback
       setMsgs(p => p.map(m => m.id === replyId && m.content === '▋' ? { ...m, content: '—' } : m));
     } catch (err) {
-      setMsgs(p => p.map(m => m.id === replyId ? { ...m, content: `Error: ${(err as Error).message}` } : m));
+      const isAbort = err instanceof DOMException && err.name === 'AbortError';
+      if (isAbort) {
+        setMsgs(p => p.map(m => m.id === replyId && (m.content === '▋' || m.content === '') ? { ...m, content: '—' } : m.id === replyId ? { ...m, content: m.content.replace(/▋$/, '') } : m));
+      } else {
+        setMsgs(p => p.map(m => m.id === replyId ? { ...m, content: `Error: ${(err as Error).message}` } : m));
+      }
     } finally {
+      abortRef.current = null;
       setSending(false);
     }
   };
@@ -654,7 +678,7 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
           <div ref={endRef} />
         </div>
 
-        <Composer onSend={text => void handleSend(text)} sending={sending} textareaRef={composerRef} />
+        <Composer onSend={text => void handleSend(text)} sending={sending} onStop={handleStop} textareaRef={composerRef} />
       </div>
 
       {billingConfirm && (

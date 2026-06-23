@@ -70,6 +70,7 @@ def build_auth_chat_deps(state: object) -> dict:
         "bearer_token_from_header": state.bearer_token_from_header,
         "prune_expired_tokens": getattr(state, "prune_expired_tokens", lambda tokens: 0),
         "passphrase": lambda: (state.os.getenv("JARVIS_PASSPHRASE") or "").strip(),
+        "pending_signup_store": live_attr(state, "pending_signup_store"),
     }
 
 

@@ -86,12 +86,14 @@ export async function* streamChatMessage(
   source = "web",
   mode: "chat" | "orb" = "chat",
   sessionId?: string | null,
+  signal?: AbortSignal,
 ): AsyncGenerator<StreamEvent> {
   const headers = buildApiHeaders({ includeUser: true, mode, body: { text } });
   const response = await fetch("/chat/stream", {
     method: "POST",
     headers,
     body: JSON.stringify({ text, source, session_id: sessionId || undefined }),
+    signal,
   });
   if (!response.ok || !response.body) {
     const err = await response.text().catch(() => `HTTP ${response.status}`);

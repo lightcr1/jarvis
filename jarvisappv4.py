@@ -91,6 +91,7 @@ from jarvis.byok_store import ByokKeyStore
 from jarvis.usage_log_store import UsageLogStore
 from jarvis.credit_store import CreditStore
 from jarvis.user_limits_store import UserLimitsStore
+from jarvis.pending_signup_store import PendingSignupStore
 from jarvis.api_admin import build_admin_router
 from jarvis.api_auth_chat import build_auth_chat_router
 from jarvis.api_alerts import build_alerts_router, get_alert_broadcaster
@@ -170,6 +171,7 @@ usage_log_store = UsageLogStore()
 credit_store = CreditStore()
 user_limits_store = UserLimitsStore()
 memory_store = MemoryStore()
+pending_signup_store = PendingSignupStore()
 status_hub = JarvisStatusHub()
 home_assistant_store = HomeAssistantStore()
 home_assistant_client = HomeAssistantClient()

@@ -2,6 +2,7 @@ export type UserProfile = {
   id: string;
   username: string;
   role: string;
+  email?: string;
 };
 
 export type UserCapabilities = {
@@ -203,6 +204,10 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
+  if (response.status === 401) {
+    clearStoredIdentity();
+    window.dispatchEvent(new CustomEvent("jarvis:session-expired"));
+  }
   if (!response.ok) throw new Error(data.detail || text || `HTTP ${response.status}`);
   return data as T;
 }
@@ -238,5 +243,30 @@ export async function issueAdminSession() {
   return apiRequest<{ token: string; expires_in_sec: number; user_id: string; username: string; role: string }>("/admin/session", {
     method: "POST",
     includeUser: true,
+  });
+}
+
+export async function getSignupConfig() {
+  return apiRequest<{ enabled: boolean }>("/auth/signup/config");
+}
+
+export async function signupRequest(username: string, email: string, password: string) {
+  return apiRequest<{ ok: boolean; email: string }>("/auth/signup", {
+    method: "POST",
+    body: { username, email, password },
+  });
+}
+
+export async function verifySignup(email: string, code: string) {
+  return apiRequest<{ session_token: string; user: UserProfile; preferences: UserPreferences; capabilities?: UserCapabilities }>("/auth/signup/verify", {
+    method: "POST",
+    body: { email, code },
+  });
+}
+
+export async function resendSignupCode(email: string) {
+  return apiRequest<{ ok: boolean; email: string }>("/auth/signup/resend", {
+    method: "POST",
+    body: { email },
   });
 }
