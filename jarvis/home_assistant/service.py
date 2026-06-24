@@ -1170,6 +1170,8 @@ class HomeAssistantService:
         return {"policy": policy, "item": updated}
 
     def request_entity_action(self, entity_id: str, payload: dict[str, object], *, user_id: str | None, role: str | None, client_ip: str | None = None) -> dict[str, object]:
+        if _emergency_stop_active():
+            raise PermissionError("emergency stop is active — write actions are blocked")
         entity = self.store.get_managed_entity(entity_id)
         if not entity:
             raise LookupError("managed entity not found")
@@ -1383,7 +1385,7 @@ class HomeAssistantService:
         return {"scenes": scenes}
 
     def activate_scene(self, scene_id: str, *, user_id: str | None, role: str | None) -> dict[str, object]:
-        self.require_access(user_id=user_id, role=role)
+        self.require_access(user_id=user_id, role=role, required_permission="home_assistant.device_control")
         if _emergency_stop_active():
             raise PermissionError("emergency stop is active — write actions are blocked")
         entity = self.store.get_managed_entity(scene_id)

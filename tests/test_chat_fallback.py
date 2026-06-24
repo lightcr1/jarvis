@@ -21,6 +21,7 @@ class ChatFallbackTests(unittest.TestCase):
         revoke = self.client.post("/unlock/revoke", headers={"Authorization": f"Bearer {token}"})
         self.assertEqual(revoke.status_code, 200)
 
+        # X-Jarvis-Role header is ignored without an identity session — role defaults to guest_restricted
         res = self.client.post(
             "/chat",
             headers={"Authorization": f"Bearer {token}", "X-Jarvis-Role": "admin"},
@@ -28,8 +29,8 @@ class ChatFallbackTests(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 200)
         body = res.json()
-        self.assertEqual(body.get("reply"), "Token required.")
-        self.assertEqual((body.get("data") or {}).get("error"), "missing_token")
+        # guest_restricted cannot execute write actions regardless of headers
+        self.assertEqual(body.get("reply"), "Permission denied.")
 
     def test_cloud_error_returns_context_reply(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"}, clear=False), patch("jarvisappv4.get_provider", return_value="gemini"), patch(

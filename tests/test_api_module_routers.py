@@ -1124,11 +1124,10 @@ class DailyBriefingEndpointTests(unittest.TestCase):
         import re
         self.assertRegex(data["date"], r"^\d{4}-\d{2}-\d{2}$")
 
-    def test_daily_briefing_without_auth_uses_guest_role(self):
+    def test_daily_briefing_requires_auth(self):
         client = self._make_client(briefing_text="Good day, sir.")
         resp = client.get("/chat/daily-briefing")
-        self.assertEqual(200, resp.status_code)
-        self.assertIn("text", resp.json())
+        self.assertEqual(401, resp.status_code)
 
     def test_daily_briefing_appends_todays_calendar_events(self):
         from datetime import date

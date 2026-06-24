@@ -184,6 +184,8 @@ wakeword_engine: NullWakewordEngine | SoftwareWakewordEngine = NullWakewordEngin
 
 DEFAULT_ADMIN_USERNAME = (os.getenv("JARVIS_DEFAULT_ADMIN_USERNAME") or "admin").strip() or "admin"
 DEFAULT_ADMIN_PASSWORD = (os.getenv("JARVIS_DEFAULT_ADMIN_PASSWORD") or "admin123").strip() or "admin123"
+if DEFAULT_ADMIN_PASSWORD == "admin123":
+    logger.warning("SECURITY: JARVIS_DEFAULT_ADMIN_PASSWORD is not set — using insecure default 'admin123'. Set this env var before exposing JARVIS to a network.")
 
 
 def ensure_default_admin_seeded() -> dict | None:

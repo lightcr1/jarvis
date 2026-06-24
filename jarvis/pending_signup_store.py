@@ -59,19 +59,20 @@ class PendingSignupStore:
         self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     @staticmethod
-    def _hash_code(code: str) -> str:
-        salt = "jarvis_signup_v1"
+    def _hash_code(code: str, salt: str) -> str:
         return hashlib.sha256(f"{salt}:{code}".encode()).hexdigest()
 
     def put(self, email: str, username: str, cred: dict, code: str) -> None:
         self.prune_expired()
         key = email.strip().lower()
         ttl = _env_int("JARVIS_SIGNUP_CODE_TTL_SEC", 900, minimum=60)
+        code_salt = secrets.token_hex(16)
         self.data[key] = {
             "email": key,
             "username": username,
             "cred": cred,
-            "code_hash": self._hash_code(code),
+            "code_hash": self._hash_code(code, code_salt),
+            "code_salt": code_salt,
             "attempts": 0,
             "expires_at": int(time.time()) + ttl,
             "created_at": int(time.time()),
@@ -96,7 +97,8 @@ class PendingSignupStore:
             raise SignupCodeLocked("Too many attempts — please sign up again")
 
         expected = record["code_hash"]
-        actual = self._hash_code(code.strip())
+        code_salt = record.get("code_salt") or "jarvis_signup_v1"
+        actual = self._hash_code(code.strip(), code_salt)
         if not hmac.compare_digest(expected, actual):
             record["attempts"] += 1
             self._save()

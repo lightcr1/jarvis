@@ -1,3 +1,4 @@
+import hmac as _hmac
 import json as _json
 import logging as _logging
 import os as _os
@@ -116,10 +117,14 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
     @router.post("/admin/login", response_model=AdminLoginOut)
     def admin_login(payload: AdminLoginIn):
         ensure_default_admin_seeded()
+        username_key = (payload.username or "").strip().lower()
+        if not _rate.allow(f"admin_login:{username_key}", limit=5, window=300):
+            current("audit_log").write("admin_login_failed", {"username": username_key, "reason": "rate_limited"})
+            raise HTTPException(429, "Too many login attempts — try again later")
 
         user = current("user_store").find_by_username(payload.username)
         if not user or user.get("role") != "admin" or not bool(user.get("enabled", False)):
-            current("audit_log").write("admin_login_failed", {"username": (payload.username or "").strip(), "reason": "invalid_credentials"})
+            current("audit_log").write("admin_login_failed", {"username": username_key, "reason": "invalid_credentials"})
             raise HTTPException(401, "Invalid admin credentials")
 
         if not current("admin_password_store").verify_password(user["id"], payload.password):
@@ -147,10 +152,16 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
 
     @router.post("/auth/login")
     def user_login(payload: UserLoginIn):
+        username_key = (payload.username or "").strip().lower()
+        if not _rate.allow(f"user_login:{username_key}", limit=5, window=300):
+            current("audit_log").write("user_login_failed", {"username": username_key, "reason": "rate_limited"})
+            raise HTTPException(429, "Too many login attempts — try again later")
         user = current("user_store").find_by_username(payload.username)
         if not user or not bool(user.get("enabled", False)) or user.get("role") == "service_system":
+            current("audit_log").write("user_login_failed", {"username": username_key, "reason": "invalid_credentials"})
             raise HTTPException(401, "Invalid credentials")
         if not current("admin_password_store").verify_password(user["id"], payload.password):
+            current("audit_log").write("user_login_failed", {"username": username_key, "user_id": user["id"], "reason": "wrong_password"})
             raise HTTPException(401, "Invalid credentials")
         issued = issue_identity_token(user["id"], user["role"])
         preferences = current("user_preferences_store").get(user["id"])
@@ -361,12 +372,15 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
 
     @router.post("/unlock", response_model=UnlockOut)
     def unlock(payload: UnlockIn):
+        if not _rate.allow("unlock_global", limit=10, window=300):
+            current("audit_log").write("unlock_failed", {"reason": "rate_limited"})
+            raise HTTPException(429, "Too many unlock attempts — try again later")
         expected = deps["passphrase"]()
         if not expected:
             current("audit_log").write("unlock_failed", {"reason": "passphrase_not_set"})
             raise HTTPException(500, "JARVIS_PASSPHRASE not set")
 
-        if (payload.passphrase or "").strip().lower() != expected.lower():
+        if not _hmac.compare_digest((payload.passphrase or "").strip().lower(), expected.lower()):
             current("audit_log").write("unlock_failed", {"reason": "wrong_passphrase"})
             raise HTTPException(401, "Wrong passphrase")
 
@@ -421,7 +435,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         identity_session = get_identity_session(x_jarvis_session)
         owner_key, effective_user_id = chat_owner_key(x_jarvis_session, x_jarvis_guest_key)
         active_user = identity_session["user"] if identity_session else None
-        role = normalize_role(active_user.get("role") if active_user else x_jarvis_role or "guest_restricted")
+        role = normalize_role(active_user.get("role") if active_user else "guest_restricted")
 
         if mode == "orb" and not active_user:
             raise HTTPException(401, "orb login required")
@@ -609,7 +623,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         identity_session = get_identity_session(x_jarvis_session)
         owner_key, effective_user_id = chat_owner_key(x_jarvis_session, x_jarvis_guest_key)
         active_user = identity_session["user"] if identity_session else None
-        role = normalize_role(active_user.get("role") if active_user else x_jarvis_role or "guest_restricted")
+        role = normalize_role(active_user.get("role") if active_user else "guest_restricted")
 
         if mode == "orb" and not active_user:
             def _err():
@@ -886,8 +900,8 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         x_jarvis_session: str | None = Header(default=None),
         x_jarvis_guest_key: str | None = Header(default=None),
     ):
+        identity_session = require_identity_session(x_jarvis_session)
         _, effective_user_id = chat_owner_key(x_jarvis_session, x_jarvis_guest_key)
-        identity_session = get_identity_session(x_jarvis_session)
         active_user = identity_session["user"] if identity_session else None
         role = normalize_role(active_user.get("role") if active_user else "guest_restricted")
         granted_permissions = sorted(resolve_effective_permissions(
@@ -984,7 +998,8 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         }
 
     @router.get("/rag/status")
-    def rag_status():
+    def rag_status(x_jarvis_session: str | None = Header(default=None)):
+        require_identity_session(x_jarvis_session)
         return {
             "updated_at": current("rag_store").data.get("updated_at", 0),
             "report": current("rag_store").data.get("report", {}),
@@ -992,11 +1007,13 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         }
 
     @router.post("/rag/refresh")
-    def rag_refresh():
+    def rag_refresh(x_jarvis_session: str | None = Header(default=None)):
+        require_identity_session(x_jarvis_session)
         return {"report": current("rag_store").refresh()}
 
     @router.get("/rag/search")
-    def rag_search(q: str):
+    def rag_search(q: str, x_jarvis_session: str | None = Header(default=None)):
+        require_identity_session(x_jarvis_session)
         return {"results": current("rag_store").search(q, limit=5)}
 
     return router

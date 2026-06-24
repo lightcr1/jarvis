@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { apiRequest, getSessionToken } from "./client";
+import { apiRequest, getSessionToken, getStoredUser } from "./client";
 
 export type JarvisAlert = {
   id: string;
@@ -46,12 +46,16 @@ function wsUrl(path: string) {
   return `${protocol}//${window.location.host}${path}`;
 }
 
+export type BriefingPush = { text: string; user_id: string; ts: number };
+
 export function useJarvisAlerts() {
   const [alerts, setAlerts] = useState<JarvisAlert[]>([]);
+  const [briefings, setBriefings] = useState<BriefingPush[]>([]);
 
   useEffect(() => {
     const token = getSessionToken();
     if (!token) return;
+    const currentUserId = getStoredUser()?.id ?? null;
 
     let socket: WebSocket | null = null;
     let retryTimer: number | null = null;
@@ -61,13 +65,17 @@ export function useJarvisAlerts() {
       socket = new WebSocket(wsUrl(`/ws/alerts?session=${encodeURIComponent(token)}`));
       socket.onmessage = (event) => {
         try {
-          const payload = JSON.parse(event.data) as { type?: string; alerts?: JarvisAlert[] };
+          const payload = JSON.parse(event.data) as { type?: string; alerts?: JarvisAlert[]; user_id?: string; text?: string; ts?: number };
           if (payload.type === "alerts" && Array.isArray(payload.alerts) && payload.alerts.length) {
-            const incoming = payload.alerts;
-            setAlerts((prev) => [...prev, ...incoming]);
+            setAlerts((prev) => [...prev, ...payload.alerts!]);
+          } else if (payload.type === "briefing") {
+            // Only show briefings addressed to the current user — prevents fan-out data leaks
+            if (!currentUserId || payload.user_id === currentUserId) {
+              setBriefings((prev) => [...prev, { text: payload.text ?? "", user_id: payload.user_id ?? "", ts: payload.ts ?? Date.now() }]);
+            }
           }
         } catch {
-          // ignore malformed alert payloads
+          // ignore malformed payloads
         }
       };
       socket.onclose = () => {
@@ -90,8 +98,11 @@ export function useJarvisAlerts() {
   const dismissAlert = (id: string) => {
     setAlerts((prev) => prev.filter((item) => item.id !== id));
   };
+  const dismissBriefing = (ts: number) => {
+    setBriefings((prev) => prev.filter((b) => b.ts !== ts));
+  };
 
-  return { alerts, dismissAlert };
+  return { alerts, dismissAlert, briefings, dismissBriefing };
 }
 
 export function fetchAlertRules() {
