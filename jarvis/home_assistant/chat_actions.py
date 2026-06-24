@@ -39,6 +39,10 @@ def _humanize_entity_action(action: str) -> str:
         "disarm": "deaktiviert",
         "record": "zur Aufnahme aktiviert",
         "stream": "für Streaming angefragt",
+        "set_brightness": "auf neue Helligkeit gesetzt",
+        "set_temperature": "auf neue Temperatur gesetzt",
+        "set_color_temp": "auf neue Farbtemperatur gesetzt",
+        "set_hvac_mode": "auf neuen Modus gesetzt",
     }
     return mapping.get(action, action)
 

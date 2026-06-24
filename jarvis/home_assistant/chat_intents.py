@@ -68,6 +68,7 @@ DEVICE_KIND_SYNONYMS: dict[str, str] = {
     "rolllade": "cover",
     "rollläden": "cover",
     "jalousie": "cover",
+    "jalousien": "cover",
     "vorhang": "cover",
     "vorhänge": "cover",
     # locks
@@ -250,25 +251,55 @@ _AREA_MULTI_WORDS = "|".join(
 )
 
 _AREA_PREP_MULTIWORD = re.compile(
-    rf"\b(?:in(?:\s+(?:der|dem|the))?|im|in\s+the)\s+({_AREA_MULTI_WORDS})\b",
+    rf"\b(?:in(?:\s+(?:der|dem|the))?|im|in\s+the|on\s+the)\s+({_AREA_MULTI_WORDS})\b",
     re.IGNORECASE,
 )
 
 _AREA_PREP_SINGLE = re.compile(
-    rf"\b(?:in(?:\s+(?:der|dem|the))?|im|in\s+the)\s+({_AREA_WORD_PAT})\b",
+    rf"\b(?:in(?:\s+(?:der|dem|the))?|im|in\s+the|on\s+the)\s+({_AREA_WORD_PAT})\b",
+    re.IGNORECASE,
+)
+
+
+# Canonical area words that can appear as compound noun prefixes without a preposition.
+# E.g. "bedroom light", "kitchen thermostat", "turn off bedroom lamp"
+_CANONICAL_AREA_PREFIXES: tuple[str, ...] = tuple(
+    sorted(
+        set(AREA_SYNONYMS.keys()) | {
+            "bedroom", "bathroom", "kitchen", "office", "hallway", "hall",
+            "garage", "basement", "garden", "balcony", "attic",
+            "living_room", "dining_room",
+        },
+        key=len,
+        reverse=True,
+    )
+)
+
+_AREA_COMPOUND_PAT = re.compile(
+    r"\b("
+    + "|".join(re.escape(k) for k in _CANONICAL_AREA_PREFIXES)
+    + r")\s+\w",
     re.IGNORECASE,
 )
 
 
 def _extract_area_from_text(text: str) -> str | None:
     m = _AREA_PREP_MULTIWORD.search(text) or _AREA_PREP_SINGLE.search(text)
-    if not m:
-        return None
-    raw = m.group(1).strip()
-    if not raw or len(raw) > 40:
-        return None
-    normalized = _normalize_area(raw)
-    return normalized if normalized else None
+    if m:
+        raw = m.group(1).strip()
+        if raw and len(raw) <= 40:
+            normalized = _normalize_area(raw)
+            if normalized:
+                return normalized
+    # Compound noun pattern: "bedroom light", "kitchen thermostat"
+    m2 = _AREA_COMPOUND_PAT.search(text)
+    if m2:
+        raw = m2.group(1).strip()
+        if raw and len(raw) <= 40:
+            normalized = _normalize_area(raw)
+            if normalized:
+                return normalized
+    return None
 
 
 _DEVICE_KIND_TERMS = re.compile(
@@ -510,7 +541,9 @@ def _device_action_from_text(normalized: str, kind: str) -> str | None:
     candidates = (
         ("turn_off", ("turn off", "ausschalt", " aus", "aus ", "deaktivier", "abschalten", "ausmachen")),
         ("turn_on", ("turn on", "einschalt", " an", "an ", "aktivier", "anschalten", "anmachen")),
+        ("set_brightness", ("dim", "brighten", "brightness", "helligkeit", "dimmen", "aufhellen", "set brightness", "set to", "auf")),
         ("set_temperature", ("set temperature", "set temp", "temperatur", "grad", "degrees")),
+        ("set_color_temp", ("color temp", "colour temp", "farbtemperatur", "warmweis", "kaltweis", "warm white", "cold white")),
         ("unlock", ("entriegel", "entriegl", "entsperr", " unlock", "oeffne schloss")),
         ("lock", ("verriegel", "sperr", " lock")),
         ("open", ("oeffne", "aufmach")),
@@ -735,13 +768,15 @@ def _action_from_normalized(text: str) -> str | None:
     if re.search(r"\bschalte\b.{0,60}\bein\b", text):
         return "turn_on"
     candidates = (
-        ("turn_off", ("turn off", "ausschalten", "ausmachen", "abschalten", " aus", "aus ", "deaktivier")),
-        ("turn_on", ("turn on", "einschalten", "anschalten", "anmachen", " an ", " an", "aktivier")),
+        ("turn_off", ("turn off", "ausschalten", "ausmachen", "abschalten", " aus", "aus ", "deaktivier", " off")),
+        ("turn_on", ("turn on", "einschalten", "anschalten", "anmachen", " an ", " an", "aktivier", " on")),
+        ("set_brightness", ("dim", "brighten", "brightness", "helligkeit", "dimmen", "aufhellen")),
+        ("set_temperature", ("set temperature", "set temp", "temperatur", "degrees", "grad", "set to", "setze auf")),
+        ("set_color_temp", ("color temp", "colour temp", "farbtemperatur")),
         ("unlock", ("entriegel", "entriegl", "entsperr", " unlock", "oeffne schloss")),
         ("lock", ("verriegel", "sperr", " lock")),
-        ("open", ("oeffne", "aufmach")),
-        ("close", ("schliess", "zumach")),
-        ("set_temperature", ("set temperature", "set temp", "temperatur", "degrees", "grad", "set to", "setze auf")),
+        ("open", ("oeffne", "aufmach", "open ")),
+        ("close", ("schliess", "zumach", "close ")),
     )
     for action, variants in candidates:
         if any(variant in text for variant in variants):
@@ -785,6 +820,61 @@ def _resolve_temperature_action(ctx: HomeAssistantChatContext) -> dict[str, obje
     }
 
 
+def _resolve_brightness_action(ctx: HomeAssistantChatContext) -> dict[str, object] | None:
+    normalized = ctx.normalized
+    if not any(w in normalized for w in ("dim", "brighten", "brightness", "helligkeit", "dimmen", "aufhellen", "prozent", "percent")):
+        return None
+    pct_match = re.search(r"(\d{1,3})\s*(?:%|percent|prozent)", normalized)
+    if not pct_match:
+        return None
+    brightness_pct = int(pct_match.group(1))
+    if brightness_pct < 0 or brightness_pct > 100:
+        return None
+    target_area = _extract_area_from_text(ctx.text)
+    target_kind = _extract_device_kind_from_text(ctx.text)
+    if target_kind is None:
+        target_kind = "light"
+    entities = _find_entities_by_area_kind(ctx, target_area, target_kind)
+    if not entities:
+        result = _find_entity_with_confidence(ctx, target_area, target_kind)
+        if result is None:
+            logger.info("HA intent not matched, falling through to LLM: %s", ctx.text)
+            return None
+        entity, score = result
+        if score < _CONFIDENCE_THRESHOLD_EXECUTE:
+            logger.info("HA intent not matched (confidence %.2f), falling through to LLM: %s", score, ctx.text)
+            return None
+        entities = [entity]
+    if len(entities) == 1:
+        entity = entities[0]
+        return {
+            "action": "entity_action",
+            "params": {
+                "entity_id": str(entity.get("entity_id") or ""),
+                "entity_label": str(entity.get("label") or ""),
+                "action": "set_brightness",
+                "value": brightness_pct,
+                "remote": False,
+                "confidence": _CONFIDENCE_AREA_KIND if target_area else _CONFIDENCE_SYNONYM_KIND,
+            },
+        }
+    entity_ids = [str(e.get("entity_id") or "") for e in entities]
+    entity_labels = [str(e.get("label") or "") for e in entities]
+    area_label = target_area.replace("_", " ") if target_area else ""
+    return {
+        "action": "area_entity_action",
+        "params": {
+            "entity_ids": entity_ids,
+            "entity_labels": entity_labels,
+            "action": "set_brightness",
+            "value": brightness_pct,
+            "area": area_label,
+            "kind": target_kind,
+            "confidence": _CONFIDENCE_AREA_KIND,
+        },
+    }
+
+
 def _resolve_entity_action(ctx: HomeAssistantChatContext) -> dict[str, object] | None:
     normalized = ctx.normalized
     action_normalized = _apply_action_synonyms(normalized)
@@ -795,6 +885,8 @@ def _resolve_entity_action(ctx: HomeAssistantChatContext) -> dict[str, object] |
             "turn off",
             " an",
             " aus",
+            " on",
+            " off",
             " einschalten",
             " ausschalten",
             " schalte ",
@@ -1026,6 +1118,7 @@ RESOLVERS = (
     _resolve_shopping,
     _resolve_discovery,
     _resolve_temperature_action,
+    _resolve_brightness_action,
     _resolve_area_scoped_action,
     _resolve_entity_action,
     _resolve_automation,

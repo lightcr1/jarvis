@@ -953,7 +953,8 @@ class TestNewSynonymExtraction(unittest.TestCase):
         self.assertEqual(_extract_area_from_text("lights in the corridor"), "hall")
 
     def test_extract_area_patio(self):
-        self.assertEqual(_extract_area_from_text("turn off lights on the patio"), None)
+        # "on the patio" now resolves via the extended preposition pattern
+        self.assertEqual(_extract_area_from_text("turn off lights on the patio"), "garden")
 
     def test_extract_area_restroom(self):
         self.assertEqual(_extract_area_from_text("turn off lights in the restroom"), "bathroom")
@@ -966,3 +967,378 @@ class TestNewSynonymExtraction(unittest.TestCase):
 
     def test_area_matches_patio_to_garden(self):
         self.assertTrue(_area_matches("patio", "garden"))
+
+
+class TestCompoundNounAreaExtraction(unittest.TestCase):
+    """Area extraction from compound nouns without a preposition: 'bedroom light', 'kitchen thermostat'."""
+
+    def test_bedroom_light_extracts_bedroom(self):
+        self.assertEqual(_extract_area_from_text("turn off bedroom light"), "bedroom")
+
+    def test_kitchen_lamp_extracts_kitchen(self):
+        self.assertEqual(_extract_area_from_text("switch off kitchen lamp"), "kitchen")
+
+    def test_bedroom_thermostat_extracts_bedroom(self):
+        self.assertEqual(_extract_area_from_text("bedroom thermostat"), "bedroom")
+
+    def test_bathroom_fan_extracts_bathroom(self):
+        self.assertEqual(_extract_area_from_text("bathroom fan"), "bathroom")
+
+    def test_office_light_extracts_office(self):
+        self.assertEqual(_extract_area_from_text("turn on office light"), "office")
+
+    def test_lounge_synonym_in_compound_noun(self):
+        self.assertEqual(_extract_area_from_text("lounge light"), "living_room")
+
+    def test_hallway_synonym_in_compound_noun(self):
+        self.assertEqual(_extract_area_from_text("hallway lamp"), "hall")
+
+    def test_on_the_patio_extracts_garden(self):
+        self.assertEqual(_extract_area_from_text("turn off lights on the patio"), "garden")
+
+    def test_on_the_balcony_extracts_balcony(self):
+        self.assertEqual(_extract_area_from_text("lights on the balcony"), "balcony")
+
+
+class TestCompoundNounAreaRouting(unittest.TestCase):
+    """End-to-end routing for compound noun area patterns."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.service, self.admin_id = _make_service(self.tmpdir.name)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_bedroom_light_routes_to_entity_action(self):
+        _add_entity(self.service, entity_id="light.bed.1", label="Bedroom Light", kind="light", area="bedroom")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "turn off bedroom light",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertIn(data.get("action"), ("entity_action", "area_entity_action"))
+
+    def test_kitchen_lamp_routes_to_entity(self):
+        _add_entity(self.service, entity_id="light.kitchen.1", label="Kitchen Lamp", kind="light", area="kitchen")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "switch off kitchen lamp",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertIn(data.get("action"), ("entity_action", "area_entity_action"))
+
+    def test_patio_on_the_routes_to_garden_entities(self):
+        _add_entity(self.service, entity_id="light.garden.1", label="Garden Light", kind="light", area="garden")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "turn off lights on the patio",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertIn(data.get("action"), ("entity_action", "area_entity_action"))
+
+    def test_postfix_off_bedroom_light(self):
+        _add_entity(self.service, entity_id="light.bed.1", label="Bedroom Light", kind="light", area="bedroom")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "bedroom light off",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertIn(data.get("action"), ("entity_action", "area_entity_action"))
+
+    def test_postfix_on_kitchen_lamp(self):
+        _add_entity(self.service, entity_id="light.kitchen.1", label="Kitchen Lamp", kind="light", area="kitchen")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "kitchen lamp on",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertIn(data.get("action"), ("entity_action", "area_entity_action"))
+
+
+class TestBrightnessActionRouting(unittest.TestCase):
+    """dim/brighten/set brightness commands route to set_brightness action."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.service, self.admin_id = _make_service(self.tmpdir.name)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_dim_to_50_percent_routes_to_set_brightness(self):
+        _add_entity(self.service, entity_id="light.living.1", label="Living Room Light", kind="light", area="living_room")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "dim the living room light to 50%",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertEqual(data.get("action"), "entity_action")
+
+    def test_dim_all_lights_in_bedroom_to_30_percent(self):
+        _add_entity(self.service, entity_id="light.bed.1", label="Bedroom Light 1", kind="light", area="bedroom")
+        _add_entity(self.service, entity_id="light.bed.2", label="Bedroom Light 2", kind="light", area="bedroom")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "dim all lights in the bedroom to 30%",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertEqual(data.get("action"), "area_entity_action")
+
+    def test_german_dimmen_routes_to_set_brightness(self):
+        _add_entity(self.service, entity_id="light.living.1", label="Wohnzimmer Licht", kind="light", area="living_room")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "Licht im Wohnzimmer auf 40 Prozent dimmen",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertIn(data.get("action"), ("entity_action", "area_entity_action"))
+
+    def test_brightness_without_percent_falls_through(self):
+        _add_entity(self.service, entity_id="light.living.1", label="Living Room Light", kind="light", area="living_room")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "brighten the living room light",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        # No percentage given → resolver should not match, falls through to entity action or LLM
+        # (no crash, may or may not route)
+        # The key constraint: no unhandled exception
+        _ = result  # just verifying no crash
+
+    def test_no_entities_for_brightness_falls_through(self):
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "dim all lights in the attic to 50%",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNone(result)
+
+
+class TestDimBrightenSynonymExtraction(unittest.TestCase):
+    """Unit tests for dim/brighten action extraction."""
+
+    def test_dim_maps_to_set_brightness(self):
+        from jarvis.home_assistant.chat_intents import _action_from_normalized
+        self.assertEqual(_action_from_normalized("dim"), "set_brightness")
+
+    def test_brighten_maps_to_set_brightness(self):
+        from jarvis.home_assistant.chat_intents import _action_from_normalized
+        self.assertEqual(_action_from_normalized("brighten"), "set_brightness")
+
+    def test_brightness_maps_to_set_brightness(self):
+        from jarvis.home_assistant.chat_intents import _action_from_normalized
+        self.assertEqual(_action_from_normalized("brightness"), "set_brightness")
+
+    def test_dimmen_maps_to_set_brightness(self):
+        from jarvis.home_assistant.chat_intents import _action_from_normalized
+        self.assertEqual(_action_from_normalized("dimmen"), "set_brightness")
+
+    def test_helligkeit_maps_to_set_brightness(self):
+        from jarvis.home_assistant.chat_intents import _action_from_normalized
+        self.assertEqual(_action_from_normalized("helligkeit"), "set_brightness")
+
+    def test_turn_off_still_maps_correctly(self):
+        from jarvis.home_assistant.chat_intents import _action_from_normalized
+        self.assertEqual(_action_from_normalized("turn off"), "turn_off")
+
+    def test_turn_on_still_maps_correctly(self):
+        from jarvis.home_assistant.chat_intents import _action_from_normalized
+        self.assertEqual(_action_from_normalized("turn on"), "turn_on")
+
+
+class TestAdditionalGermanParity(unittest.TestCase):
+    """German language parity for commands that were missing coverage."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.service, self.admin_id = _make_service(self.tmpdir.name)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_german_heizung_routes_to_climate(self):
+        _add_entity(self.service, entity_id="climate.bed.1", label="Heizung Schlafzimmer", kind="climate", area="bedroom")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "Heizung im Schlafzimmer ausschalten",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertIn(data.get("action"), ("entity_action", "area_entity_action"))
+
+    def test_german_fernseher_routes_to_media(self):
+        _add_entity(self.service, entity_id="media.living.1", label="Wohnzimmer Fernseher", kind="media", area="living_room")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "Fernseher im Wohnzimmer ausschalten",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertIn(data.get("action"), ("entity_action", "area_entity_action"))
+
+    def test_german_jalousie_routes_to_cover(self):
+        _add_entity(self.service, entity_id="cover.bed.1", label="Schlafzimmer Jalousie", kind="cover", area="bedroom")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "Jalousie im Schlafzimmer schließen",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+
+    def test_german_temperatur_setzen(self):
+        _add_entity(self.service, entity_id="climate.living.1", label="Wohnzimmer Thermostat", kind="climate", area="living_room")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "Temperatur im Wohnzimmer auf 22 Grad setzen",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertEqual(data.get("action"), "entity_action")
+
+    def test_german_heute_abend_time_reference(self):
+        self.assertTrue(_has_time_reference("Erinnerung heute Abend"))
+
+    def test_german_in_30_minuten_time_reference(self):
+        self.assertTrue(_has_time_reference("in 30 Minuten ausschalten"))
+
+    def test_tonight_english_time_reference(self):
+        self.assertTrue(_has_time_reference("turn off at night"))
+
+
+class TestMultiDeviceEdgeCases(unittest.TestCase):
+    """Edge cases for multi-device commands."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.service, self.admin_id = _make_service(self.tmpdir.name)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_each_keyword_fans_out_to_all(self):
+        _add_entity(self.service, entity_id="light.a.1", label="Light A", kind="light", area="kitchen")
+        _add_entity(self.service, entity_id="light.a.2", label="Light B", kind="light", area="kitchen")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "turn off each light in the kitchen",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertEqual(data.get("total"), 2)
+
+    def test_both_keyword_fans_out_to_all(self):
+        _add_entity(self.service, entity_id="light.a.1", label="Lamp 1", kind="light", area="office")
+        _add_entity(self.service, entity_id="light.a.2", label="Lamp 2", kind="light", area="office")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "turn off both lights in the office",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertEqual(data.get("total"), 2)
+
+    def test_all_covers_globally(self):
+        _add_entity(self.service, entity_id="cover.a.1", label="Blind A", kind="cover", area="bedroom")
+        _add_entity(self.service, entity_id="cover.b.1", label="Blind B", kind="cover", area="living_room")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "close all blinds",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertEqual(data.get("action"), "area_entity_action")
+        self.assertEqual(data.get("total"), 2)
+
+    def test_all_covers_globally_german(self):
+        _add_entity(self.service, entity_id="cover.a.1", label="Rollo A", kind="cover", area="bedroom")
+        _add_entity(self.service, entity_id="cover.b.1", label="Rollo B", kind="cover", area="living_room")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "alle Jalousien schließen",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNotNone(result)
+        data = result.get("data") or {}
+        self.assertEqual(data.get("total"), 2)
+
+
+class TestConfidenceFallthrough(unittest.TestCase):
+    """Low-confidence inputs must fall through to LLM (return None)."""
+
+    def setUp(self) -> None:
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.service, self.admin_id = _make_service(self.tmpdir.name)
+
+    def tearDown(self) -> None:
+        self.tmpdir.cleanup()
+
+    def test_unrelated_input_returns_none(self):
+        _add_entity(self.service, entity_id="light.bed.1", label="Bedroom Light", kind="light", area="bedroom")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "what is the weather like today",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNone(result)
+
+    def test_area_with_no_matching_entities_returns_none(self):
+        _add_entity(self.service, entity_id="light.kitchen.1", label="Kitchen Light", kind="light", area="kitchen")
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "turn off all lights in the bathroom",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        self.assertIsNone(result)
+
+    def test_brightness_without_percent_and_no_entities_returns_none(self):
+        result = execute_home_assistant_chat_intent(
+            self.service,
+            "dim the lights to half",
+            user_id=self.admin_id,
+            role="admin",
+        )
+        # No percent value found → brightness resolver skips, others don't match → None
+        self.assertIsNone(result)
