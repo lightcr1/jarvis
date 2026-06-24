@@ -88,6 +88,11 @@ class UserPreferencesIn(BaseModel):
     location: str = ""
     notes: list[str] = []
     tts_voice: str = ""
+    morning_briefing_enabled: bool = False
+    morning_briefing_time: str = "07:30"
+    quick_actions: list[str] = []
+    notifications_enabled: bool = True
+    persona_tone: str = "formal"
 
 
 class AdminUserCreateIn(BaseModel):

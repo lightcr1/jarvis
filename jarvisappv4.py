@@ -128,13 +128,14 @@ from jarvis.wakeword_engine import (
 
 @asynccontextmanager
 async def _lifespan(application: FastAPI):  # noqa: ARG001
-    global _auto_backup_task, wakeword_engine
+    global _auto_backup_task, _morning_briefing_task, wakeword_engine
     _WARN_IF_MISSING = ["OPENAI_API_KEY", "JARVIS_PASSPHRASE"]
     for _var in _WARN_IF_MISSING:
         if not os.getenv(_var):
             logging.warning("JARVIS startup: env var %s is not set — dependent features will fail", _var)
     if os.getenv("JARVIS_AUTO_BACKUP_DISABLED", "").strip().lower() not in {"1", "true", "yes"}:
         _auto_backup_task = asyncio.create_task(_auto_backup_loop())
+    _morning_briefing_task = asyncio.create_task(_morning_briefing_loop())
     prune_expired_tokens(_tokens)
     alert_engine.start()
     wakeword_engine = create_wakeword_engine(admin_settings_store.get())
@@ -144,6 +145,8 @@ async def _lifespan(application: FastAPI):  # noqa: ARG001
     alert_engine.stop()
     if _auto_backup_task:
         _auto_backup_task.cancel()
+    if _morning_briefing_task:
+        _morning_briefing_task.cancel()
 
 app = FastAPI(title="Jarvis Backend", lifespan=_lifespan)
 logger = logging.getLogger("jarvis.audio")
@@ -554,6 +557,7 @@ app.include_router(build_voice_router(build_voice_deps(sys.modules[__name__])))
 # Auto-backup scheduler
 # ---------------------------
 _auto_backup_task: asyncio.Task | None = None
+_morning_briefing_task: asyncio.Task | None = None
 
 
 def _write_auto_backup() -> str:
@@ -613,6 +617,82 @@ async def _auto_backup_loop() -> None:
         except Exception as exc:
             logging.getLogger("jarvis").warning("Auto-backup failed: %s", exc)
         await asyncio.sleep(interval_sec)
+
+
+def _next_briefing_seconds(hhmm: str, now) -> float:
+    """Return seconds until the next occurrence of HH:MM from `now`."""
+    from datetime import timedelta
+    try:
+        h, m = (int(x) for x in hhmm.split(":"))
+    except Exception:
+        return 3600.0
+    target = now.replace(hour=h, minute=m, second=0, microsecond=0)
+    if target <= now:
+        target += timedelta(days=1)
+    return (target - now).total_seconds()
+
+
+async def _morning_briefing_loop() -> None:
+    from datetime import datetime as _dt_cls
+    _log = logging.getLogger("jarvis")
+    await asyncio.sleep(30)  # short initial delay
+    while True:
+        try:
+            all_prefs = user_preferences_store.data.get("preferences", {})
+            enabled_users = [
+                (uid, prefs)
+                for uid, prefs in all_prefs.items()
+                if prefs.get("morning_briefing_enabled")
+            ]
+            if not enabled_users:
+                await asyncio.sleep(60)
+                continue
+
+            now = _dt_cls.now()
+            next_secs = min(
+                _next_briefing_seconds(prefs.get("morning_briefing_time", "07:30"), now)
+                for _, prefs in enabled_users
+            )
+            await asyncio.sleep(max(next_secs, 1))
+
+            now = _dt_cls.now()
+            current_hm = now.strftime("%H:%M")
+            for uid, prefs in enabled_users:
+                if prefs.get("morning_briefing_time", "07:30") != current_hm:
+                    continue
+                try:
+                    skill_result = try_skill("briefing", role="standard_user", token=None, granted_permissions=[])
+                    reply_text = (skill_result or {}).get("reply", "Good morning. All systems nominal.")
+                    try:
+                        today = now.date().isoformat()
+                        cal_lines: list[str] = []
+                        for item in home_assistant_store.list_calendar_items():
+                            starts = (item.get("starts_at") or "")[:10]
+                            if starts == today and item.get("title"):
+                                tp = item.get("starts_at", "")
+                                hm_str = tp.split("T")[1][:5] if "T" in tp else ""
+                                cal_lines.append(f"{hm_str} — {item['title']}" if hm_str else item["title"])
+                        if cal_lines:
+                            reply_text = reply_text.rstrip(".") + " Today: " + "; ".join(cal_lines) + "."
+                    except Exception:
+                        pass
+                    from jarvis.api_alerts import get_alert_broadcaster
+                    await get_alert_broadcaster().broadcast({
+                        "type": "briefing",
+                        "user_id": uid,
+                        "text": reply_text,
+                        "ts": int(_startup_time.time()),
+                    })
+                    _log.info("Morning briefing broadcast for user %s", uid)
+                except Exception as exc:
+                    _log.warning("Morning briefing failed for user %s: %s", uid, exc)
+
+            await asyncio.sleep(60)  # avoid re-firing in the same minute
+        except asyncio.CancelledError:
+            break
+        except Exception as exc:
+            _log.warning("Morning briefing loop error: %s", exc)
+            await asyncio.sleep(60)
 
 
 

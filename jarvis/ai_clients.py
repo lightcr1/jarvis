@@ -26,6 +26,7 @@ def build_system_prompt(
     voice_mode: bool = False,
     location: str | None = None,
     notes: list[str] | None = None,
+    persona_tone: str = "formal",
 ) -> str:
     name_line = f" Address the user as '{user_name}'." if user_name else ""
     context_parts = []
@@ -39,6 +40,9 @@ def build_system_prompt(
         "Use absolutely NO markdown formatting — no asterisks, no hashtags, no backticks, no bullet points, no numbered lists. "
         "Write for speech only. Keep to one or two sentences maximum."
     ) if voice_mode else ""
+    tone_line = (
+        "\n\nTONE ADJUSTMENT: Adopt a slightly warmer, more conversational tone — still precise, but less terse."
+    ) if persona_tone == "casual" else ""
     return (
         "You are J.A.R.V.I.S. — Just A Rather Very Intelligent System — the personal AI of this "
         "household and infrastructure network. You embody the JARVIS from the Iron Man films: calm, "
@@ -61,9 +65,8 @@ def build_system_prompt(
         "Never break character."
         f"{context_line}"
         f"{voice_line}"
+        f"{tone_line}"
     )
-
-
 def get_provider() -> str:
     configured = (os.getenv("LLM_PROVIDER") or "").lower().strip()
     if configured:

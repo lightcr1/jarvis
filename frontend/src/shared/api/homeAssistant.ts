@@ -557,3 +557,17 @@ export function addHomeAssistantShoppingListItem(body: { title: string; list_id?
     { method: "POST", includeUser: true, body },
   );
 }
+
+export function fetchHomeAssistantScenes() {
+  return apiRequest<{ scenes: { id: string; name: string; entity_id: string; state: string | null }[] }>(
+    "/home-assistant/scenes",
+    { includeUser: true },
+  );
+}
+
+export function activateHomeAssistantScene(sceneId: string) {
+  return apiRequest<{ status: string; scene_id: string }>(
+    `/home-assistant/scenes/${sceneId}/activate`,
+    { method: "POST", includeUser: true },
+  );
+}

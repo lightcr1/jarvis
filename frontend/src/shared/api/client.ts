@@ -19,6 +19,11 @@ export type UserPreferences = {
   location?: string;
   notes?: string[];
   tts_voice?: string;
+  morning_briefing_enabled?: boolean;
+  morning_briefing_time?: string;
+  quick_actions?: string[];
+  notifications_enabled?: boolean;
+  persona_tone?: "formal" | "casual";
 };
 
 export type RequestOptions = {

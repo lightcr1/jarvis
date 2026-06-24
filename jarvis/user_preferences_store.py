@@ -16,6 +16,11 @@ DEFAULT_PREFERENCES = {
     "location": "",
     "notes": [],
     "tts_voice": "",  # empty = use server default (EDGE_TTS_VOICE env var)
+    "morning_briefing_enabled": False,
+    "morning_briefing_time": "07:30",
+    "quick_actions": ["Briefing", "System status", "Weather"],
+    "notifications_enabled": True,
+    "persona_tone": "formal",
 }
 
 # Curated voices — best options for J.A.R.V.I.S. feel
@@ -81,6 +86,11 @@ class UserPreferencesStore:
             "location": str(payload.get("location", current.get("location", ""))).strip(),
             "notes": list(payload.get("notes", current.get("notes") or [])),
             "tts_voice": str(payload.get("tts_voice", current.get("tts_voice", ""))).strip(),
+            "morning_briefing_enabled": bool(payload.get("morning_briefing_enabled", current.get("morning_briefing_enabled", False))),
+            "morning_briefing_time": str(payload.get("morning_briefing_time", current.get("morning_briefing_time", "07:30"))).strip() or "07:30",
+            "quick_actions": list(payload.get("quick_actions", current.get("quick_actions") or ["Briefing", "System status", "Weather"])),
+            "notifications_enabled": bool(payload.get("notifications_enabled", current.get("notifications_enabled", True))),
+            "persona_tone": str(payload.get("persona_tone", current.get("persona_tone", "formal"))).strip() if str(payload.get("persona_tone", current.get("persona_tone", "formal"))) in {"formal", "casual"} else "formal",
             "updated_at": int(time.time()),
         }
         self.data.setdefault("preferences", {})[user_id] = merged

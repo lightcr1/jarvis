@@ -505,4 +505,29 @@ def build_home_assistant_router(deps: dict) -> APIRouter:
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
 
+    @router.get("/home-assistant/scenes")
+    def home_assistant_scenes(x_jarvis_session: str | None = Header(default=None)):
+        session = deps["require_identity_session"](x_jarvis_session)
+        try:
+            return current("home_assistant_service").list_scenes(
+                user_id=session["user"]["id"],
+                role=session["user"]["role"],
+            )
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.post("/home-assistant/scenes/{scene_id}/activate")
+    def home_assistant_activate_scene(scene_id: str, x_jarvis_session: str | None = Header(default=None)):
+        session = deps["require_identity_session"](x_jarvis_session)
+        try:
+            return current("home_assistant_service").activate_scene(
+                scene_id,
+                user_id=session["user"]["id"],
+                role=session["user"]["role"],
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
     return router

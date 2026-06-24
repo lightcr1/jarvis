@@ -4,14 +4,25 @@ import {
   showToast, useAutoResize,
   IconMic, IconSettings, IconPlus, IconSearch, IconSend,
   IconAttach, IconTool, IconChevDown, IconMenu, IconCopy, IconCheck, IconX,
+  IconDownload, IconPencil,
 } from './jarvis-shared';
 import {
   listChatSessions, createChatSession, streamChatMessage, getChatSession,
   renameChatSession, deleteChatSession, synthesizeSpeech, getDailyBriefing,
 } from '../shared/api/chat';
 import type { ChatSessionListItem } from '../shared/api/chat';
-import { getStoredPreferences, setStoredPreferences, getStoredUser, apiRequest } from '../shared/api/client';
+import { getStoredPreferences, setStoredPreferences, savePreferences, getStoredUser, apiRequest, consumePendingChatPrefill } from '../shared/api/client';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
+
+export function serializeChatToMarkdown(title: string, messages: Array<{ role: string; content: string; time: string }>): string {
+  const date = new Date().toLocaleDateString('en-CA');
+  const header = `# JARVIS Chat — ${title}\n*Exported ${date}*\n\n---\n\n`;
+  if (!messages.length) return header;
+  return header + messages.map(m => {
+    const label = m.role === 'user' ? '**You:**' : '**JARVIS:**';
+    return `${label} ${m.content.replace(/▋$/, '')}`;
+  }).join('\n\n');
+}
 
 type Msg = {
   id: number;
@@ -326,6 +337,10 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
   const [lastRoute, setLastRoute] = useState<string>('');
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingTitle, setEditingTitle] = useState('');
+  const [showQuickEdit, setShowQuickEdit] = useState(false);
+  const [quickEditInput, setQuickEditInput] = useState('');
+  const [quickActions, setQuickActions] = useState<string[]>(() => getStoredPreferences().quick_actions ?? ['Briefing', 'System status', 'Weather']);
+  const pendingPrefillRef = useRef<string | null>(null);
   const [hoveredSessionId, setHoveredSessionId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
@@ -363,6 +378,9 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
         })
         .catch(() => {});
     }
+
+    const prefill = consumePendingChatPrefill();
+    if (prefill) { pendingPrefillRef.current = prefill; }
   }, []);
 
   useEffect(() => {
@@ -499,6 +517,12 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
       setSending(false);
     }
   };
+
+  // Drain any prefill set by the command palette before mount
+  useEffect(() => {
+    const prefill = pendingPrefillRef.current;
+    if (prefill) { pendingPrefillRef.current = null; void handleSend(prefill); }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleRename = async (targetId: string, nextTitle: string) => {
     const clean = nextTitle.trim();
@@ -638,6 +662,20 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
                 ⏱ {timerCount}
               </div>
             )}
+            {sessionId && msgs.length > 0 && (
+              <button onClick={() => {
+                const md = serializeChatToMarkdown(active, msgs);
+                const blob = new Blob([md], { type: 'text/markdown' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = `jarvis-chat-${new Date().toISOString().slice(0,10)}.md`;
+                a.click(); URL.revokeObjectURL(url);
+              }} title="Export chat as Markdown" style={{ background: 'none', border: 'none', cursor: 'pointer', color: J.textMuted, padding: 5, display: 'flex' }}
+                onMouseEnter={e => { e.currentTarget.style.color = J.amber; }}
+                onMouseLeave={e => { e.currentTarget.style.color = J.textMuted; }}>
+                <IconDownload size={14} />
+              </button>
+            )}
             <button onClick={() => onNavigate('orb')} className="j-btn"
               style={{ background: J.bg2, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 7, padding: '5px 11px', fontSize: 12 }}
               onMouseEnter={e => { e.currentTarget.style.borderColor = J.borderHover; e.currentTarget.style.color = J.text; }}
@@ -656,14 +694,7 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
               <div style={{ fontSize: 16, fontWeight: 500, color: J.textSec, marginBottom: 6 }}>J.A.R.V.I.S. Online</div>
               <div style={{ fontSize: 13, marginBottom: 28 }}>All systems operational. How can I assist?</div>
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'center', maxWidth: 480, margin: '0 auto' }}>
-                {[
-                  'Briefing',
-                  'System status',
-                  getStoredPreferences().location ? `Weather in ${getStoredPreferences().location}` : 'Weather forecast',
-                  'Days until Christmas',
-                  'Docker containers', 'Disk usage',
-                  'Generate UUID', 'Flip a coin', 'Skills',
-                ].map(q => (
+                {quickActions.map(q => (
                   <button key={q} onClick={() => void handleSend(q)}
                     style={{ background: J.bg2, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 20, padding: '6px 14px', fontSize: 12, cursor: 'pointer', transition: 'all .15s' }}
                     onMouseEnter={e => { e.currentTarget.style.borderColor = J.borderAccent; e.currentTarget.style.color = J.amber; }}
@@ -671,6 +702,12 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
                     {q}
                   </button>
                 ))}
+                <button onClick={() => setShowQuickEdit(true)} title="Edit quick actions"
+                  style={{ background: 'none', border: `1px solid ${J.border}`, color: J.textMuted, borderRadius: 20, padding: '6px 10px', fontSize: 12, cursor: 'pointer', transition: 'all .15s', display: 'flex', alignItems: 'center' }}
+                  onMouseEnter={e => { e.currentTarget.style.borderColor = J.borderAccent; e.currentTarget.style.color = J.amber; }}
+                  onMouseLeave={e => { e.currentTarget.style.borderColor = J.border; e.currentTarget.style.color = J.textMuted; }}>
+                  <IconPencil size={12} />
+                </button>
               </div>
             </div>
           )}
@@ -678,8 +715,61 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
           <div ref={endRef} />
         </div>
 
+        {msgs.length > 0 && (
+          <div style={{ borderTop: `1px solid ${J.border}`, padding: '6px 16px', display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', background: J.bg1 }}>
+            {quickActions.map(q => (
+              <button key={q} onClick={() => void handleSend(q)} disabled={sending}
+                style={{ background: J.bg2, border: `1px solid ${J.border}`, color: J.textMuted, borderRadius: 14, padding: '3px 10px', fontSize: 11, cursor: 'pointer', transition: 'all .15s' }}
+                onMouseEnter={e => { e.currentTarget.style.borderColor = J.borderAccent; e.currentTarget.style.color = J.amber; }}
+                onMouseLeave={e => { e.currentTarget.style.borderColor = J.border; e.currentTarget.style.color = J.textMuted; }}>
+                {q}
+              </button>
+            ))}
+            <button onClick={() => setShowQuickEdit(true)} title="Edit quick actions"
+              style={{ background: 'none', border: 'none', color: J.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', padding: '3px 4px', borderRadius: 6 }}
+              onMouseEnter={e => { e.currentTarget.style.color = J.amber; }}
+              onMouseLeave={e => { e.currentTarget.style.color = J.textMuted; }}>
+              <IconPencil size={11} />
+            </button>
+          </div>
+        )}
         <Composer onSend={text => void handleSend(text)} sending={sending} onStop={handleStop} textareaRef={composerRef} />
       </div>
+
+      {showQuickEdit && (
+        <OverlayDialog title="Quick Actions" eyebrow="Customize" onClose={() => setShowQuickEdit(false)}
+          actions={
+            <>
+              <button onClick={() => setShowQuickEdit(false)} style={{ padding: '6px 14px', fontSize: 12, borderRadius: 6, cursor: 'pointer', background: 'transparent', color: J.textSec, border: `1px solid ${J.border}` }}>Cancel</button>
+              <button onClick={() => {
+                const prefs = getStoredPreferences();
+                void savePreferences({ ...prefs, quick_actions: quickActions });
+                setShowQuickEdit(false);
+              }} style={{ padding: '6px 16px', fontSize: 12, fontWeight: 600, borderRadius: 6, cursor: 'pointer', background: J.amber, color: J.bg0, border: 'none' }}>Save</button>
+            </>
+          }>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 12 }}>
+            {quickActions.map((q, i) => (
+              <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ flex: 1, fontSize: 13, color: J.textSec, background: J.bg3, borderRadius: 7, padding: '6px 10px' }}>{q}</span>
+                <button onClick={() => setQuickActions(prev => prev.filter((_, j) => j !== i))}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: J.textMuted, display: 'flex' }}
+                  onMouseEnter={e => { e.currentTarget.style.color = J.error; }}
+                  onMouseLeave={e => { e.currentTarget.style.color = J.textMuted; }}>
+                  <IconX size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+          <div style={{ display: 'flex', gap: 6 }}>
+            <input className="j-input" value={quickEditInput} onChange={e => setQuickEditInput(e.target.value)}
+              onKeyDown={e => { if (e.key === 'Enter' && quickEditInput.trim()) { setQuickActions(prev => [...prev, quickEditInput.trim()]); setQuickEditInput(''); } }}
+              placeholder="Add action..." style={{ flex: 1, borderRadius: 7, padding: '7px 10px', fontSize: 13 }} />
+            <button onClick={() => { if (quickEditInput.trim()) { setQuickActions(prev => [...prev, quickEditInput.trim()]); setQuickEditInput(''); } }}
+              style={{ background: J.amber, color: J.bg0, border: 'none', borderRadius: 7, padding: '7px 14px', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Add</button>
+          </div>
+        </OverlayDialog>
+      )}
 
       {billingConfirm && (
         <OverlayDialog

@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch } from './jarvis-shared';
 import { GreetingOverlay } from '../components/GreetingOverlay';
 import { OnboardingModal, shouldShowOnboarding } from '../components/OnboardingModal';
 import { LoginScreen } from './LoginScreen';
@@ -11,9 +11,10 @@ import { ProxmoxScreen } from './ProxmoxScreen';
 import { ServiceHubScreen } from './ServiceHubScreen';
 import { SettingsScreen } from './SettingsScreen';
 import { DocsScreen } from './DocsScreen';
-import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode } from '../shared/api/client';
+import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill } from '../shared/api/client';
 import { useJarvisAlerts } from '../shared/api/alerts';
 import { useJarvisLiveStatus } from '../shared/api/status';
+import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
 type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'services' | 'settings' | 'docs';
 
@@ -49,7 +50,7 @@ const NAV_GUEST: Array<{ id: Screen; label: string; icon: (p: { size?: number })
   document.head.appendChild(s);
 })();
 
-function NavRail({ current, onNav, onLogout, nav, isGuest, isAdmin }: { current: Screen; onNav: (s: Screen) => void; onLogout: () => void; nav: typeof NAV_ALL; isGuest: boolean; isAdmin: boolean }) {
+function NavRail({ current, onNav, onLogout, nav, isGuest, isAdmin, unreadCount }: { current: Screen; onNav: (s: Screen) => void; onLogout: () => void; nav: typeof NAV_ALL; isGuest: boolean; isAdmin: boolean; unreadCount: number }) {
   const [showMenu, setShowMenu] = useState(false);
   const [hovered, setHovered] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(() => (getStoredPreferences().theme ?? 'dark') === 'dark');
@@ -79,8 +80,9 @@ function NavRail({ current, onNav, onLogout, nav, isGuest, isAdmin }: { current:
               <button onClick={() => onNav(item.id)} aria-label={item.label}
                 onMouseEnter={e => { setHovered(item.id); if (!active) { e.currentTarget.style.background = J.bg2; e.currentTarget.style.color = J.textSec; } }}
                 onMouseLeave={e => { setHovered(null); if (!active) { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = J.textMuted; } }}
-                style={{ width: 44, height: 44, borderRadius: 10, background: active ? J.bg3 : 'none', border: `1px solid ${active ? J.border : 'transparent'}`, color: active ? J.amber : J.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .12s' }}>
+                style={{ width: 44, height: 44, borderRadius: 10, background: active ? J.bg3 : 'none', border: `1px solid ${active ? J.border : 'transparent'}`, color: active ? J.amber : J.textMuted, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .12s', position: 'relative' }}>
                 <item.icon size={17} />
+                {item.id === 'services' && <Badge count={unreadCount} />}
               </button>
               {hovered === item.id && (
                 <div style={{ position: 'absolute', left: 50, top: '50%', transform: 'translateY(-50%)', background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 6, padding: '4px 10px', fontSize: 12, color: J.textSec, whiteSpace: 'nowrap', pointerEvents: 'none', boxShadow: '0 4px 12px rgba(0,0,0,0.35)', zIndex: 100, animation: 'fadeIn .1s ease' }}>
@@ -148,7 +150,7 @@ function NavRail({ current, onNav, onLogout, nav, isGuest, isAdmin }: { current:
   );
 }
 
-function BottomNav({ current, onNav, nav }: { current: Screen; onNav: (s: Screen) => void; nav: typeof NAV_ALL }) {
+function BottomNav({ current, onNav, nav, unreadCount }: { current: Screen; onNav: (s: Screen) => void; nav: typeof NAV_ALL; unreadCount: number }) {
   const bottomItems = nav.filter(n => ['chat', 'orb', 'home', 'services', 'settings', 'docs'].includes(n.id)).slice(0, 5);
   return (
     <nav className="nav-bottom" aria-label="Main navigation" style={{ position: 'fixed', bottom: 0, left: 0, right: 0, height: 60, background: J.bg1, borderTop: `1px solid ${J.border}`, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-around', zIndex: 100, paddingBottom: 'env(safe-area-inset-bottom)' }}>
@@ -156,13 +158,91 @@ function BottomNav({ current, onNav, nav }: { current: Screen; onNav: (s: Screen
         const active = current === item.id;
         return (
           <button key={item.id} onClick={() => onNav(item.id)}
-            style={{ flex: 1, height: '100%', background: 'none', border: 'none', color: active ? J.amber : J.textMuted, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, transition: 'color .12s' }}>
-            <item.icon size={18} />
+            style={{ flex: 1, height: '100%', background: 'none', border: 'none', color: active ? J.amber : J.textMuted, cursor: 'pointer', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 3, transition: 'color .12s', position: 'relative' }}>
+            <span style={{ position: 'relative', display: 'inline-flex' }}>
+              <item.icon size={18} />
+              {item.id === 'services' && <Badge count={unreadCount} />}
+            </span>
             <span style={{ fontSize: 10, fontWeight: 500 }}>{item.label}</span>
           </button>
         );
       })}
     </nav>
+  );
+}
+
+function CommandPalette({ nav, onNav, onClose }: { nav: typeof NAV_ALL; onNav: (s: Screen) => void; onClose: () => void }) {
+  const [query, setQuery] = useState('');
+  const [idx, setIdx] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const prefs = getStoredPreferences();
+  const quickActions = prefs.quick_actions ?? ['Briefing', 'System status', 'Weather'];
+
+  const screenItems = nav.map(n => ({ kind: 'screen' as const, id: n.id, label: n.label }));
+  const actionItems = quickActions.map(q => ({ kind: 'action' as const, id: q, label: q }));
+  const all = [...screenItems, ...actionItems];
+  const filtered = query
+    ? all.filter(i => i.label.toLowerCase().includes(query.toLowerCase()))
+    : all;
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+  useEffect(() => { setIdx(0); }, [query]);
+
+  const select = (item: typeof filtered[0]) => {
+    if (item.kind === 'screen') { onNav(item.id as Screen); }
+    else { setPendingChatPrefill(item.id); onNav('chat'); }
+    onClose();
+  };
+
+  return (
+    <OverlayDialog title="Command Palette" onClose={onClose}>
+      <div style={{ marginBottom: 12 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, background: J.bg3, border: `1px solid ${J.border}`, borderRadius: 8, padding: '8px 12px' }}>
+          <span style={{ color: J.textMuted, display: 'flex' }}><IconSearch size={14} /></span>
+          <input ref={inputRef} value={query} onChange={e => setQuery(e.target.value)}
+            placeholder="Search screens and actions..."
+            onKeyDown={e => {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setIdx(i => Math.min(i + 1, filtered.length - 1)); }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setIdx(i => Math.max(i - 1, 0)); }
+              if (e.key === 'Enter' && filtered[idx]) select(filtered[idx]);
+            }}
+            style={{ background: 'none', border: 'none', outline: 'none', fontSize: 14, color: J.text, flex: 1, fontFamily: 'inherit' }} />
+        </div>
+      </div>
+      <div style={{ maxHeight: 280, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {filtered.map((item, i) => (
+          <button key={item.kind + item.id} onClick={() => select(item)}
+            style={{ width: '100%', textAlign: 'left', background: i === idx ? J.bg3 : 'none', border: `1px solid ${i === idx ? J.border : 'transparent'}`, borderRadius: 7, padding: '9px 12px', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', transition: 'background .08s' }}
+            onMouseEnter={() => setIdx(i)}>
+            <span style={{ fontSize: 13, color: J.text }}>{item.label}</span>
+            <span style={{ fontSize: 11, color: J.textMuted, background: J.bg4, padding: '2px 7px', borderRadius: 4 }}>{item.kind === 'screen' ? 'screen' : 'action'}</span>
+          </button>
+        ))}
+        {filtered.length === 0 && <div style={{ fontSize: 13, color: J.textMuted, padding: '12px 0', textAlign: 'center' }}>No matches</div>}
+      </div>
+    </OverlayDialog>
+  );
+}
+
+function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
+  const shortcuts = [
+    { keys: 'Cmd/Ctrl+K', desc: 'Open command palette' },
+    { keys: '?', desc: 'Show keyboard shortcuts' },
+    { keys: 'Escape', desc: 'Close overlays / cancel' },
+    { keys: '/', desc: 'Focus chat composer' },
+    { keys: 'Space', desc: 'Toggle mic (Orb screen)' },
+  ];
+  return (
+    <OverlayDialog title="Keyboard Shortcuts" onClose={onClose}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {shortcuts.map(s => (
+          <div key={s.keys} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+            <span style={{ fontSize: 13, color: J.textSec }}>{s.desc}</span>
+            <kbd style={{ fontFamily: 'JetBrains Mono,monospace', fontSize: 11, background: J.bg3, border: `1px solid ${J.border}`, borderRadius: 5, padding: '2px 8px', color: J.amber }}>{s.keys}</kbd>
+          </div>
+        ))}
+      </div>
+    </OverlayDialog>
   );
 }
 
@@ -183,6 +263,10 @@ export function JarvisApp() {
     if (requested && publicScreens.includes(requested)) return requested;
     return 'login';
   });
+  const [unreadCount, setUnreadCount] = useState(0);
+  const [showPalette, setShowPalette] = useState(false);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const prevAlertCount = useRef(0);
 
   const nav = guest ? NAV_GUEST : NAV_ALL;
   const GREETING_COOLDOWN_MS = 4 * 60 * 60 * 1000;
@@ -204,6 +288,16 @@ export function JarvisApp() {
     }
   }, []);
 
+  // Track new alerts for the unread badge
+  useEffect(() => {
+    const notificationsEnabled = getStoredPreferences().notifications_enabled !== false;
+    if (!notificationsEnabled) return;
+    if (alerts.length > prevAlertCount.current) {
+      setUnreadCount(c => c + (alerts.length - prevAlertCount.current));
+    }
+    prevAlertCount.current = alerts.length;
+  }, [alerts]);
+
   // Auto-redirect to login when the server restarts (session no longer valid)
   useEffect(() => {
     const handleSessionExpired = () => {
@@ -219,6 +313,19 @@ export function JarvisApp() {
     const handleShowOnboarding = () => setShowOnboarding(true);
     window.addEventListener('jarvis:show-onboarding', handleShowOnboarding);
     return () => window.removeEventListener('jarvis:show-onboarding', handleShowOnboarding);
+  }, []);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === 'k' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); setShowPalette(v => !v); return; }
+      if (e.key === 'Escape') { setShowPalette(false); setShowShortcuts(false); return; }
+      const tag = (document.activeElement as HTMLElement)?.tagName;
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+      if (e.key === '?') { setShowShortcuts(v => !v); }
+    };
+    window.addEventListener('keydown', handler);
+    return () => window.removeEventListener('keydown', handler);
   }, []);
 
   const handleLogin = () => {
@@ -251,6 +358,7 @@ export function JarvisApp() {
     const guestAllowed: Screen[] = ['chat', 'docs', 'settings', 'login'];
     if (guest && !guestAllowed.includes(s as Screen)) return;
     setScreen(s as Screen);
+    setUnreadCount(0);
   };
 
   // Mobile bottom-nav padding
@@ -262,11 +370,13 @@ export function JarvisApp() {
     return () => window.removeEventListener('resize', update);
   }, []);
 
+  const notificationsEnabled = getStoredPreferences().notifications_enabled !== false;
+
   useEffect(() => {
-    if (!alerts.length) return;
+    if (!alerts.length || !notificationsEnabled) return;
     const timers = alerts.map((alert) => window.setTimeout(() => dismissAlert(alert.id), 7000));
     return () => { timers.forEach(timer => window.clearTimeout(timer)); };
-  }, [alerts, dismissAlert]);
+  }, [alerts, dismissAlert, notificationsEnabled]);
 
   if (screen === 'login') return <LoginScreen onLogin={handleLogin} onGuest={handleGuestLogin} />;
 
@@ -274,8 +384,10 @@ export function JarvisApp() {
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
       {showGreeting && <GreetingOverlay onDismiss={() => { setShowGreeting(false); localStorage.setItem(GREETING_KEY, String(Date.now())); }} />}
       {showOnboarding && <OnboardingModal onDismiss={() => setShowOnboarding(false)} />}
+      {showPalette && <CommandPalette nav={nav} onNav={navigate as (s: Screen) => void} onClose={() => setShowPalette(false)} />}
+      {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
       <ToastContainer />
-      <NavRail current={screen} onNav={navigate as (s: Screen) => void} onLogout={handleLogout} nav={nav} isGuest={guest} isAdmin={isAdmin} />
+      <NavRail current={screen} onNav={navigate as (s: Screen) => void} onLogout={handleLogout} nav={nav} isGuest={guest} isAdmin={isAdmin} unreadCount={notificationsEnabled ? unreadCount : 0} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', paddingBottom: mobilePad ? 60 : 0, position: 'relative' }}>
         {screen !== 'chat' && screen !== 'orb' && (
           <div style={{ position: 'absolute', top: 10, right: 14, zIndex: 30, display: 'flex', alignItems: 'center', gap: 7, background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 999, padding: '6px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
@@ -292,21 +404,26 @@ export function JarvisApp() {
           {screen === 'docs'     && <DocsScreen />}
           {screen === 'settings' && <SettingsScreen />}
         </ErrorBoundary>
-        <div style={{ position: 'absolute', right: 14, bottom: mobilePad ? 74 : 14, zIndex: 40, display: 'flex', flexDirection: 'column', gap: 10, pointerEvents: 'none' }}>
-          {alerts.map(alert => (
-            <div key={alert.id} style={{ width: 'min(340px, calc(100vw - 28px))', background: J.bg2, border: `1px solid ${alert.level === 'warning' ? J.warn : J.border}`, borderLeft: `3px solid ${alert.level === 'warning' ? J.warn : J.blue}`, borderRadius: 12, padding: '12px 14px', boxShadow: '0 12px 32px rgba(0,0,0,0.28)', pointerEvents: 'auto' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-                <div style={{ fontSize: 12, fontWeight: 600, color: J.text }}>{alert.title}</div>
-                <button onClick={() => dismissAlert(alert.id)} aria-label="Dismiss alert" style={{ background: 'none', border: 'none', color: J.textMuted, cursor: 'pointer', display: 'flex', padding: 0 }}>
-                  <IconX size={14} />
-                </button>
+        {notificationsEnabled && (
+          <div style={{ position: 'absolute', right: 14, bottom: mobilePad ? 74 : 14, zIndex: 40, display: 'flex', flexDirection: 'column', gap: 10, pointerEvents: 'none' }}>
+            {alerts.map(alert => (
+              <div key={alert.id} style={{ width: 'min(340px, calc(100vw - 28px))', background: J.bg2, border: `1px solid ${alert.level === 'warning' ? J.warn : J.border}`, borderLeft: `3px solid ${alert.level === 'warning' ? J.warn : J.blue}`, borderRadius: 12, padding: '12px 14px', boxShadow: '0 12px 32px rgba(0,0,0,0.28)', pointerEvents: 'auto' }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span style={{ color: alert.level === 'warning' ? J.warn : J.blue, display: 'flex' }}><IconBell size={12} /></span>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: J.text }}>{alert.title}</div>
+                  </div>
+                  <button onClick={() => dismissAlert(alert.id)} aria-label="Dismiss alert" style={{ background: 'none', border: 'none', color: J.textMuted, cursor: 'pointer', display: 'flex', padding: 0 }}>
+                    <IconX size={14} />
+                  </button>
+                </div>
+                <div style={{ fontSize: 12, color: J.textSec, lineHeight: 1.5 }}>{alert.message}</div>
               </div>
-              <div style={{ fontSize: 12, color: J.textSec, lineHeight: 1.5 }}>{alert.message}</div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </div>
-      <BottomNav current={screen} onNav={navigate as (s: Screen) => void} nav={nav} />
+      <BottomNav current={screen} onNav={navigate as (s: Screen) => void} nav={nav} unreadCount={notificationsEnabled ? unreadCount : 0} />
     </div>
   );
 }

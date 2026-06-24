@@ -373,6 +373,73 @@ def block_write_if_unauthorized(
     return None
 
 
+
+def _parse_duration(text: str) -> tuple[int, str] | None:
+    t = text.strip()
+
+    # Compound shorthand: "1h30m", "2h15min"
+    _hm_plain = re.match(
+        r"^(?:.*?\s)?(\d+)h(\d+)m(?:in)?\b(.*)",
+        t, re.I,
+    )
+    if _hm_plain:
+        hrs, mins = int(_hm_plain.group(1)), int(_hm_plain.group(2))
+        rest = (_hm_plain.group(3) or "").strip()
+        secs = hrs * 3600 + mins * 60
+        if secs > 0:
+            label_m = re.match(r"(?:to|that|about|zu|dass?|über|:)\s*(.+)", rest, re.I)
+            return secs, label_m.group(1).strip().rstrip(".,!?") if label_m else ""
+
+    # Compound words: "1 hour 30 minutes" / "1 stunde 30 minuten"
+    _hm_words = re.search(
+        r"(\d+)\s*(?:h(?:r|our|ours|std)?|stunden?)\s+(\d+)\s*(?:min(?:ute|utes|uten)?)\b",
+        t, re.I,
+    )
+    if _hm_words:
+        secs = int(_hm_words.group(1)) * 3600 + int(_hm_words.group(2)) * 60
+        if secs > 0:
+            rest = t[_hm_words.end():].strip()
+            label_m = re.match(r"(?:to|that|about|zu|dass?|über|:)\s*(.+)", rest, re.I)
+            return secs, label_m.group(1).strip().rstrip(".,!?") if label_m else ""
+
+    # Single-unit trigger patterns (EN + DE)
+    _trigger = re.search(
+        r"(?:"
+        r"set\s+(?:a\s+)?timer\s+(?:for\s+)?"
+        r"|timer\s+(?:for\s+|für\s+)?"
+        r"|remind\s+me\s+in\s+"
+        r"|in\s+"
+        r"|stell\s+(?:einen\s+)?timer\s+(?:auf\s+|für\s+)?"
+        r"|erinnere\s+mich\s+in\s+"
+        r"|timer\s+auf\s+"
+        r")"
+        r"(\d+)\s*"
+        r"(second|seconds|sec|sekunde|sekunden"
+        r"|minute|minutes|min|minuten"
+        r"|hour|hours|hr|stunde|stunden|std|h|s|m)\b",
+        t, re.I,
+    )
+    if not _trigger:
+        return None
+
+    n = int(_trigger.group(1))
+    unit = _trigger.group(2).lower()
+    rest = t[_trigger.end():].strip()
+
+    if unit in {"hour", "hours", "hr", "h", "stunde", "stunden", "std"}:
+        secs = n * 3600
+    elif unit in {"minute", "minutes", "min", "m", "minuten"}:
+        secs = n * 60
+    else:
+        secs = n
+
+    if secs <= 0:
+        return None
+
+    label_m = re.match(r"(?:to|that|about|zu|dass?|über|:)\s*(.+)", rest, re.I)
+    return secs, label_m.group(1).strip().rstrip(".,!?") if label_m else ""
+
+
 def try_skill(
     text: str,
     *,
@@ -1843,33 +1910,33 @@ def try_skill(
         return {"reply": reply.strip(), "data": {"route": "weather", **w}}
 
     # ── Timer / Reminder ──────────────────────────────────────────────────────
-    _timer_m = re.match(
-        r"(?:set\s+a?\s*)?timer\s+(?:for\s+)?(\d+)\s*(second|seconds|sec|s|minute|minutes|min|m|hour|hours|hr|h)\b",
-        t, re.I,
-    )
-    _remind_m = re.match(
-        r"remind\s+me\s+in\s+(\d+)\s*(second|seconds|sec|s|minute|minutes|min|m|hour|hours|hr|h)\s+"
-        r"(?:to|that|about|zu|dass?|über)\s+(.+)",
-        t, re.I,
-    )
-    if _timer_m or _remind_m:
-        if _remind_m:
-            n, unit_raw, label = int(_remind_m.group(1)), _remind_m.group(2).lower(), _remind_m.group(3).strip().rstrip(".,!?")
+    _timer_parsed = _parse_duration(text)
+    if _timer_parsed is not None:
+        secs, label = _timer_parsed
+        delay_ms = secs * 1000
+        is_de = any(kw in t for kw in ("stell", "erinnere", "minuten", "stunden", "sekunden", "std", "timer für", "für timer"))
+        h_part, rem = divmod(secs, 3600)
+        m_part, s_part = divmod(rem, 60)
+        if h_part and m_part:
+            unit_disp = (
+                f"{h_part} Stunde{'n' if h_part != 1 else ''} {m_part} Minute{'n' if m_part != 1 else ''}"
+                if is_de else
+                f"{h_part} hour{'s' if h_part != 1 else ''} {m_part} minute{'s' if m_part != 1 else ''}"
+            )
+        elif h_part:
+            unit_disp = f"{h_part} Stunde{'n' if h_part != 1 else ''}" if is_de else f"{h_part} hour{'s' if h_part != 1 else ''}"
+        elif m_part:
+            unit_disp = f"{m_part} Minute{'n' if m_part != 1 else ''}" if is_de else f"{m_part} minute{'s' if m_part != 1 else ''}"
         else:
-            n, unit_raw, label = int(_timer_m.group(1)), _timer_m.group(2).lower(), None
-        if unit_raw.startswith("h"):
-            delay_ms = n * 3_600_000
-            unit_disp = f"{n} hour{'s' if n != 1 else ''}"
-        elif unit_raw.startswith("m"):
-            delay_ms = n * 60_000
-            unit_disp = f"{n} minute{'s' if n != 1 else ''}"
-        else:
-            delay_ms = n * 1_000
-            unit_disp = f"{n} second{'s' if n != 1 else ''}"
+            unit_disp = f"{s_part} Sekunde{'n' if s_part != 1 else ''}" if is_de else f"{s_part} second{'s' if s_part != 1 else ''}"
         if label:
-            reply = f"On it. I'll remind you to {label} in {unit_disp}."
+            reply = (
+                f"Erledigt. Erinnerung in {unit_disp}: {label}."
+                if is_de else
+                f"On it. I'll remind you to {label} in {unit_disp}."
+            )
         else:
-            reply = f"On it. Timer set for {unit_disp}."
+            reply = f"Timer für {unit_disp} gesetzt." if is_de else f"Timer set for {unit_disp}."
         return {
             "reply": reply,
             "data": {

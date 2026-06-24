@@ -562,7 +562,8 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                     return {"reply": reply_text, "data": {"billing_blocked": pf.reason}, "session_id": session_id}
                 user_prefs = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
                 display_name = (user_prefs or {}).get("display_name")
-                sys_prompt = build_system_prompt(display_name, voice_mode=is_voice)
+                persona_tone = (user_prefs or {}).get("persona_tone", "formal")
+                sys_prompt = build_system_prompt(display_name, voice_mode=is_voice, persona_tone=persona_tone)
                 messages = history + [{"role": "user", "content": text}]
                 try:
                     reply_text = router_obj.run_once(decision, messages=messages, system_prompt=sys_prompt, max_tokens=pf.clamped_max_tokens)
@@ -772,7 +773,8 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
 
                 user_prefs_r = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
                 display_name_r = (user_prefs_r or {}).get("display_name")
-                sys_prompt_r = build_system_prompt(display_name_r, voice_mode=is_voice_r)
+                persona_tone_r = (user_prefs_r or {}).get("persona_tone", "formal")
+                sys_prompt_r = build_system_prompt(display_name_r, voice_mode=is_voice_r, persona_tone=persona_tone_r)
                 messages_r = history_r + [{"role": "user", "content": text}]
                 stream_status_token_r = status_token
                 status_token = None

@@ -1,6 +1,14 @@
 import { useState, useRef, useEffect } from 'react';
 import { J, useJ, stripMarkdown, StatusBadge, IconMic, IconSettings, IconChat, IconVolume, MarkdownText, showToast } from './jarvis-shared';
-import { streamChatMessage, transcribeAudio, synthesizeSpeech, SttError } from '../shared/api/chat';
+import { streamChatMessage, transcribeAudio, synthesizeSpeech, SttError, getSystemMetrics } from '../shared/api/chat';
+
+export type HealthTier = 'good' | 'warn' | 'critical';
+
+export function metricsToHealthTier(metrics: { cpu_percent: number; ram_percent: number; disk_percent: number }): HealthTier {
+  if (metrics.cpu_percent > 90 || metrics.ram_percent > 90 || metrics.disk_percent > 90) return 'critical';
+  if (metrics.cpu_percent > 75 || metrics.ram_percent > 75 || metrics.disk_percent > 75) return 'warn';
+  return 'good';
+}
 
 const ORB_STATES: Record<string, { label: string; sub: string; speedMult: number; glowMult: number }> = {
   idle:      { label: 'Ready',      sub: 'Tap the mic to speak',       speedMult: 1,   glowMult: 1   },
@@ -27,15 +35,17 @@ function pointOnRing(r: typeof RING_DEFS[0], theta: number, R: number, cx: numbe
   };
 }
 
-function OrbCanvas({ orbState, muted, size }: { orbState: string; muted: boolean; size: number }) {
+function OrbCanvas({ orbState, muted, size, healthTier }: { orbState: string; muted: boolean; size: number; healthTier?: HealthTier }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const animRef   = useRef<number>(0);
   const stateRef  = useRef(orbState);
   const mutedRef  = useRef(muted);
+  const healthRef = useRef(healthTier ?? 'good');
   const tRef      = useRef(0);
 
   useEffect(() => { stateRef.current = orbState; }, [orbState]);
   useEffect(() => { mutedRef.current = muted; }, [muted]);
+  useEffect(() => { healthRef.current = healthTier ?? 'good'; }, [healthTier]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -77,11 +87,16 @@ function OrbCanvas({ orbState, muted, size }: { orbState: string; muted: boolean
       const t = tRef.current;
       const gm = cfg.glowMult;
 
+      const tier = healthRef.current;
+      const glowR = tier === 'critical' ? 224 : tier === 'warn' ? 232 : 232;
+      const glowG = tier === 'critical' ? 85  : tier === 'warn' ? 148 : 155;
+      const glowB = tier === 'critical' ? 85  : tier === 'warn' ? 58  : 28;
+
       ctx.clearRect(0, 0, S, S);
 
       const bgGrad = ctx.createRadialGradient(cx, cy, 0, cx, cy, R * 1.35);
-      bgGrad.addColorStop(0,   `rgba(232,155,28,${0.09 * gm})`);
-      bgGrad.addColorStop(0.5, `rgba(200,120,15,${0.04 * gm})`);
+      bgGrad.addColorStop(0,   `rgba(${glowR},${glowG},${glowB},${0.09 * gm})`);
+      bgGrad.addColorStop(0.5, `rgba(${glowR},${glowG},${glowB},${0.04 * gm})`);
       bgGrad.addColorStop(1,   'transparent');
       ctx.fillStyle = bgGrad;
       ctx.beginPath(); ctx.arc(cx, cy, R * 1.35, 0, Math.PI * 2); ctx.fill();
@@ -199,6 +214,7 @@ export function OrbScreen({ onNavigate, liveState = 'idle' }: { onNavigate: (scr
   const [hasMic, setHasMic]         = useState(true);
   const [muteTTS, setMuteTTS]       = useState(false);
   const [history, setHistory]       = useState<Exchange[]>([]);
+  const [healthTier, setHealthTier] = useState<HealthTier>('good');
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef        = useRef<Blob[]>([]);
@@ -212,6 +228,17 @@ export function OrbScreen({ onNavigate, liveState = 'idle' }: { onNavigate: (scr
     update();
     window.addEventListener('resize', update);
     return () => window.removeEventListener('resize', update);
+  }, []);
+
+  useEffect(() => {
+    const fetchHealth = () => {
+      getSystemMetrics()
+        .then(m => setHealthTier(metricsToHealthTier({ cpu_percent: m.cpu.pct, ram_percent: m.ram.pct, disk_percent: m.disk.pct })))
+        .catch(() => {});
+    };
+    fetchHealth();
+    const interval = window.setInterval(fetchHealth, 30000);
+    return () => window.clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -372,7 +399,7 @@ export function OrbScreen({ onNavigate, liveState = 'idle' }: { onNavigate: (scr
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 20, zIndex: 1, padding: '60px 24px 100px', width: '100%', maxWidth: 540 }}>
         <div style={{ position: 'relative', cursor: orbState === 'idle' || orbState === 'error' ? 'pointer' : 'default' }}
           onClick={() => { if (orbState === 'idle' || orbState === 'error') void startRecording(); }}>
-          <OrbCanvas orbState={displayState} muted={!hasMic} size={orbSize} />
+          <OrbCanvas orbState={displayState} muted={!hasMic} size={orbSize} healthTier={healthTier} />
           {displayState === 'speaking' && (
             <div style={{ position: 'absolute', bottom: 20, left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: 3, alignItems: 'flex-end' }}>
               {Array.from({ length: 9 }, (_, i) => <WaveBar key={i} i={i} color={J.amber} />)}

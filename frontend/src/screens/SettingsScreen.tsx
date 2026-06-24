@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey, IconBell, IconBook } from './jarvis-shared';
 import { getStoredPreferences, setStoredPreferences, getSessionToken, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
 import { synthesizeSpeech } from '../shared/api/chat';
 import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
@@ -13,6 +13,8 @@ type JarvisVoice = { id: string; name: string; lang: string; flag: string };
 const CATS = [
   { id: 'appearance',   label: 'Appearance',   icon: <IconActivity size={13} /> },
   { id: 'chat',         label: 'Chat',         icon: <IconChat size={13} /> },
+  { id: 'notifications',label: 'Notifications',icon: <IconBell size={13} /> },
+  { id: 'briefing',     label: 'Briefing',     icon: <IconBook size={13} /> },
   { id: 'voice',        label: 'Voice',        icon: <IconMic size={13} /> },
   { id: 'memory',       label: 'Memory',       icon: <IconMemory size={13} /> },
   { id: 'billing',      label: 'AI & Billing', icon: <IconKey size={13} /> },
@@ -680,8 +682,33 @@ export function SettingsScreen() {
           onChange={v => set('orb_detail', v)}
           options={[{ v: 'low', l: 'Low (fast)' }, { v: 'normal', l: 'Normal' }, { v: 'high', l: 'High' }]} />
       </Row>
+      <Row label="Persona Tone" desc="JARVIS response style">
+        <Sel value={prefs.persona_tone || 'formal'}
+          onChange={v => set('persona_tone', v as 'formal' | 'casual')}
+          options={[{ v: 'formal', l: 'Formal — terse, precise' }, { v: 'casual', l: 'Casual — warmer, conversational' }]} />
+      </Row>
       <Field label="Location" value={prefs.location || ''}
         onChange={v => set('location', v)} placeholder="City for weather skill (e.g. Munich)" />
+    </>),
+
+    notifications: (<>
+      <Row label="In-app alerts" desc="Show alert toasts and badge counter">
+        <Toggle on={prefs.notifications_enabled !== false} onChange={v => set('notifications_enabled', v)} />
+      </Row>
+      <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted, lineHeight: 1.6 }}>
+        When disabled, alert toasts and the notification badge on the Services item will not appear.
+      </div>
+    </>),
+
+    briefing: (<>
+      <Row label="Morning Briefing" desc="Auto-push a briefing at a scheduled time">
+        <Toggle on={prefs.morning_briefing_enabled ?? false} onChange={v => set('morning_briefing_enabled', v)} />
+      </Row>
+      <Field label="Briefing time" value={prefs.morning_briefing_time || '07:00'}
+        onChange={v => set('morning_briefing_time', v)} type="time" />
+      <div style={{ padding: '8px 0 14px', fontSize: 12, color: J.textMuted, lineHeight: 1.5 }}>
+        Requires staying connected to JARVIS at the scheduled time.
+      </div>
     </>),
 
     voice: (<>
@@ -853,7 +880,7 @@ export function SettingsScreen() {
         <h2 style={{ fontSize: 18, fontWeight: 600, color: J.text, marginBottom: 3 }}>{current?.label}</h2>
         <p style={{ fontSize: 13, color: J.textMuted, marginBottom: 24 }}>Configure {current?.label?.toLowerCase()} preferences</p>
         {panels[cat]}
-        {['appearance', 'chat', 'voice', 'developer'].includes(cat) && (
+        {['appearance', 'chat', 'notifications', 'briefing', 'voice', 'developer'].includes(cat) && (
           <div style={{ padding: '22px 0 8px', display: 'flex', gap: 9, alignItems: 'center' }}>
             <button onClick={handleSave} disabled={saving} className="j-btn"
               style={{ background: saved ? J.success : J.amber, color: J.bg0, borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 600, opacity: saving ? 0.7 : 1, transition: 'background .2s' }}>

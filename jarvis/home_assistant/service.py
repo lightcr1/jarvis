@@ -9,6 +9,10 @@ from .permissions import HOME_ASSISTANT_PERMISSION_GROUPS
 from .risk import HOME_ASSISTANT_ACTION_POLICIES
 
 
+def _emergency_stop_active() -> bool:
+    return (os.getenv("JARVIS_EMERGENCY_STOP") or "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
 class HomeAssistantAccessError(PermissionError):
     pass
 
@@ -1363,3 +1367,46 @@ class HomeAssistantService:
             payload={"request_id": request_id, "entity_id": entity.get("entity_id"), "action": request.get("action")},
         )
         return {"policy": policy, "request": updated_request, "entity": updated_entity, "executed": True}
+
+    def list_scenes(self, *, user_id: str | None, role: str | None) -> dict[str, object]:
+        policy = self.require_access(user_id=user_id, role=role)
+        scenes = [
+            {
+                "id": e.get("entity_id"),
+                "name": e.get("label") or e.get("entity_id"),
+                "entity_id": e.get("entity_id"),
+                "state": e.get("state"),
+            }
+            for e in self.store.list_managed_entities()
+            if str(e.get("entity_id") or "").startswith("scene.")
+        ]
+        return {"scenes": scenes}
+
+    def activate_scene(self, scene_id: str, *, user_id: str | None, role: str | None) -> dict[str, object]:
+        self.require_access(user_id=user_id, role=role)
+        if _emergency_stop_active():
+            raise PermissionError("emergency stop is active — write actions are blocked")
+        entity = self.store.get_managed_entity(scene_id)
+        if not entity:
+            raise LookupError("scene not found")
+        if not str(entity.get("entity_id") or "").startswith("scene."):
+            raise LookupError("entity is not a scene")
+        self.store.update_managed_entity(
+            scene_id,
+            {
+                "state": "activated",
+                "metadata": {
+                    **(entity.get("metadata") or {}),
+                    "last_action": "activate",
+                    "last_actor_user_id": user_id,
+                    "last_action_at": int(time.time()),
+                },
+            },
+        )
+        self._write_audit(
+            "ha_scene_activated",
+            actor_user_id=user_id,
+            actor_role=role,
+            payload={"scene_id": scene_id},
+        )
+        return {"status": "ok", "scene_id": scene_id}
