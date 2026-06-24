@@ -1,0 +1,31 @@
+# Cloudflare Tunnel configuration for JARVIS
+#
+# Copy to: /etc/cloudflared/config.yml
+# Replace <TUNNEL-ID> and <YOUR-DOMAIN> with your actual values.
+#
+# Get your tunnel ID after running:
+#   cloudflared tunnel create jarvis
+#
+tunnel: <TUNNEL-ID>
+credentials-file: /etc/cloudflared/<TUNNEL-ID>.json
+
+# Log level: debug | info | warn | error
+loglevel: info
+
+ingress:
+  # Main JARVIS interface — served via nginx on loopback
+  - hostname: jarvis.<YOUR-DOMAIN>
+    service: http://127.0.0.1:80
+    originRequest:
+      connectTimeout: 30s
+      tcpKeepAlive: 30s
+      # Tells cloudflared to pass the correct Host header
+      httpHostHeader: jarvis.<YOUR-DOMAIN>
+
+  # Optional: admin dashboard on a separate subdomain
+  # Uncomment and restrict access via Cloudflare Access if desired
+  # - hostname: jarvis-admin.<YOUR-DOMAIN>
+  #   service: http://127.0.0.1:80
+
+  # Catch-all — return 404 for any unmatched ingress
+  - service: http_status:404
