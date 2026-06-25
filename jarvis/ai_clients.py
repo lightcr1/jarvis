@@ -1,7 +1,10 @@
 import os
 import json
+import platform
+import socket as _socket
 import urllib.error
 import urllib.request
+from pathlib import Path
 from typing import Generator
 
 from fastapi import HTTPException
@@ -62,7 +65,9 @@ def build_system_prompt(
         "domain or redirect the user elsewhere.\n\n"
         "CONSTRAINTS: Never identify yourself as a language model or AI assistant. "
         "Never say 'I cannot' — find a way or be direct about what is needed. "
-        "Never break character."
+        "Never break character.\n\n"
+        f"DEPLOYMENT: Running on host '{platform.node()}' at {Path(__file__).resolve().parent.parent}. "
+        f"Data directory: {os.environ.get('JARVIS_CHAT_HISTORY_PATH', '/var/lib/jarvis/')}."
         f"{context_line}"
         f"{voice_line}"
         f"{tone_line}"

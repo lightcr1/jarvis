@@ -1047,6 +1047,23 @@ def try_skill(
             "data": {"route": "identity"},
         }
 
+    if re.search(
+        r"\b(wo (liegt|läuft|bist du|bist|liegst|laufst)|where (are you|do you run|are you running|"
+        r"do you live|are you hosted|are you deployed)|wo (ist|ist jarvis|ist j\.a\.r\.v\.i\.s)|"
+        r"where is jarvis|where.*deployed|auf welchem|on which (server|machine|host|vm))\b",
+        t,
+    ):
+        hostname = platform.node()
+        deploy_path = str(__import__("pathlib").Path(__file__).resolve().parent.parent)
+        data_path = os.environ.get("JARVIS_CHAT_HISTORY_PATH", "/var/lib/jarvis/").rstrip("/")
+        return {
+            "reply": (
+                f"Running on {hostname}. "
+                f"Deployed at {deploy_path}, data at {data_path}."
+            ),
+            "data": {"hostname": hostname, "deploy_path": deploy_path, "data_path": data_path},
+        }
+
     # ── Natural language: system queries ─────────────────────────────────────
     if re.search(r"\b(server uptime|how long.*running|how long.*up|wie lange.*läuft)\b", t):
         out = run_cmd(["/usr/bin/uptime", "-p"], timeout=8)
