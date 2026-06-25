@@ -263,7 +263,7 @@ fi
 # Bootstrap pip if missing (Ubuntu 24.04 ships python3.12-venv without pip)
 if [[ ! -f "${VENV_DIR}/bin/pip" ]]; then
   info "Bootstrapping pip..."
-  python3.12 -m ensurepip --upgrade --root "${VENV_DIR}" 2>/dev/null || \
+  "${VENV_DIR}/bin/python3" -m ensurepip --upgrade 2>/dev/null || \
     curl -fsSL https://bootstrap.pypa.io/get-pip.py | "${VENV_DIR}/bin/python3" -
 fi
 

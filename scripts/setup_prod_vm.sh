@@ -80,9 +80,9 @@ else
     log "Python 3.12 installed"
 fi
 
-# Always ensure venv support is present (Ubuntu 24.04 ships Python 3.12 without python3.12-venv)
-apt-get install -y -qq python3.12-venv python3.12-dev
-log "python3.12-venv ensured"
+# Always ensure venv + pip (Ubuntu 24.04 ships Python 3.12 without them)
+apt-get install -y -qq python3.12-venv python3.12-dev python3-pip
+log "python3.12-venv + pip ensured"
 
 # ── 4. Node.js 20 ────────────────────────────────────────────────────────────
 section "Node.js 20 (for frontend build)"
