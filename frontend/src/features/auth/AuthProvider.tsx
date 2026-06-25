@@ -7,6 +7,7 @@ import {
   clearAdminToken,
   clearStoredIdentity,
   fetchMe,
+  getSessionToken,
   getStoredPreferences,
   getStoredUser,
   issueAdminSession,
@@ -38,7 +39,9 @@ function mergeThemePreference(nextPreferences: UserPreferences, fallbackPreferen
   const nextTheme = nextPreferences.theme === "light" ? "light" : nextPreferences.theme === "dark" ? "dark" : undefined;
   return {
     ...nextPreferences,
-    theme: nextTheme || fallbackTheme || "light",
+    // Local (fallback) theme always wins over server default — the user's explicit
+    // toggle should never be overwritten by a server refresh.
+    theme: fallbackTheme || nextTheme || "light",
   };
 }
 
@@ -61,10 +64,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setCapabilities(me.capabilities || {});
       setStoredIdentity(localStorage.getItem("jarvis_user_session") || "", me.user, mergedPreferences);
     } catch {
-      clearStoredIdentity();
-      setUser(null);
-      setPreferences(getStoredPreferences());
-      setCapabilities({});
+      // client.ts clears the session token on 401. If it's gone, the session
+      // really expired — clear React state too. For network/5xx errors the
+      // token is still present, so we keep the user logged in and fail silently.
+      if (!getSessionToken()) {
+        setUser(null);
+        setPreferences(getStoredPreferences());
+        setCapabilities({});
+      }
     } finally {
       setLoading(false);
     }
