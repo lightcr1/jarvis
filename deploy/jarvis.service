@@ -13,7 +13,7 @@ WorkingDirectory=/opt/jarvis
 # Copy config/prod.env.example to /etc/jarvis/jarvis.env and populate secrets before first start.
 EnvironmentFile=/etc/jarvis/jarvis.env
 
-ExecStart=/opt/jarvis/.venv/bin/uvicorn jarvisappv4:app --host 0.0.0.0 --port 8000 --workers 1
+ExecStart=/opt/jarvis/.venv/bin/uvicorn jarvisappv4:app --host 127.0.0.1 --port 8000 --workers 1
 
 Restart=on-failure
 RestartSec=5
