@@ -209,7 +209,7 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
-  if (response.status === 401) {
+  if (response.status === 401 && getSessionToken()) {
     clearStoredIdentity();
     window.dispatchEvent(new CustomEvent("jarvis:session-expired"));
   }

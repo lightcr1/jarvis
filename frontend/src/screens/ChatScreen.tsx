@@ -11,7 +11,7 @@ import {
   renameChatSession, deleteChatSession, synthesizeSpeech, getDailyBriefing,
 } from '../shared/api/chat';
 import type { ChatSessionListItem } from '../shared/api/chat';
-import { getStoredPreferences, setStoredPreferences, savePreferences, getStoredUser, apiRequest, consumePendingChatPrefill } from '../shared/api/client';
+import { getStoredPreferences, setStoredPreferences, savePreferences, getStoredUser, apiRequest, consumePendingChatPrefill, isGuestMode } from '../shared/api/client';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
 export function serializeChatToMarkdown(title: string, messages: Array<{ role: string; content: string; time: string }>): string {
@@ -362,21 +362,23 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
   }, []);
 
   useEffect(() => {
-    listChatSessions()
-      .then(data => setGroups(groupSessions(data.sessions)))
-      .catch(() => {});
-
-    const today = new Date().toISOString().slice(0, 10);
-    const userId = getStoredUser()?.id ?? 'guest';
-    const briefingKey = `jarvis_briefing_${userId}_${today}`;
-    if (!localStorage.getItem(briefingKey)) {
-      getDailyBriefing()
-        .then(data => {
-          const t = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
-          setMsgs(prev => [{ id: Date.now(), role: 'jarvis', content: data.text, time: t }, ...prev]);
-          localStorage.setItem(briefingKey, '1');
-        })
+    if (!isGuestMode()) {
+      listChatSessions()
+        .then(data => setGroups(groupSessions(data.sessions)))
         .catch(() => {});
+
+      const today = new Date().toISOString().slice(0, 10);
+      const userId = getStoredUser()?.id ?? 'guest';
+      const briefingKey = `jarvis_briefing_${userId}_${today}`;
+      if (!localStorage.getItem(briefingKey)) {
+        getDailyBriefing()
+          .then(data => {
+            const t = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
+            setMsgs(prev => [{ id: Date.now(), role: 'jarvis', content: data.text, time: t }, ...prev]);
+            localStorage.setItem(briefingKey, '1');
+          })
+          .catch(() => {});
+      }
     }
 
     const prefill = consumePendingChatPrefill();
