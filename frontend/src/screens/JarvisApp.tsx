@@ -11,7 +11,7 @@ import { ProxmoxScreen } from './ProxmoxScreen';
 import { ServiceHubScreen } from './ServiceHubScreen';
 import { SettingsScreen } from './SettingsScreen';
 import { DocsScreen } from './DocsScreen';
-import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill } from '../shared/api/client';
+import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill, savePreferences } from '../shared/api/client';
 import { useJarvisAlerts } from '../shared/api/alerts';
 import { useJarvisLiveStatus } from '../shared/api/status';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
@@ -65,6 +65,7 @@ function NavRail({ current, onNav, onLogout, nav, isGuest, isAdmin, unreadCount 
     const p = getStoredPreferences();
     const updated = { ...p, theme: next as 'dark' | 'light' };
     setStoredPreferences(updated);
+    if (getSessionToken()) savePreferences(updated).catch(() => {});
   };
 
   return (

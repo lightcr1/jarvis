@@ -584,9 +584,12 @@ export function SettingsScreen() {
         .then(data => {
           const local = getStoredPreferences();
           const server = data.preferences;
-          // Server empty-string fields must not overwrite a real locally-saved value
+          // Server values win, except theme — local theme takes priority because the
+          // user may have toggled it without hitting Save, and we never want to flash
+          // back to dark on Settings open.
           const merged: UserPreferences = { ...local };
           for (const [k, v] of Object.entries(server) as [keyof UserPreferences, UserPreferences[keyof UserPreferences]][]) {
+            if (k === 'theme') continue; // always keep local theme
             if (v !== '' && v !== null && v !== undefined) {
               (merged as Record<string, unknown>)[k] = v;
             } else if (!(k in local) || local[k] === undefined) {
@@ -609,7 +612,7 @@ export function SettingsScreen() {
       const [px, ha, rag] = await Promise.allSettled([
         apiRequest<{ healthy?: boolean }>('/proxmox/health', { includeUser: true }),
         apiRequest<{ healthy?: boolean }>('/home-assistant/health', { includeUser: true }),
-        apiRequest<{ counts?: Record<string, number> }>('/rag/status'),
+        apiRequest<{ counts?: Record<string, number> }>('/rag/status', { includeUser: true }),
       ]);
       setIntStatus({
         proxmox: px.status === 'fulfilled' ? 'online' : 'offline',
