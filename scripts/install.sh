@@ -256,8 +256,15 @@ section "Python environment"
 
 if [[ ! -d "${VENV_DIR}" ]]; then
   info "Creating virtualenv at ${VENV_DIR}..."
-  python3 -m venv "${VENV_DIR}" || fail "Failed to create virtualenv."
+  python3.12 -m venv "${VENV_DIR}" || fail "Failed to create virtualenv."
   chown -R "${JARVIS_USER}:${JARVIS_USER}" "${VENV_DIR}"
+fi
+
+# Bootstrap pip if missing (Ubuntu 24.04 ships python3.12-venv without pip)
+if [[ ! -f "${VENV_DIR}/bin/pip" ]]; then
+  info "Bootstrapping pip..."
+  python3.12 -m ensurepip --upgrade --root "${VENV_DIR}" 2>/dev/null || \
+    curl -fsSL https://bootstrap.pypa.io/get-pip.py | "${VENV_DIR}/bin/python3" -
 fi
 
 info "Installing Python dependencies (this may take a minute)..."
