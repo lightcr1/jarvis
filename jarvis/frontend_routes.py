@@ -13,7 +13,8 @@ frontend_router = APIRouter()
 
 
 def mount_frontend_assets(app: FastAPI) -> None:
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
+    if STATIC_DIR.exists():
+        app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
     if FRONTEND_ASSETS_DIR.exists():
         app.mount("/assets", StaticFiles(directory=str(FRONTEND_ASSETS_DIR)), name="frontend-assets")
 
