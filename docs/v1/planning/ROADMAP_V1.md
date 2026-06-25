@@ -78,6 +78,139 @@ This roadmap is focused on a **stable first usable release**.
 
 ---
 
+# V2 Roadmap — "Real JARVIS" (Target: 2027)
+
+> V2 transforms JARVIS from a reactive assistant into a proactive, autonomous system manager —
+> the closest thing to Iron Man's JARVIS in a real home/lab environment.
+> V1 ships a reliable assistant. V2 makes it feel alive.
+
+## V2 Vision
+
+JARVIS should observe, think, and act — without being asked. It knows what's happening across
+every connected system, surfaces what matters, and takes pre-authorized actions autonomously.
+The user sets policy once; JARVIS executes continuously.
+
+---
+
+## V2.1 — Proactive Intelligence
+
+### Alert Engine (P0)
+The core of "real JARVIS". A background rule engine that monitors all connected systems and
+pushes alerts proactively — without the user asking.
+
+- Configurable alert rules stored in `admin_settings.json`: thresholds, cooldowns, severity levels
+- System resource alerts: CPU sustained >90%, RAM >85%, disk >90%, load spike
+- Home Assistant state alerts: door left open, motion at unusual hours, thermostat deviation
+- Proxmox alerts: VM down, storage critically full, node unreachable
+- Admin UI section for managing alert rules (enable/disable, edit thresholds)
+- `/ws/alerts` WebSocket delivers alerts to frontend in real time
+- Voice delivery: JARVIS speaks alerts aloud when voice mode is active
+
+### Morning Briefing + Scheduled Reports
+- Daily briefing at configurable time: weather, calendar, system status, overnight alerts
+- Weekly summary: resource trends, alert frequency, top actions taken
+- JARVIS initiates these — user doesn't need to ask
+
+### Proactive Suggestions
+- "Sir, you have 3 services that haven't been restarted in 30 days."
+- "Disk on pve-01 is at 88% — should I archive old backups?"
+- Based on observed patterns, not hardcoded rules
+
+---
+
+## V2.2 — Persistent Memory + Context
+
+### Long-Term Memory
+- JARVIS remembers preferences, habits, and feedback across sessions
+- "Remember that I prefer temperatures at 20°C" → stored, applied automatically
+- Named aliases: "my server" = pve-01, "the office" = room entity X
+- Memory UI in Settings: view, edit, delete what JARVIS knows
+
+### Contextual Awareness
+- JARVIS knows time of day, day of week, recent activity
+- Adapts behavior: quieter at night, more detailed in the morning
+- Notices patterns: "You usually restart nginx on Mondays — should I automate that?"
+
+### Session Continuity
+- Conversation context survives restarts
+- JARVIS can reference things said in previous sessions: "Last week you mentioned..."
+
+---
+
+## V2.3 — Autonomous Action + Policy Engine
+
+### Pre-authorized Autonomous Actions
+- User defines action policies: "If disk > 90%, automatically prune old Docker images"
+- "If front door is open after midnight, send alert and lock it"
+- Policy editor in admin UI with dry-run mode before enabling
+
+### Multi-Step Workflows
+- "Prepare for maintenance": stop services → snapshot VM → notify → wait for confirmation
+- "Morning routine": check all systems → summarize → set thermostat → turn on office lights
+- Workflow builder: trigger + condition + action chain + rollback step
+
+### Autonomous Recovery
+- VM crashes → JARVIS detects, attempts restart, reports outcome
+- Service goes down → auto-restart with retry limit and escalation alert
+- All autonomous actions audited with reason, outcome, rollback option
+
+---
+
+## V2.4 — Expanded System Coverage
+
+### Personal Cloud Workspace
+- Browser-based remote desktop (Apache Guacamole) embedded in JARVIS
+- Connect to home PC or Proxmox VM desktop from anywhere via Cloudflare Tunnel
+- Wake-on-LAN: JARVIS can power on the home PC before connecting
+- "Workspace" screen in the frontend
+
+### Network & Infrastructure
+- Network device monitoring: switches, APs, routers (SNMP or API)
+- DNS query log integration (Pi-hole / AdGuard)
+- Bandwidth usage by device
+- VPN status and connected clients
+
+### Extended Integrations
+- NAS (Synology/TrueNAS): storage overview, backup jobs, alerts
+- Security cameras: motion event feed, snapshot on alert
+- Smart car (if API available): location, charge status, door lock
+- Calendar deep integration: schedule-aware assistant behavior
+
+### Multi-Instance / Multi-Location
+- JARVIS instances in different locations (home, lab, cloud) sharing state
+- Federated alerts: one instance monitors, all instances informed
+
+---
+
+## V2.5 — Interface & Experience
+
+### Full PWA + Mobile Push
+- Push notifications via Service Worker: alerts delivered to phone even when app is closed
+- Mobile-optimized voice interface
+- Offline-capable for status reads cached from last sync
+
+### Ambient Display Mode
+- Always-on status display for a dedicated screen (Raspberry Pi + monitor)
+- Shows: time, weather, system status, latest alert, next calendar event
+- No interaction needed — pure ambient awareness
+
+### Plugin System
+- Third-party skill packs installable without code changes
+- Plugin manifest format: skills, permissions, UI tabs
+- Community skill registry (long-term)
+
+---
+
+## V2 Principles
+
+- **Proactive over reactive** — JARVIS speaks first when something matters
+- **Policy over prompts** — set rules once, JARVIS executes continuously
+- **Audit everything** — every autonomous action logged with full context and rollback
+- **User stays in control** — all automation is opt-in, all actions are reversible or gated
+- **Privacy first** — no data leaves the local network without explicit config
+
+---
+
 ## Timeline (Step-by-Step)
 
 ## March (now): Scope Freeze + Architecture Baseline (1–2 weeks)
