@@ -65,7 +65,7 @@ CURRENT_SHA="$(git -C "${JARVIS_SOURCE_ROOT}" rev-parse HEAD 2>/dev/null || echo
 CURRENT_SHORT="${CURRENT_SHA:0:7}"
 REMOTE_SHA=""
 if [[ "${LOCAL_ONLY}" -eq 0 ]]; then
-  REMOTE_SHA="$(git -C "${JARVIS_SOURCE_ROOT}" ls-remote origin "refs/heads/${BRANCH}" 2>/dev/null | awk '{print $1}')"
+  REMOTE_SHA="$(sudo -u jarvis -H git -C "${JARVIS_SOURCE_ROOT}" ls-remote origin "refs/heads/${BRANCH}" 2>/dev/null | awk '{print $1}')"
 fi
 REMOTE_SHORT="${REMOTE_SHA:0:7}"
 
@@ -136,7 +136,7 @@ NEW_SHORT="${CURRENT_SHORT}"
 
 if [[ "${LOCAL_ONLY}" -eq 0 && -n "${REMOTE_SHA}" && "${REMOTE_SHA}" != "${CURRENT_SHA}" ]]; then
   section "Pulling origin/${BRANCH}"
-  git -C "${JARVIS_SOURCE_ROOT}" pull origin "${BRANCH}" \
+  sudo -u jarvis -H git -C "${JARVIS_SOURCE_ROOT}" pull origin "${BRANCH}" \
     || fail "git pull origin ${BRANCH} failed."
   NEW_SHA="$(git -C "${JARVIS_SOURCE_ROOT}" rev-parse HEAD)"
   NEW_SHORT="$(git -C "${JARVIS_SOURCE_ROOT}" rev-parse --short HEAD)"
