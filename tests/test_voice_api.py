@@ -15,6 +15,7 @@ class VoiceApiTests(unittest.TestCase):
         os.environ["JARVIS_CHAT_HISTORY_PATH"] = os.path.join(self.tmpdir.name, "chat_history.json")
         os.environ["JARVIS_RAG_CACHE_PATH"] = os.path.join(self.tmpdir.name, "rag_cache.json")
         os.environ["JARVIS_MEMORY_PATH"] = os.path.join(self.tmpdir.name, "memory.json")
+        os.environ["JARVIS_LEARNING_PATH"] = os.path.join(self.tmpdir.name, "learning.json")
         os.environ["JARVIS_USER_STORE_PATH"] = os.path.join(self.tmpdir.name, "users.json")
         os.environ["JARVIS_USER_PREFERENCES_PATH"] = os.path.join(self.tmpdir.name, "prefs.json")
         jarvisappv4.chat_history = jarvisappv4.ChatHistoryStore()
@@ -29,6 +30,7 @@ class VoiceApiTests(unittest.TestCase):
         self.tmpdir.cleanup()
         for key in [
             "JARVIS_CHAT_HISTORY_PATH", "JARVIS_RAG_CACHE_PATH", "JARVIS_MEMORY_PATH",
+            "JARVIS_LEARNING_PATH",
             "STT_PROVIDER", "JARVIS_USER_STORE_PATH", "JARVIS_USER_PREFERENCES_PATH",
         ]:
             os.environ.pop(key, None)

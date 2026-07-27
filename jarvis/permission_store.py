@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 
 from .home_assistant.permissions import HOME_ASSISTANT_PERMISSIONS
+from .tasks.permissions import TASKS_PERMISSIONS
 
 
 KNOWN_PERMISSIONS = {
@@ -26,8 +27,12 @@ KNOWN_PERMISSIONS = {
     "settings.manage",
     "emergency_stop.trigger",
     "alerts.manage",
+    "policies.manage",
+    "playbooks.manage",
+    "playbooks.execute",
 }
 KNOWN_PERMISSIONS.update(HOME_ASSISTANT_PERMISSIONS)
+KNOWN_PERMISSIONS.update(TASKS_PERMISSIONS)
 
 
 class PermissionStore:

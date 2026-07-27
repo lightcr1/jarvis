@@ -78,6 +78,11 @@ This roadmap is focused on a **stable first usable release**.
 
 ---
 
+> **This section has been superseded by the execution-ready version at
+> [`docs/v2/planning/ROADMAP_V2.md`](../../v2/planning/ROADMAP_V2.md), with a live
+> status tracker at [`docs/v2/planning/EXECUTION_CHECKLIST_V2.md`](../../v2/planning/EXECUTION_CHECKLIST_V2.md).
+> Kept below for historical reference.**
+
 # V2 Roadmap — "Real JARVIS" (Target: 2027)
 
 > V1 ships a reliable assistant. V2 makes it feel like Tony Stark's JARVIS.

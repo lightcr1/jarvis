@@ -2,6 +2,7 @@ import hmac as _hmac
 import json as _json
 import logging as _logging
 import os as _os
+import re as _re
 import time as _time
 from datetime import datetime, date as _date
 
@@ -13,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from .rate_limiter import _rate
 
 from .ai_clients import build_system_prompt
+from .user_preferences_store import is_within_quiet_hours, time_of_day_bucket
 from .ai_router import AIRouter
 from .secret_crypto import SecretEncryptionUnavailable
 from .api_models import (
@@ -43,6 +45,55 @@ from .pending_signup_store import (
 )
 from .home_assistant.chat_intents import execute_home_assistant_chat_intent
 from .router_dependencies import LiveRef
+
+
+_HISTORY_STOPWORDS = {
+    "what", "when", "where", "which", "about", "there", "their", "would", "could",
+    "should", "please", "thanks", "again", "today", "tomorrow", "yesterday", "jarvis",
+}
+
+
+def _find_related_history(chat_history, owner_key: str, current_session_id: str, text: str, limit: int = 3) -> list[str]:
+    keywords: list[str] = []
+    for word in _re.findall(r"[a-zA-Z]{4,}", text or ""):
+        lowered = word.lower()
+        if lowered in _HISTORY_STOPWORDS or lowered in keywords:
+            continue
+        keywords.append(lowered)
+        if len(keywords) >= 3:
+            break
+    if not keywords:
+        return []
+    seen: set[tuple[str, str]] = set()
+    hits: list[dict] = []
+    try:
+        for keyword in keywords:
+            for hit in chat_history.search_messages(keyword, owner_key=owner_key, limit=5):
+                if hit["session_id"] == current_session_id:
+                    continue
+                dedup_key = (hit["session_id"], hit["snippet"])
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                hits.append(hit)
+    except Exception:
+        return []
+    hits.sort(key=lambda h: h.get("ts") or 0, reverse=True)
+    formatted = []
+    for hit in hits[:limit]:
+        when = datetime.fromtimestamp(hit["ts"]).strftime("%b %d") if hit.get("ts") else "previously"
+        formatted.append(f'On {when} you discussed: "{hit["snippet"]}"')
+    return formatted
+
+
+def _context_mode_for_prefs(prefs: dict) -> tuple[str, bool]:
+    now_dt = datetime.now()
+    now_hm = now_dt.strftime("%H:%M")
+    tod = time_of_day_bucket(now_dt.hour)
+    dnd = bool(prefs.get("quiet_hours_enabled")) and is_within_quiet_hours(
+        now_hm, prefs.get("quiet_hours_start", "22:00"), prefs.get("quiet_hours_end", "07:00")
+    )
+    return tod, dnd
 
 
 def build_auth_chat_router(deps: dict) -> APIRouter:
@@ -176,8 +227,8 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
     @router.post("/auth/logout")
     def user_logout(x_jarvis_session: str | None = Header(default=None)):
         token = (x_jarvis_session or "").strip()
-        if token:
-            current("identity_tokens").pop(token, None)
+        if token and current("identity_tokens").pop(token, None) is not None:
+            deps.get("persist_identity_tokens", lambda: None)()
         return {"ok": True}
 
     # ── Self-service signup ──────────────────────────────────────────────────
@@ -577,7 +628,13 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                 user_prefs = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
                 display_name = (user_prefs or {}).get("display_name")
                 persona_tone = (user_prefs or {}).get("persona_tone", "formal")
-                sys_prompt = build_system_prompt(display_name, voice_mode=is_voice, persona_tone=persona_tone)
+                time_of_day, quiet_hours_active = _context_mode_for_prefs(user_prefs or {})
+                related_history = _find_related_history(current("chat_history"), owner_key, session_id, text)
+                sys_prompt = build_system_prompt(
+                    display_name, voice_mode=is_voice, persona_tone=persona_tone,
+                    time_of_day=time_of_day, quiet_hours_active=quiet_hours_active,
+                    related_history=related_history,
+                )
                 messages = history + [{"role": "user", "content": text}]
                 try:
                     reply_text = router_obj.run_once(decision, messages=messages, system_prompt=sys_prompt, max_tokens=pf.clamped_max_tokens)
@@ -788,7 +845,13 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                 user_prefs_r = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
                 display_name_r = (user_prefs_r or {}).get("display_name")
                 persona_tone_r = (user_prefs_r or {}).get("persona_tone", "formal")
-                sys_prompt_r = build_system_prompt(display_name_r, voice_mode=is_voice_r, persona_tone=persona_tone_r)
+                time_of_day_r, quiet_hours_active_r = _context_mode_for_prefs(user_prefs_r or {})
+                related_history_r = _find_related_history(current("chat_history"), owner_key, session_id, text)
+                sys_prompt_r = build_system_prompt(
+                    display_name_r, voice_mode=is_voice_r, persona_tone=persona_tone_r,
+                    time_of_day=time_of_day_r, quiet_hours_active=quiet_hours_active_r,
+                    related_history=related_history_r,
+                )
                 messages_r = history_r + [{"role": "user", "content": text}]
                 stream_status_token_r = status_token
                 status_token = None

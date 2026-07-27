@@ -67,6 +67,19 @@ def _default_memory_path() -> Path:
         return fallback_dir / "memory.json"
 
 
+def _default_learning_path() -> Path:
+    preferred = Path("/var/lib/jarvis/learning.json")
+    try:
+        preferred.parent.mkdir(parents=True, exist_ok=True)
+        with preferred.open("a", encoding="utf-8"):
+            pass
+        return preferred
+    except OSError:
+        fallback_dir = Path(tempfile.gettempdir()) / "jarvis"
+        fallback_dir.mkdir(parents=True, exist_ok=True)
+        return fallback_dir / "learning.json"
+
+
 @dataclass
 class ActionPlan:
     summary: str
@@ -422,11 +435,38 @@ class JarvisEngine:
 
 
 class LearningStore:
+    _LEGACY_KEYS = (
+        "nodes", "vmids", "defaults", "favorite_commands",
+        "learned_replies", "query_stats", "feedback_log", "aliases",
+    )
+
     def __init__(self) -> None:
-        configured = os.getenv("JARVIS_MEMORY_PATH")
-        self.path = Path(configured) if configured else _default_memory_path()
+        configured = os.getenv("JARVIS_LEARNING_PATH")
+        self.path = Path(configured) if configured else _default_learning_path()
         self.path.parent.mkdir(parents=True, exist_ok=True)
+        is_fresh = not self.path.exists() or self.path.stat().st_size == 0
         self.data = self._load()
+        if is_fresh and self._migrate_from_legacy_path():
+            self._save()
+
+    def _migrate_from_legacy_path(self) -> bool:
+        # Pre-fix, LearningStore and MemoryStore shared JARVIS_MEMORY_PATH and clobbered
+        # each other on save. Recover any LearningStore-shaped data left in that file.
+        legacy_configured = os.getenv("JARVIS_MEMORY_PATH")
+        legacy_path = Path(legacy_configured) if legacy_configured else _default_memory_path()
+        if legacy_path == self.path or not legacy_path.exists():
+            return False
+        try:
+            content = json.loads(legacy_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return False
+        if not isinstance(content, dict):
+            return False
+        migrated = {key: content[key] for key in self._LEGACY_KEYS if content.get(key)}
+        if not migrated:
+            return False
+        self.data = {**self._empty(), **migrated}
+        return True
 
     def _empty(self) -> dict:
         return {

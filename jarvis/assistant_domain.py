@@ -440,6 +440,113 @@ def _parse_duration(text: str) -> tuple[int, str] | None:
     return secs, label_m.group(1).strip().rstrip(".,!?") if label_m else ""
 
 
+def _handle_create_task(task_service, title: str, *, user_id: str | None, role: str | None) -> dict[str, object] | None:
+    if not task_service:
+        return None
+    title = title.strip().rstrip(".,!?").strip()
+    if not title:
+        return {"reply": "What should I call the task?", "data": {"route": "task_created", "error": "missing_title"}}
+    try:
+        result = task_service.create_task({"title": title}, user_id=user_id, role=role)
+    except PermissionError:
+        return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "tasks.write", "role": role}}
+    except ValueError as exc:
+        return {"reply": str(exc), "data": {"error": "validation_error"}}
+    task = result["task"]
+    return {
+        "reply": f"Understood. Task added: {task['title']}.",
+        "data": {"route": "task_created", "task_id": task["id"], "title": task["title"]},
+    }
+
+
+def _handle_list_tasks(task_service, *, user_id: str | None, role: str | None) -> dict[str, object] | None:
+    if not task_service:
+        return None
+    try:
+        result = task_service.list_tasks(user_id=user_id, role=role)
+    except PermissionError:
+        return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "tasks.read", "role": role}}
+    tasks = [item for item in result["tasks"] if item.get("status") != "done"]
+    if not tasks:
+        return {"reply": "Your task list is clear, sir.", "data": {"route": "task_list", "tasks": []}}
+    lines = [f"  • {item['title']}" + (" (in progress)" if item.get("status") == "in_progress" else "") for item in tasks[:10]]
+    reply = f"On it. You have {len(tasks)} open task(s):\n" + "\n".join(lines)
+    return {"reply": reply, "data": {"route": "task_list", "tasks": tasks}}
+
+
+def _generate_task_steps(subject: str, *, get_provider=None, get_gemini=None, get_openai=None) -> list[str]:
+    subject = subject.strip() or "this task"
+    if get_provider and cloud_llm_available():
+        try:
+            raw = _llm_task_breakdown_raw(subject, get_provider=get_provider, get_gemini=get_gemini, get_openai=get_openai)
+            steps = [line.strip(" -*\t").lstrip("0123456789.) ") for line in raw.splitlines() if line.strip()]
+            if steps:
+                return steps[:6]
+        except Exception:
+            pass
+    return [f"Plan: {subject}", f"Execute: {subject}", f"Review: {subject}"]
+
+
+def _llm_task_breakdown_raw(subject: str, *, get_provider, get_gemini, get_openai) -> str:
+    prompt = (
+        "Break the following task into 3 to 6 short, concrete, actionable steps. "
+        "Return one step per line, no numbering, no extra commentary.\n\n"
+        f"Task: {subject}"
+    )
+    provider = get_provider()
+    if provider == "gemini" and os.getenv("GEMINI_API_KEY") and get_gemini:
+        client = get_gemini()
+        model = os.getenv("GEMINI_MODEL") or "gemini-2.5-flash"
+        resp = client.models.generate_content(model=model, contents=[{"role": "user", "parts": [{"text": prompt}]}])
+        return (getattr(resp, "text", "") or "").strip()
+    if os.getenv("OPENAI_API_KEY") and get_openai:
+        client = get_openai()
+        model = os.getenv("OPENAI_MODEL") or "gpt-4.1-mini"
+        resp = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": "You are J.A.R.V.I.S from Iron Man."},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.2,
+            max_tokens=200,
+        )
+        return (resp.choices[0].message.content or "").strip()
+    return ""
+
+
+def _handle_task_breakdown(
+    task_service,
+    query: str,
+    *,
+    user_id: str | None,
+    role: str | None,
+    get_provider,
+    get_gemini,
+    get_openai,
+) -> dict[str, object] | None:
+    if not task_service:
+        return None
+    query = re.sub(r"^task\s+", "", query.strip(), flags=re.I).strip().rstrip(".,!?").strip()
+    try:
+        target = task_service.find_open_task_by_title(query, user_id=user_id, role=role) if query else None
+        if not target and not query:
+            open_tasks = [item for item in task_service.list_tasks(user_id=user_id, role=role)["tasks"] if item.get("status") != "done"]
+            target = open_tasks[0] if open_tasks else None
+    except PermissionError:
+        return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "tasks.read", "role": role}}
+    subject = target["title"] if target else (query or "this task")
+    steps = _generate_task_steps(subject, get_provider=get_provider, get_gemini=get_gemini, get_openai=get_openai)
+    if target:
+        try:
+            task_service.set_task_steps(target["id"], steps, user_id=user_id, role=role)
+        except PermissionError:
+            return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "tasks.write", "role": role}}
+    step_lines = "\n".join(f"  {i}. {s}" for i, s in enumerate(steps, start=1))
+    reply = f"Understood. Here's a breakdown for '{subject}':\n{step_lines}"
+    return {"reply": reply, "data": {"route": "task_breakdown", "task_id": target["id"] if target else None, "steps": steps}}
+
+
 def try_skill(
     text: str,
     *,
@@ -462,6 +569,10 @@ def try_skill(
     user_prefs: dict | None = None,
     memory_store=None,
     user_id: str | None = None,
+    task_service=None,
+    get_provider=None,
+    get_gemini=None,
+    get_openai=None,
 ) -> dict[str, object] | None:
     t = text.strip().lower()
 
@@ -869,6 +980,9 @@ def try_skill(
             "time in <city> — e.g. 'time in Tokyo'",
             "timer for <N> minutes/seconds/hours",
             "remind me in <N> minutes to <task>",
+            "create task <text> — add a task to your list",
+            "list tasks / what's on my list — show open tasks",
+            "break down <task> — LLM-assisted step breakdown",
             "disks — disk usage for all mount points",
             "ports / open ports — listening network ports",
             "kernel — kernel version",
@@ -2077,6 +2191,36 @@ def try_skill(
             return {"reply": "No notes on file. Say 'remember that…' to add one.", "data": {"route": "notes", "notes": []}}
         items = "\n".join(f"• {n}" for n in notes[-10:])
         return {"reply": f"On it. Your notes:\n{items}", "data": {"route": "notes", "notes": notes}}
+
+    # ── Task management (per-user, persistent) ──────────────────────────────────
+    _task_create = re.match(r"(?:create|add|new)\s+task\s*:?\s+(.+)", text.strip(), re.I)
+    if _task_create:
+        _task_result = _handle_create_task(task_service, _task_create.group(1), user_id=user_id, role=role)
+        if _task_result:
+            return _task_result
+
+    if t in {
+        "list tasks", "list my tasks", "show tasks", "show my tasks", "my tasks",
+        "what's on my list", "whats on my list", "what is on my list",
+        "open tasks", "my open tasks", "task list", "tasks",
+    }:
+        _task_result = _handle_list_tasks(task_service, user_id=user_id, role=role)
+        if _task_result:
+            return _task_result
+
+    _task_breakdown = re.match(r"break\s+(?:this\s+)?down\b\s*:?\s*(.*)", text.strip(), re.I)
+    if _task_breakdown:
+        _task_result = _handle_task_breakdown(
+            task_service,
+            _task_breakdown.group(1),
+            user_id=user_id,
+            role=role,
+            get_provider=get_provider,
+            get_gemini=get_gemini,
+            get_openai=get_openai,
+        )
+        if _task_result:
+            return _task_result
 
     # ── CPU temperature ───────────────────────────────────────────────────────
     if re.search(

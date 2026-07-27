@@ -168,7 +168,7 @@ jarvis/
 ├── scripts/                    # Ops scripts: benchmark, evidence collection, token lifecycle drill
 └── docs/
     ├── README.md
-    └── v1/
+    ├── v1/
         ├── planning/
         │   ├── ROADMAP_V1.md
         │   ├── RELEASE_CRITERIA_V1.md
@@ -180,6 +180,10 @@ jarvis/
         │   ├── MANUAL_ACCEPTANCE_V1.md
         │   └── USER_EXECUTION_RUNBOOK_V1.md
         └── evidence/            # V1 release evidence templates and collected artifacts
+    └── v2/
+        └── planning/
+            ├── ROADMAP_V2.md            # "Real JARVIS" execution plan, phases 0–7
+            └── EXECUTION_CHECKLIST_V2.md # Live status tracker, updated every V2 session
 ```
 
 ---
@@ -524,13 +528,16 @@ LLM providers (env `LLM_PROVIDER`): `openai`, `gemini`, `local`
 | `JARVIS_DEFAULT_ADMIN_PASSWORD` | admin123 | Bootstrap admin password |
 | `JARVIS_EMERGENCY_STOP` | 0 | Kill switch for write actions |
 | `JARVIS_TOKEN_TTL_MIN` | 60 | Bearer token TTL in minutes |
+| `JARVIS_IDENTITY_TOKEN_TTL_MIN` | 10080 (7 days) | Logged-in user session token TTL in minutes |
+| `JARVIS_IDENTITY_SESSIONS_PATH` | /var/lib/jarvis/identity_sessions.json | Persisted identity sessions — survives service restarts |
 | `JARVIS_MAX_ACTIVE_TOKENS` | 10 | Max concurrent bearer tokens |
 | `JARVIS_AUTO_BACKUP_DISABLED` | 0 | Disable auto-backup |
 | `JARVIS_AUTO_BACKUP_INTERVAL_HOURS` | 24 | Auto-backup interval |
 | `JARVIS_AUDIT_LOG_PATH` | /var/lib/jarvis/ | Audit log location |
 | `JARVIS_CHAT_HISTORY_PATH` | /var/lib/jarvis/ | Chat history SQLite path |
 | `JARVIS_USER_STORE_PATH` | /var/lib/jarvis/ | User store JSON path |
-| `JARVIS_MEMORY_PATH` | /var/lib/jarvis/memory.json | Engine memory file |
+| `JARVIS_MEMORY_PATH` | /var/lib/jarvis/memory.json | Explicit memory: user notes + aliases (`MemoryStore`) |
+| `JARVIS_LEARNING_PATH` | /var/lib/jarvis/learning.json | Implicit learning: query stats, learned replies, feedback (`LearningStore`) |
 | `ALLOWED_TARGETS` | — | Comma-separated allowed service targets |
 
 ---
@@ -550,7 +557,9 @@ All data is stored locally by default at `/var/lib/jarvis/` (falls back to `/tmp
 | `admin_settings.json` | JSON | Global settings (voice, LLM, HA config) |
 | `admin_passwords.json` | JSON | Bcrypt-hashed passwords |
 | `user_preferences.json` | JSON | Per-user preferences |
-| `memory.json` | JSON | Engine memory (notes, aliases, feedback) |
+| `memory.json` | JSON | Explicit memory: user notes + aliases (`MemoryStore`) |
+| `learning.json` | JSON | Implicit learning: query stats, learned replies, feedback (`LearningStore`) — separate file as of V2 (previously collided with `memory.json`) |
+| `identity_sessions.json` | JSON | Logged-in user session tokens — persisted as of V2 so a service restart no longer force-logs-out every active user |
 | `proxmox_hosts.json` | JSON | Configured Proxmox hosts |
 | `pending_signups.json` | JSON | Short-lived self-service signup records (email → hashed code + hashed password, auto-pruned) |
 | `/var/lib/jarvis/auto_backups/` | JSON | Rolling auto-backups (7 kept) |

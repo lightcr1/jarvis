@@ -14,10 +14,12 @@ class EngineTests(unittest.TestCase):
         os.environ["COOLDOWN_CRITICAL_SECONDS"] = "0"
         self.tmpdir = tempfile.TemporaryDirectory()
         os.environ["JARVIS_MEMORY_PATH"] = os.path.join(self.tmpdir.name, "memory.json")
+        os.environ["JARVIS_LEARNING_PATH"] = os.path.join(self.tmpdir.name, "learning.json")
         self.engine = JarvisEngine(build_registry(), SecurityPolicy())
 
     def tearDown(self):
         self.tmpdir.cleanup()
+        os.environ.pop("JARVIS_LEARNING_PATH", None)
 
     def test_fuzzy_matching(self):
         response = self.engine.process("statuz jarvis", token=None)
@@ -254,9 +256,11 @@ class LearningStoreTests(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         os.environ["JARVIS_MEMORY_PATH"] = os.path.join(self.tmpdir.name, "mem.json")
+        os.environ["JARVIS_LEARNING_PATH"] = os.path.join(self.tmpdir.name, "learning.json")
 
     def tearDown(self):
         self.tmpdir.cleanup()
+        os.environ.pop("JARVIS_LEARNING_PATH", None)
 
     def test_remember_vmid_kind(self):
         from jarvis.jarvis_engine import JarvisEngine, build_registry, SecurityPolicy
@@ -324,6 +328,39 @@ class LearningStoreTests(unittest.TestCase):
         resp = engine.process("learning show", token=None)
         self.assertEqual(resp["summary"], "Memory snapshot ready.")
 
+    def test_learning_store_migrates_legacy_shared_memory_file(self):
+        import json
+        from jarvis.jarvis_engine import LearningStore
+
+        legacy_path = os.environ["JARVIS_MEMORY_PATH"]
+        with open(legacy_path, "w", encoding="utf-8") as fh:
+            json.dump({
+                "schema_version": 1,
+                "users": {},
+                "query_stats": {"ping": {"total": 3, "unmatched": 3}},
+                "learned_replies": {"ping": {"reply": "pong", "confidence": 2}},
+            }, fh)
+
+        store = LearningStore()
+
+        self.assertEqual(store.data["query_stats"]["ping"]["total"], 3)
+        self.assertEqual(store.data["learned_replies"]["ping"]["reply"], "pong")
+        self.assertTrue(os.path.exists(os.environ["JARVIS_LEARNING_PATH"]))
+
+    def test_learning_store_skips_migration_when_own_file_has_data(self):
+        import json
+        from jarvis.jarvis_engine import LearningStore
+
+        first = LearningStore()
+        first.remember("default", "greeting", "hi")
+
+        with open(os.environ["JARVIS_MEMORY_PATH"], "w", encoding="utf-8") as fh:
+            json.dump({"query_stats": {"other": {"total": 1, "unmatched": 1}}}, fh)
+
+        second = LearningStore()
+        self.assertEqual(second.data["defaults"].get("greeting"), "hi")
+        self.assertNotIn("other", second.data.get("query_stats", {}))
+
 
 class EngineFallbackTests(unittest.TestCase):
     def setUp(self):
@@ -337,9 +374,11 @@ class EngineFallbackTests(unittest.TestCase):
         os.environ["COOLDOWN_RESTART_SECONDS"] = "0"
         os.environ["COOLDOWN_CRITICAL_SECONDS"] = "0"
         os.environ["JARVIS_MEMORY_PATH"] = os.path.join(self.tmpdir.name, "mem.json")
+        os.environ["JARVIS_LEARNING_PATH"] = os.path.join(self.tmpdir.name, "learning.json")
         self.engine = JarvisEngine(build_registry(), SecurityPolicy())
 
     def tearDown(self):
+        os.environ.pop("JARVIS_LEARNING_PATH", None)
         os.environ.pop("OPENAI_API_KEY", None)
         os.environ.pop("GEMINI_API_KEY", None)
         os.environ.pop("OPENROUTER_API_KEY", None)

@@ -8,9 +8,13 @@ from fastapi import HTTPException
 from jarvis.runtime_helpers import (
     chat_owner_key,
     env_int,
+    get_identity_session,
+    issue_identity_token,
+    load_identity_tokens,
     normalize_filter,
     prepare_audit_filters,
     prune_identity_tokens,
+    save_identity_tokens,
     token_fingerprint,
     validate_actor_user_id_filter,
     validate_audit_query,
@@ -202,6 +206,70 @@ class PruneIdentityTokensTests(unittest.TestCase):
     def test_prune_empty_dict(self):
         tokens = {}
         self.assertEqual(0, prune_identity_tokens(tokens))
+
+
+class IdentityTokenPersistenceTests(unittest.TestCase):
+    def setUp(self):
+        import tempfile
+        self.tmpdir = tempfile.TemporaryDirectory()
+        self.path = os.path.join(self.tmpdir.name, "identity_sessions.json")
+
+    def tearDown(self):
+        self.tmpdir.cleanup()
+
+    def test_load_missing_file_returns_empty_dict(self):
+        self.assertEqual({}, load_identity_tokens(self.path))
+
+    def test_save_then_load_roundtrips(self):
+        tokens = {"tok-1": {"user_id": "usr-1", "role": "admin", "exp": time.time() + 3600}}
+        save_identity_tokens(tokens, self.path)
+        loaded = load_identity_tokens(self.path)
+        self.assertEqual(tokens, loaded)
+
+    def test_load_corrupt_file_returns_empty_dict(self):
+        with open(self.path, "w", encoding="utf-8") as fh:
+            fh.write("{not valid json")
+        self.assertEqual({}, load_identity_tokens(self.path))
+
+    def test_issue_identity_token_persists_when_path_given(self):
+        tokens: dict = {}
+        issue_identity_token(identity_tokens=tokens, user_id="usr-1", role="admin", normalize_role=lambda r: r, path=self.path)
+        reloaded = load_identity_tokens(self.path)
+        self.assertEqual(1, len(reloaded))
+
+    def test_issue_identity_token_survives_reload_into_fresh_dict(self):
+        tokens: dict = {}
+        issued = issue_identity_token(identity_tokens=tokens, user_id="usr-1", role="admin", normalize_role=lambda r: r, path=self.path)
+
+        restarted_process_tokens = load_identity_tokens(self.path)
+        self.assertIn(issued["session_token"], restarted_process_tokens)
+
+    def test_prune_persists_removal_when_path_given(self):
+        tokens = {"expired": {"exp": time.time() - 100}}
+        save_identity_tokens(tokens, self.path)
+        prune_identity_tokens(tokens, self.path)
+        self.assertEqual({}, load_identity_tokens(self.path))
+
+    def test_get_identity_session_persists_expiry_cleanup(self):
+        tokens = {"tok-1": {"user_id": "usr-1", "role": "admin", "exp": time.time() - 10}}
+        save_identity_tokens(tokens, self.path)
+        user_store = Mock()
+        session = get_identity_session(
+            identity_tokens=tokens, x_jarvis_session="tok-1", user_store=user_store,
+            normalize_role=lambda r: r, path=self.path,
+        )
+        self.assertIsNone(session)
+        self.assertEqual({}, load_identity_tokens(self.path))
+
+    def test_get_identity_session_without_path_does_not_touch_disk(self):
+        tokens = {"tok-1": {"user_id": "usr-1", "role": "admin", "exp": time.time() + 3600}}
+        user_store = Mock()
+        user_store.get_user.return_value = {"id": "usr-1", "enabled": True}
+        get_identity_session(
+            identity_tokens=tokens, x_jarvis_session="tok-1", user_store=user_store,
+            normalize_role=lambda r: r,
+        )
+        self.assertFalse(os.path.exists(self.path))
 
 
 if __name__ == "__main__":

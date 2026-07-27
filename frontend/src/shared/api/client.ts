@@ -24,6 +24,14 @@ export type UserPreferences = {
   quick_actions?: string[];
   notifications_enabled?: boolean;
   persona_tone?: "formal" | "casual";
+  quiet_hours_enabled?: boolean;
+  quiet_hours_start?: string;
+  quiet_hours_end?: string;
+  weekly_digest_enabled?: boolean;
+  weekly_digest_day?: string;
+  weekly_digest_time?: string;
+  nightly_summary_enabled?: boolean;
+  nightly_summary_time?: string;
 };
 
 export type RequestOptions = {
