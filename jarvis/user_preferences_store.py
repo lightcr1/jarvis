@@ -29,6 +29,7 @@ DEFAULT_PREFERENCES = {
     "weekly_digest_time": "18:00",
     "nightly_summary_enabled": False,
     "nightly_summary_time": "21:00",
+    "last_briefing_seen_ts": 0,
 }
 
 _WEEKDAY_NAMES = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
@@ -158,6 +159,14 @@ class UserPreferencesStore:
         self.data.setdefault("preferences", {})[user_id] = merged
         self._save()
         return merged
+
+    def mark_briefing_seen(self, user_id: str, ts: int | None = None) -> dict:
+        current = self.get(user_id)
+        current["last_briefing_seen_ts"] = ts if ts is not None else int(time.time())
+        current["updated_at"] = int(time.time())
+        self.data.setdefault("preferences", {})[user_id] = current
+        self._save()
+        return current
 
     def delete(self, user_id: str) -> bool:
         removed = self.data.setdefault("preferences", {}).pop(user_id, None)

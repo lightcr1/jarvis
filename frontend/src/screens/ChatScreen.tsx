@@ -12,6 +12,7 @@ import {
 } from '../shared/api/chat';
 import type { ChatSessionListItem } from '../shared/api/chat';
 import { getStoredPreferences, setStoredPreferences, savePreferences, getStoredUser, apiRequest, consumePendingChatPrefill, isGuestMode } from '../shared/api/client';
+import { markBriefingSeen } from '../shared/api/alerts';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
 export function serializeChatToMarkdown(title: string, messages: Array<{ role: string; content: string; time: string }>): string {
@@ -376,6 +377,7 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
             const t = new Date().toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' });
             setMsgs(prev => [{ id: Date.now(), role: 'jarvis', content: data.text, time: t }, ...prev]);
             localStorage.setItem(briefingKey, '1');
+            markBriefingSeen().catch(() => {});
           })
           .catch(() => {});
       }

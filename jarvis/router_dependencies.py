@@ -200,6 +200,16 @@ def build_notifications_deps(state: object) -> dict:
     }
 
 
+def build_device_sync_deps(state: object) -> dict:
+    from .api_alerts import get_alert_broadcaster
+
+    return {
+        "require_identity_session": state.require_identity_session,
+        "user_preferences_store": live_attr(state, "user_preferences_store"),
+        "alert_broadcaster": get_alert_broadcaster(),
+    }
+
+
 def build_policies_deps(state: object) -> dict:
     return {
         "require_admin_access": state.require_admin_access,

@@ -705,3 +705,40 @@ async def test_broadcaster_push_fanout_failure_does_not_crash_broadcast():
     broadcaster.configure_push_fanout(failing_fanout)
     # Should not raise even though the fanout callback fails.
     await broadcaster.broadcast({"type": "alert", "message": "hi"})
+
+
+@pytest.mark.asyncio
+async def test_broadcast_to_user_only_reaches_target():
+    broadcaster = AlertBroadcaster()
+    received: list[dict] = []
+
+    class _FakeWS:
+        async def send_json(self, data):
+            received.append(data)
+
+    ws1 = _FakeWS()
+    ws2 = _FakeWS()
+    broadcaster.connect(ws1, user_id="user-1")  # type: ignore
+    broadcaster.connect(ws2, user_id="user-1")  # type: ignore
+
+    await broadcaster.broadcast_to_user("user-1", {"type": "briefing_seen", "last_briefing_seen_ts": 123})
+    assert len(received) == 2
+    assert all(payload["type"] == "briefing_seen" for payload in received)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_to_user_ignores_other_users():
+    broadcaster = AlertBroadcaster()
+    received: list[dict] = []
+
+    class _FakeWS:
+        async def send_json(self, data):
+            received.append(data)
+
+    ws1 = _FakeWS()
+    ws2 = _FakeWS()
+    broadcaster.connect(ws1, user_id="user-1")  # type: ignore
+    broadcaster.connect(ws2, user_id="user-2")  # type: ignore
+
+    await broadcaster.broadcast_to_user("user-1", {"type": "briefing_seen", "last_briefing_seen_ts": 456})
+    assert len(received) == 1
