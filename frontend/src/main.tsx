@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
 
 // Apply stored theme synchronously before first render to avoid flash
 try {
@@ -28,6 +28,11 @@ import { ProviderSettingsPage } from "./routes/admin/pages/ProviderSettingsPage"
 import { UsagePage } from "./routes/admin/pages/UsagePage";
 import { AdminDocsPage } from "./routes/admin/pages/AdminDocsPage";
 import { IntegrationsPage } from "./routes/admin/pages/IntegrationsPage";
+import { WorkspaceShell } from "./shared/layout/WorkspaceShell";
+import { FilesScreen } from "./screens/FilesScreen";
+import { EmailScreen } from "./screens/EmailScreen";
+import { CalendarScreen } from "./screens/CalendarScreen";
+import { DesktopScreen } from "./screens/DesktopScreen";
 import "./styles.css";
 
 const router = createBrowserRouter([
@@ -48,6 +53,17 @@ const router = createBrowserRouter([
       { path: "usage",            element: <UsagePage /> },
       { path: "docs",             element: <AdminDocsPage /> },
       { path: "integrations",     element: <IntegrationsPage /> },
+    ],
+  },
+  {
+    path: "/workspace",
+    element: <WorkspaceShell />,
+    children: [
+      { index: true,      element: <Navigate to="files" replace /> },
+      { path: "files",    element: <FilesScreen /> },
+      { path: "email",    element: <EmailScreen /> },
+      { path: "calendar", element: <CalendarScreen /> },
+      { path: "desktop",  element: <DesktopScreen /> },
     ],
   },
   { path: "*", element: <JarvisApp /> },

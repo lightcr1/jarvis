@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from "react";
-import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 import { getStoredPreferences } from "../api/client";
 import { J, useJ, IconMoon, IconSun, applyTheme } from "../../screens/jarvis-shared";
+import { AppSwitcher } from "./AppSwitcher";
 
 const NAV_LINKS = [
-  { to: "/chat",                label: "← Back to Chat", end: false },
   { to: "/dashboard",           label: "Overview",       end: true  },
   { to: "/dashboard/users",     label: "Users",          end: false },
   { to: "/dashboard/groups",    label: "Groups",         end: false },
@@ -26,6 +26,7 @@ export function AdminShell() {
   const navigate = useNavigate();
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState("");
+  const [showSwitcher, setShowSwitcher] = useState(false);
   const isDark = (preferences.theme ?? "dark") === "dark";
 
   useEffect(() => {
@@ -59,18 +60,21 @@ export function AdminShell() {
         width: 200, flexShrink: 0, background: J.bg1, borderRight: `1px solid ${J.border}`,
         display: "flex", flexDirection: "column", overflow: "hidden",
       }}>
-        {/* Brand */}
-        <Link to="/dashboard" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 10, padding: "16px 16px 12px", borderBottom: `1px solid ${J.border}` }}>
-          <div style={{
-            width: 32, height: 32, borderRadius: 8, background: J.amberDim,
-            border: `1px solid ${J.borderAccent}`, display: "flex", alignItems: "center",
-            justifyContent: "center", fontSize: 14, fontWeight: 700, color: J.amber, flexShrink: 0,
-          }}>J</div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: J.text }}>Jarvis Admin</div>
-            <div style={{ fontSize: 10, color: J.textMuted }}>Operator Dashboard</div>
-          </div>
-        </Link>
+        {/* Brand / area switcher */}
+        <div style={{ position: "relative", borderBottom: `1px solid ${J.border}` }}>
+          <button onClick={() => setShowSwitcher(v => !v)} style={{ width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "16px 16px 12px" }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 8, background: J.amberDim,
+              border: `1px solid ${J.borderAccent}`, display: "flex", alignItems: "center",
+              justifyContent: "center", fontSize: 14, fontWeight: 700, color: J.amber, flexShrink: 0,
+            }}>J</div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: J.text }}>Jarvis Admin</div>
+              <div style={{ fontSize: 10, color: J.textMuted }}>Operator Dashboard</div>
+            </div>
+          </button>
+          {showSwitcher && <AppSwitcher current="admin" onClose={() => setShowSwitcher(false)} placement="below" />}
+        </div>
 
         {/* Nav links */}
         <nav style={{ flex: 1, padding: "8px 8px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>

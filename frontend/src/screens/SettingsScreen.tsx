@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey, IconBell, IconBook } from './jarvis-shared';
-import { getStoredPreferences, setStoredPreferences, getSessionToken, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
+import { getStoredPreferences, setStoredPreferences, getSessionToken, getStoredUser, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
 import { synthesizeSpeech } from '../shared/api/chat';
 import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
 import { fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, type BillingInfo, type ByokKey } from '../shared/api/billing';
@@ -301,6 +301,7 @@ function SecurityPanel() {
   const [state, setState] = useState<'idle' | 'saving' | 'ok' | 'error'>('idle');
   const [errMsg, setErrMsg] = useState('');
   const isLoggedIn = !!getSessionToken();
+  const isAdmin = getStoredUser()?.role === 'admin';
 
   const handleChange = async () => {
     if (!cur || !next) { setState('error'); setErrMsg('Fill in all fields.'); return; }
@@ -349,10 +350,12 @@ function SecurityPanel() {
         </div>
       </div>
     )}
-    <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
-      Role permissions and emergency stop are managed in the{' '}
-      <a href="/dashboard" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>.
-    </div>
+    {isAdmin && (
+      <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
+        Role permissions and emergency stop are managed in the{' '}
+        <a href="/dashboard" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>.
+      </div>
+    )}
   </>);
 }
 
@@ -682,6 +685,7 @@ export function SettingsScreen() {
   };
 
   const current = availableCats.find(c => c.id === cat);
+  const isAdmin = getStoredUser()?.role === 'admin';
 
   const panels: Record<string, React.ReactNode> = {
     appearance: (<>
@@ -833,13 +837,15 @@ export function SettingsScreen() {
           {voiceTestErr && <span style={{ fontSize: 12, color: J.error }}>{voiceTestErr}</span>}
         </div>
       </div>
-      <div style={{ padding: '16px 0', borderBottom: `1px solid ${J.border}` }}>
-        <div style={{ fontSize: 14, color: J.text, marginBottom: 6 }}>Wake Word</div>
-        <div style={{ fontSize: 13, color: J.textMuted, lineHeight: 1.6 }}>
-          Wake word settings (phrase, enabled state) are configured in the{' '}
-          <a href="/dashboard/settings" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard → Settings</a>.
+      {isAdmin && (
+        <div style={{ padding: '16px 0', borderBottom: `1px solid ${J.border}` }}>
+          <div style={{ fontSize: 14, color: J.text, marginBottom: 6 }}>Wake Word</div>
+          <div style={{ fontSize: 13, color: J.textMuted, lineHeight: 1.6 }}>
+            Wake word settings (phrase, enabled state) are configured in the{' '}
+            <a href="/dashboard/settings" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard → Settings</a>.
+          </div>
         </div>
-      </div>
+      )}
       <div style={{ padding: '16px 0', borderBottom: `1px solid ${J.border}` }}>
         <div style={{ fontSize: 14, color: J.text, marginBottom: 6 }}>STT provider</div>
         <div style={{ fontSize: 13, color: J.textMuted, lineHeight: 1.6 }}>
@@ -856,11 +862,13 @@ export function SettingsScreen() {
       <Integration name="Proxmox" status={intStatus.proxmox === 'checking' ? 'checking' : intStatus.proxmox === 'online' ? 'online' : 'offline'} note="Via JARVIS_PROXMOX_HOST env var" icon={<IconSettings size={14} />} />
       <Integration name="Home Assistant" status={intStatus.ha === 'checking' ? 'checking' : intStatus.ha === 'online' ? 'online' : 'offline'} note="Via JARVIS_HA_BASE_URL env var" icon={<IconSettings size={14} />} />
       <Integration name="RAG / Knowledge" status={intStatus.rag === 'checking' ? 'checking' : intStatus.rag === 'online' ? 'active' : 'offline'} note="GitHub repos + WikiJS indexing" icon={<IconCode size={14} />} />
-      <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
-        Integrations are configured via environment variables on the server. Use the{' '}
-        <a href="/dashboard/settings" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>{' '}
-        to view current configuration.
-      </div>
+      {isAdmin && (
+        <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
+          Integrations are configured via environment variables on the server. Use the{' '}
+          <a href="/dashboard/settings" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>{' '}
+          to view current configuration.
+        </div>
+      )}
     </>),
 
     security: (<SecurityPanel />),
