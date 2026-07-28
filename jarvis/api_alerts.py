@@ -1,39 +1,73 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import threading
 import time
-from typing import Callable
+from typing import Awaitable, Callable
 
 from fastapi import APIRouter, Header, HTTPException, WebSocket, WebSocketDisconnect
 
 from .api_models import AlertRuleCreate, AlertRuleUpdate
 from .router_dependencies import LiveRef
 
+logger = logging.getLogger("jarvis.alerts")
+
+PushFanoutFn = Callable[[dict, "set[str]"], Awaitable[None]]
+
 
 class AlertBroadcaster:
-    """Fan-out broadcaster for connected /ws/alerts clients."""
+    """Fan-out broadcaster for connected /ws/alerts clients.
+
+    Also optionally fans engine-fired events out to webpush for subscribed users
+    who don't currently hold a live WebSocket connection — see `configure_push_fanout`.
+    """
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        self._clients: set[WebSocket] = set()
+        self._clients: dict[WebSocket, str | None] = {}
+        self._push_fanout: PushFanoutFn | None = None
 
-    def connect(self, ws: WebSocket) -> None:
+    def connect(self, ws: WebSocket, user_id: str | None = None) -> None:
         with self._lock:
-            self._clients.add(ws)
+            self._clients[ws] = user_id
 
     def disconnect(self, ws: WebSocket) -> None:
         with self._lock:
-            self._clients.discard(ws)
+            self._clients.pop(ws, None)
+
+    def connected_user_ids(self) -> set[str]:
+        with self._lock:
+            return {uid for uid in self._clients.values() if uid}
+
+    def configure_push_fanout(self, fn: PushFanoutFn | None) -> None:
+        self._push_fanout = fn
 
     async def broadcast(self, payload: dict) -> None:
         with self._lock:
-            targets = list(self._clients)
+            targets = list(self._clients.keys())
         for ws in targets:
             try:
                 await ws.send_json(payload)
             except Exception:
-                self._clients.discard(ws)
+                with self._lock:
+                    self._clients.pop(ws, None)
+        if self._push_fanout is None:
+            return
+        try:
+            await self._push_fanout(payload, self.connected_user_ids())
+        except Exception as exc:
+            logger.warning("Push fanout failed: %s", exc)
+
+    async def broadcast_to_user(self, user_id: str, payload: dict) -> None:
+        with self._lock:
+            targets = [ws for ws, uid in self._clients.items() if uid == user_id]
+        for ws in targets:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                with self._lock:
+                    self._clients.pop(ws, None)
 
 
 _broadcaster = AlertBroadcaster()
@@ -158,7 +192,7 @@ def build_alerts_router(deps: dict) -> APIRouter:
             return
 
         await websocket.accept()
-        _broadcaster.connect(websocket)
+        _broadcaster.connect(websocket, user_id=session["user"]["id"])
 
         try:
             ha_alerts = _get_ha_alerts(deps, session)

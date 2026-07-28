@@ -111,6 +111,21 @@ export function deleteAdminUserConversations(userId: string) {
   return apiRequest<{ ok: boolean; deleted: number }>(`/admin/users/${encodeURIComponent(userId)}/conversations`, { method: "DELETE", includeAdmin: true });
 }
 
+export type AdminUserLimits = {
+  chf_per_day: number;
+  chf_per_month: number;
+  tokens_per_request: number;
+  requests_per_min: number;
+  expensive_models_per_day: number;
+  allowed_models: string[];
+  storage_quota_mb: number;
+  updated_at: number;
+};
+
+export function updateAdminUserLimits(userId: string, body: Partial<Pick<AdminUserLimits, "storage_quota_mb" | "chf_per_day" | "chf_per_month" | "requests_per_min">>) {
+  return apiRequest<AdminUserLimits>(`/admin/users/${encodeURIComponent(userId)}/limits`, { method: "PUT", includeAdmin: true, body });
+}
+
 export function fetchAdminGroups() {
   return apiRequest<{ groups: AdminGroup[] }>("/admin/groups", { includeAdmin: true });
 }
@@ -213,4 +228,204 @@ export async function restoreAdminBackup(payload: Record<string, unknown>) {
     includeAdmin: true,
     body: payload,
   });
+}
+
+// ---------------------------------------------------------------------------
+// Policies & Playbooks
+// ---------------------------------------------------------------------------
+
+export type PolicyCondition = {
+  metric: string;
+  comparator: "above" | "below" | "equals" | "contains";
+  threshold: number | string;
+  duration_sec: number;
+};
+
+export type PolicyAction = {
+  type: string;
+  params: Record<string, unknown>;
+};
+
+export type AdminPolicy = {
+  id: string;
+  name: string;
+  domain: string;
+  condition: PolicyCondition;
+  action: PolicyAction;
+  enabled: boolean;
+  dry_run: boolean;
+  cooldown_sec: number;
+  last_fired_at: number | null;
+  created_at: number;
+};
+
+export type PolicyEvent = {
+  type: string;
+  event_id: string;
+  policy_id: string;
+  policy_name: string;
+  domain: string;
+  severity: string;
+  current_value: number | string;
+  message: string;
+  timestamp: number;
+};
+
+export type AdminPlaybookStepInput = {
+  step_id?: string;
+  description?: string;
+  action: PolicyAction;
+  requires_confirmation?: boolean;
+};
+
+export type AdminPlaybookStep = {
+  step_id: string;
+  description: string;
+  action: PolicyAction;
+  requires_confirmation: boolean;
+};
+
+export type AdminPlaybook = {
+  id: string;
+  name: string;
+  description: string;
+  dry_run: boolean;
+  steps: AdminPlaybookStep[];
+  created_at: number;
+};
+
+export type PlaybookRunStep = {
+  step_id: string;
+  status: "pending" | "running" | "succeeded" | "failed" | "skipped" | "would_execute";
+  started_at: number | null;
+  finished_at: number | null;
+  output: Record<string, unknown> | null;
+  error: string | null;
+};
+
+export type PlaybookRun = {
+  id: string;
+  playbook_id: string;
+  playbook_name: string;
+  dry_run: boolean;
+  status: "running" | "completed" | "failed" | "awaiting_confirmation" | "cancelled";
+  started_at: number;
+  finished_at: number | null;
+  steps: PlaybookRunStep[];
+};
+
+export function fetchAdminPolicies() {
+  return apiRequest<{ policies: AdminPolicy[] }>("/admin/policies", { includeAdmin: true });
+}
+
+export function createAdminPolicy(body: {
+  name: string;
+  domain?: string;
+  condition: PolicyCondition;
+  action: PolicyAction;
+  enabled?: boolean;
+  dry_run?: boolean;
+  cooldown_sec?: number;
+}) {
+  return apiRequest<{ policy: AdminPolicy }>("/admin/policies", { method: "POST", includeAdmin: true, body });
+}
+
+export function updateAdminPolicy(policyId: string, patch: Partial<{
+  name: string;
+  domain: string;
+  condition: PolicyCondition;
+  action: PolicyAction;
+  enabled: boolean;
+  dry_run: boolean;
+  cooldown_sec: number;
+}>) {
+  return apiRequest<{ policy: AdminPolicy }>(`/admin/policies/${encodeURIComponent(policyId)}`, {
+    method: "PATCH",
+    includeAdmin: true,
+    body: patch,
+  });
+}
+
+export function deleteAdminPolicy(policyId: string) {
+  return apiRequest<{ ok: boolean; id: string }>(`/admin/policies/${encodeURIComponent(policyId)}`, { method: "DELETE", includeAdmin: true });
+}
+
+export function testAdminPolicy(policyId: string) {
+  return apiRequest<{ ok: boolean; event: PolicyEvent; escalated: boolean }>(`/admin/policies/${encodeURIComponent(policyId)}/test`, {
+    method: "POST",
+    includeAdmin: true,
+  });
+}
+
+export function fetchAdminPolicyHistory(limit = 100) {
+  return apiRequest<{ events: PolicyEvent[] }>(`/admin/policies/history?limit=${limit}`, { includeAdmin: true });
+}
+
+export function fetchAdminPlaybooks() {
+  return apiRequest<{ playbooks: AdminPlaybook[] }>("/admin/playbooks", { includeAdmin: true });
+}
+
+export function createAdminPlaybook(body: {
+  name: string;
+  description?: string;
+  dry_run?: boolean;
+  steps?: AdminPlaybookStepInput[];
+}) {
+  return apiRequest<{ playbook: AdminPlaybook }>("/admin/playbooks", { method: "POST", includeAdmin: true, body });
+}
+
+export function updateAdminPlaybook(playbookId: string, patch: Partial<{
+  name: string;
+  description: string;
+  dry_run: boolean;
+  steps: AdminPlaybookStepInput[];
+}>) {
+  return apiRequest<{ playbook: AdminPlaybook }>(`/admin/playbooks/${encodeURIComponent(playbookId)}`, {
+    method: "PATCH",
+    includeAdmin: true,
+    body: patch,
+  });
+}
+
+export function deleteAdminPlaybook(playbookId: string) {
+  return apiRequest<{ ok: boolean; id: string }>(`/admin/playbooks/${encodeURIComponent(playbookId)}`, { method: "DELETE", includeAdmin: true });
+}
+
+export function executeAdminPlaybook(playbookId: string, dryRun?: boolean) {
+  const query = dryRun === undefined ? "" : `?dry_run=${dryRun ? "true" : "false"}`;
+  return apiRequest<{ run: PlaybookRun }>(`/admin/playbooks/${encodeURIComponent(playbookId)}/execute${query}`, {
+    method: "POST",
+    includeAdmin: true,
+  });
+}
+
+export function resumeAdminPlaybookRun(runId: string, confirm = true) {
+  return apiRequest<{ run: PlaybookRun }>(`/admin/playbooks/runs/${encodeURIComponent(runId)}/resume?confirm=${confirm ? "true" : "false"}`, {
+    method: "POST",
+    includeAdmin: true,
+  });
+}
+
+export function fetchAdminPlaybookRuns(playbookId: string) {
+  return apiRequest<{ runs: PlaybookRun[] }>(`/admin/playbooks/${encodeURIComponent(playbookId)}/runs`, { includeAdmin: true });
+}
+
+export function fetchAdminPlaybookRun(runId: string) {
+  return apiRequest<{ run: PlaybookRun }>(`/admin/playbooks/runs/${encodeURIComponent(runId)}`, { includeAdmin: true });
+}
+
+export type AdminIntegrationStatusEntry = {
+  user_id: string;
+  username?: string;
+  field_names: string[];
+  updated_at: number;
+};
+
+export type AdminIntegrationsStatus = {
+  calendar: AdminIntegrationStatusEntry[];
+  email: AdminIntegrationStatusEntry[];
+};
+
+export function fetchAdminIntegrationsStatus() {
+  return apiRequest<AdminIntegrationsStatus>("/admin/integrations/status", { includeAdmin: true });
 }

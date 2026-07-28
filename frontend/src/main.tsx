@@ -22,10 +22,12 @@ import { GroupsPage } from "./routes/admin/pages/GroupsPage";
 import { LogsPage } from "./routes/admin/pages/LogsPage";
 import { SettingsPage } from "./routes/admin/pages/SettingsPage";
 import { PermissionsPage } from "./routes/admin/pages/PermissionsPage";
+import { PoliciesPage } from "./routes/admin/pages/PoliciesPage";
 import { StatusPage } from "./routes/admin/pages/StatusPage";
 import { ProviderSettingsPage } from "./routes/admin/pages/ProviderSettingsPage";
 import { UsagePage } from "./routes/admin/pages/UsagePage";
 import { AdminDocsPage } from "./routes/admin/pages/AdminDocsPage";
+import { IntegrationsPage } from "./routes/admin/pages/IntegrationsPage";
 import "./styles.css";
 
 const router = createBrowserRouter([
@@ -38,12 +40,14 @@ const router = createBrowserRouter([
       { path: "users",            element: <UsersPage /> },
       { path: "groups",           element: <GroupsPage /> },
       { path: "permissions",      element: <PermissionsPage /> },
+      { path: "policies",         element: <PoliciesPage /> },
       { path: "status",           element: <StatusPage /> },
       { path: "logs",             element: <LogsPage /> },
       { path: "settings",         element: <SettingsPage /> },
       { path: "provider",         element: <ProviderSettingsPage /> },
       { path: "usage",            element: <UsagePage /> },
       { path: "docs",             element: <AdminDocsPage /> },
+      { path: "integrations",     element: <IntegrationsPage /> },
     ],
   },
   { path: "*", element: <JarvisApp /> },

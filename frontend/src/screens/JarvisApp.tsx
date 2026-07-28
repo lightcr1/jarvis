@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconCalendar, IconMail, IconMonitor, IconFolder, IconAmbient } from './jarvis-shared';
 import { GreetingOverlay } from '../components/GreetingOverlay';
 import { OnboardingModal, shouldShowOnboarding } from '../components/OnboardingModal';
 import { LoginScreen } from './LoginScreen';
@@ -11,21 +11,33 @@ import { ProxmoxScreen } from './ProxmoxScreen';
 import { ServiceHubScreen } from './ServiceHubScreen';
 import { SettingsScreen } from './SettingsScreen';
 import { DocsScreen } from './DocsScreen';
+import { TasksScreen } from './TasksScreen';
+import { CalendarScreen } from './CalendarScreen';
+import { EmailScreen } from './EmailScreen';
+import { WorkspaceScreen } from './WorkspaceScreen';
+import { FilesScreen } from './FilesScreen';
+import { AmbientDisplayScreen } from './AmbientDisplayScreen';
 import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill, savePreferences } from '../shared/api/client';
 import { useJarvisAlerts } from '../shared/api/alerts';
 import { useJarvisLiveStatus } from '../shared/api/status';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
-type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'services' | 'settings' | 'docs';
+type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'tasks' | 'calendar' | 'email' | 'workspace' | 'files' | 'services' | 'settings' | 'docs' | 'ambient';
 
 const NAV_ALL: Array<{ id: Screen; label: string; icon: (p: { size?: number }) => JSX.Element }> = [
-  { id: 'chat',     label: 'Chat',     icon: IconChat     },
-  { id: 'orb',      label: 'Voice',    icon: IconOrb      },
-  { id: 'home',     label: 'Home',     icon: IconHome     },
-  { id: 'proxmox',  label: 'Proxmox',  icon: IconServer   },
-  { id: 'services', label: 'Services', icon: IconGrid     },
-  { id: 'docs',     label: 'Docs',     icon: IconBook     },
-  { id: 'settings', label: 'Settings', icon: IconSettings },
+  { id: 'chat',      label: 'Chat',      icon: IconChat     },
+  { id: 'orb',       label: 'Voice',     icon: IconOrb      },
+  { id: 'home',      label: 'Home',      icon: IconHome     },
+  { id: 'proxmox',   label: 'Proxmox',   icon: IconServer   },
+  { id: 'tasks',     label: 'Tasks',     icon: IconCheck    },
+  { id: 'calendar',  label: 'Calendar',  icon: IconCalendar },
+  { id: 'email',     label: 'Email',     icon: IconMail     },
+  { id: 'workspace', label: 'Workspace', icon: IconMonitor  },
+  { id: 'files',     label: 'Files',     icon: IconFolder   },
+  { id: 'ambient',   label: 'Ambient',   icon: IconAmbient  },
+  { id: 'services',  label: 'Services',  icon: IconGrid     },
+  { id: 'docs',      label: 'Docs',      icon: IconBook     },
+  { id: 'settings',  label: 'Settings',  icon: IconSettings },
 ];
 
 const NAV_GUEST: Array<{ id: Screen; label: string; icon: (p: { size?: number }) => JSX.Element }> = [
@@ -258,7 +270,7 @@ export function JarvisApp() {
     const params = new URLSearchParams(window.location.search);
     const req = params.get('screen') as Screen | null;
     const publicScreens: Screen[] = ['docs'];
-    const validScreens: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'services', 'settings', 'docs'];
+    const validScreens: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'tasks', 'calendar', 'email', 'files', 'services', 'settings', 'docs', 'ambient'];
     const requested = (req && validScreens.includes(req)) ? req : null;
     if (getSessionToken() || isGuestMode()) return requested ?? 'chat';
     if (requested && publicScreens.includes(requested)) return requested;
@@ -354,7 +366,7 @@ export function JarvisApp() {
   };
 
   const navigate = (s: string) => {
-    const valid: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'services', 'settings', 'docs', 'login'];
+    const valid: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'tasks', 'calendar', 'email', 'files', 'services', 'settings', 'docs', 'ambient', 'login'];
     if (!valid.includes(s as Screen)) return;
     const guestAllowed: Screen[] = ['chat', 'docs', 'settings', 'login'];
     if (guest && !guestAllowed.includes(s as Screen)) return;
@@ -380,6 +392,7 @@ export function JarvisApp() {
   }, [alerts, dismissAlert, notificationsEnabled]);
 
   if (screen === 'login') return <LoginScreen onLogin={handleLogin} onGuest={handleGuestLogin} />;
+  if (screen === 'ambient') return <AmbientDisplayScreen onExit={() => setScreen('chat')} />;
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -401,6 +414,11 @@ export function JarvisApp() {
           {screen === 'orb'      && <OrbScreen onNavigate={navigate} liveState={liveStatus.state} />}
           {screen === 'home'     && <HomeAssistantScreen onNavigate={navigate} />}
           {screen === 'proxmox'  && <ProxmoxScreen onNavigate={navigate} />}
+          {screen === 'tasks'    && <TasksScreen onNavigate={navigate} />}
+          {screen === 'calendar' && <CalendarScreen onNavigate={navigate} />}
+          {screen === 'email'    && <EmailScreen onNavigate={navigate} />}
+          {screen === 'workspace' && <WorkspaceScreen onNavigate={navigate} />}
+          {screen === 'files'    && <FilesScreen onNavigate={navigate} />}
           {screen === 'services' && <ServiceHubScreen onNavigate={navigate} />}
           {screen === 'docs'     && <DocsScreen />}
           {screen === 'settings' && <SettingsScreen />}

@@ -168,7 +168,7 @@ jarvis/
 ├── scripts/                    # Ops scripts: benchmark, evidence collection, token lifecycle drill
 └── docs/
     ├── README.md
-    └── v1/
+    ├── v1/
         ├── planning/
         │   ├── ROADMAP_V1.md
         │   ├── RELEASE_CRITERIA_V1.md
@@ -180,6 +180,10 @@ jarvis/
         │   ├── MANUAL_ACCEPTANCE_V1.md
         │   └── USER_EXECUTION_RUNBOOK_V1.md
         └── evidence/            # V1 release evidence templates and collected artifacts
+    └── v2/
+        └── planning/
+            ├── ROADMAP_V2.md            # "Real JARVIS" execution plan, phases 0–7
+            └── EXECUTION_CHECKLIST_V2.md # Live status tracker, updated every V2 session
 ```
 
 ---
@@ -507,6 +511,20 @@ LLM providers (env `LLM_PROVIDER`): `openai`, `gemini`, `local`
 | `PROXMOX_API_TOKEN` | Default API token |
 | `PROXMOX_HOSTS_FILE` | Path to hosts JSON file |
 
+### Optional — Personal Cloud Workspace
+| Variable | Purpose |
+|---|---|
+| `JARVIS_WORKSPACE_GUACAMOLE_URL` | Base URL of the Apache Guacamole web client (e.g. `http://guac-host:8081/guacamole`). If unset, `/workspace/targets/{id}/connect` fails clearly with "workspace not configured" instead of crashing. |
+| `JARVIS_WORKSPACE_JSON_SECRET` | Shared secret for Guacamole's `guacamole-auth-json` extension — 32 hex chars (16 bytes / 128-bit AES key), must exactly match the `JSON_SECRET_KEY` set on the Guacamole side (see `deploy/guacamole/docker-compose.yml`). If unset, the connect endpoint fails clearly rather than crashing. |
+| `JARVIS_WORKSPACE_STORE_PATH` | Path to the workspace targets JSON store (default: `/var/lib/jarvis/workspace_targets.json`) |
+
+### Optional — Personal Cloud Files
+| Variable | Default | Purpose |
+|---|---|---|
+| `JARVIS_USER_FILES_PATH` | `/var/lib/jarvis/user_files/` | Storage root for per-user file drives — real directories on disk, one root per user (`{JARVIS_USER_FILES_PATH}/{user_id}/...`). Must point at a path with real capacity in production; the code never queries or assumes anything about the underlying disk's physical size — quota enforcement is purely logical (bytes used vs. the user's assigned quota). |
+| `JARVIS_FILES_STORE_PATH` | `/var/lib/jarvis/files_metadata.json` | Metadata store for the file drive — folder tree, file records, per-user running quota-usage totals, and JARVIS per-folder access grants. |
+| `JARVIS_FILES_MAX_UPLOAD_MB` | 2048 | Maximum size of a single upload, enforced server-side while streaming (independent of the user's remaining quota). |
+
 ### Optional — Knowledge / RAG
 | Variable | Purpose |
 |---|---|
@@ -524,13 +542,16 @@ LLM providers (env `LLM_PROVIDER`): `openai`, `gemini`, `local`
 | `JARVIS_DEFAULT_ADMIN_PASSWORD` | admin123 | Bootstrap admin password |
 | `JARVIS_EMERGENCY_STOP` | 0 | Kill switch for write actions |
 | `JARVIS_TOKEN_TTL_MIN` | 60 | Bearer token TTL in minutes |
+| `JARVIS_IDENTITY_TOKEN_TTL_MIN` | 10080 (7 days) | Logged-in user session token TTL in minutes |
+| `JARVIS_IDENTITY_SESSIONS_PATH` | /var/lib/jarvis/identity_sessions.json | Persisted identity sessions — survives service restarts |
 | `JARVIS_MAX_ACTIVE_TOKENS` | 10 | Max concurrent bearer tokens |
 | `JARVIS_AUTO_BACKUP_DISABLED` | 0 | Disable auto-backup |
 | `JARVIS_AUTO_BACKUP_INTERVAL_HOURS` | 24 | Auto-backup interval |
 | `JARVIS_AUDIT_LOG_PATH` | /var/lib/jarvis/ | Audit log location |
 | `JARVIS_CHAT_HISTORY_PATH` | /var/lib/jarvis/ | Chat history SQLite path |
 | `JARVIS_USER_STORE_PATH` | /var/lib/jarvis/ | User store JSON path |
-| `JARVIS_MEMORY_PATH` | /var/lib/jarvis/memory.json | Engine memory file |
+| `JARVIS_MEMORY_PATH` | /var/lib/jarvis/memory.json | Explicit memory: user notes + aliases (`MemoryStore`) |
+| `JARVIS_LEARNING_PATH` | /var/lib/jarvis/learning.json | Implicit learning: query stats, learned replies, feedback (`LearningStore`) |
 | `ALLOWED_TARGETS` | — | Comma-separated allowed service targets |
 
 ---
@@ -550,9 +571,13 @@ All data is stored locally by default at `/var/lib/jarvis/` (falls back to `/tmp
 | `admin_settings.json` | JSON | Global settings (voice, LLM, HA config) |
 | `admin_passwords.json` | JSON | Bcrypt-hashed passwords |
 | `user_preferences.json` | JSON | Per-user preferences |
-| `memory.json` | JSON | Engine memory (notes, aliases, feedback) |
+| `memory.json` | JSON | Explicit memory: user notes + aliases (`MemoryStore`) |
+| `learning.json` | JSON | Implicit learning: query stats, learned replies, feedback (`LearningStore`) — separate file as of V2 (previously collided with `memory.json`) |
+| `identity_sessions.json` | JSON | Logged-in user session tokens — persisted as of V2 so a service restart no longer force-logs-out every active user |
 | `proxmox_hosts.json` | JSON | Configured Proxmox hosts |
 | `pending_signups.json` | JSON | Short-lived self-service signup records (email → hashed code + hashed password, auto-pruned) |
+| `files_metadata.json` | JSON | Per-user file drive metadata — folder tree, file records, running quota-usage totals, JARVIS per-folder access grants (`FileStore`) |
+| `user_files/{user_id}/...` | Directory tree | Actual per-user file bytes — real directories on disk mirroring each user's folder structure, rooted at `JARVIS_USER_FILES_PATH` |
 | `/var/lib/jarvis/auto_backups/` | JSON | Rolling auto-backups (7 kept) |
 
 ---

@@ -99,6 +99,29 @@ def _read_ha_entity_value(ha_store: object | None, entity_id: str, attribute: st
         return None
 
 
+SignalSource = Callable[[dict], "float | str | None"]
+
+
+def _default_signal_sources(ha_store: object | None) -> dict[str, SignalSource]:
+    """Built-in metric readers, keyed by the `metric` field used in rule dicts.
+
+    Each source is a `Callable[[dict], float | str | None]` taking the full rule
+    dict (so ha_entity-style sources can read `ha_entity_id`/`ha_attribute` off it)
+    and returning the current value, or None if unavailable.
+    """
+    return {
+        "cpu": lambda _rule: _read_cpu_percent(),
+        "ram": lambda _rule: _read_ram_percent(),
+        "disk": lambda _rule: _read_disk_percent(),
+        "ha_health": lambda _rule: _read_ha_health(ha_store),
+        "ha_entity": lambda rule: (
+            _read_ha_entity_value(ha_store, rule["ha_entity_id"], rule.get("ha_attribute"))
+            if rule.get("ha_entity_id")
+            else None
+        ),
+    }
+
+
 def _evaluate_condition(value: float | str, condition: str, threshold: float | str) -> bool:
     if condition == "contains":
         return str(threshold).lower() in str(value).lower()
@@ -153,6 +176,7 @@ class AlertEngine:
         audit_admin_event: Callable,
         ha_store: object | None = None,
         broadcast_fn: Callable | None = None,
+        extra_sources: dict[str, SignalSource] | None = None,
     ) -> None:
         self._rules_store = rules_store
         self._audit = audit_admin_event
@@ -162,6 +186,18 @@ class AlertEngine:
         self._threshold_crossed_at: dict[str, float] = {}
         self._last_fired_at: dict[str, float] = {}
         self._history: deque[dict] = deque(maxlen=_MAX_HISTORY)
+        self._sources: dict[str, SignalSource] = _default_signal_sources(ha_store)
+        if extra_sources:
+            self._sources.update(extra_sources)
+
+    def register_source(self, metric: str, source: SignalSource) -> None:
+        """Register (or override) a pluggable signal source for a metric name.
+
+        Lets later phases (Proxmox, NAS, etc.) add new metric readers without
+        touching the poll loop or `_evaluate_rule` — rules just reference the
+        new metric name and the matching source is looked up here.
+        """
+        self._sources[metric] = source
 
     def start(self) -> None:
         if self._task and not self._task.done():
@@ -197,21 +233,14 @@ class AlertEngine:
                 logger.warning("Alert broadcast failed: %s", exc)
 
     def _read_metric(self, rule: dict) -> float | str | None:
-        metric = rule.get("metric", "cpu")
-        if metric == "cpu":
-            return _read_cpu_percent()
-        if metric == "ram":
-            return _read_ram_percent()
-        if metric == "disk":
-            return _read_disk_percent()
-        if metric == "ha_health":
-            return _read_ha_health(self._ha_store)
-        if metric == "ha_entity":
-            entity_id = rule.get("ha_entity_id")
-            if not entity_id:
-                return None
-            return _read_ha_entity_value(self._ha_store, entity_id, rule.get("ha_attribute"))
-        return None
+        source = self._sources.get(rule.get("metric", "cpu"))
+        if source is None:
+            return None
+        try:
+            return source(rule)
+        except Exception as exc:
+            logger.warning("Signal source %r raised: %s", rule.get("metric"), exc)
+            return None
 
     async def _evaluate_rule(self, rule: dict, now: float) -> None:
         rule_id = rule["id"]

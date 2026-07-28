@@ -568,6 +568,77 @@ class TestAlertsRestEndpoints(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Pluggable signal source tests (Phase 0 refactor)
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_custom_signal_source_registered_and_evaluated():
+    audit = _FakeAudit()
+    fired: list[dict] = []
+
+    async def fake_broadcast(event):
+        fired.append(event)
+
+    class _DummyStore:
+        def list_rules(self):
+            return []
+
+    engine = AlertEngine(rules_store=_DummyStore(), audit_admin_event=audit, broadcast_fn=fake_broadcast)
+    engine.register_source("proxmox.idle_vms", lambda rule: 3)
+
+    rule = {
+        "id": "rule-custom",
+        "name": "Idle VMs",
+        "enabled": True,
+        "metric": "proxmox.idle_vms",
+        "condition": "above",
+        "threshold": 0,
+        "duration_seconds": 0,
+        "severity": "info",
+        "cooldown_seconds": 60,
+    }
+
+    await engine._evaluate_rule(rule, time.time())
+    assert len(fired) == 1
+    assert fired[0]["metric"] == "proxmox.idle_vms"
+    assert fired[0]["current_value"] == 3
+
+
+@pytest.mark.asyncio
+async def test_unregistered_metric_source_is_skipped_not_crashed():
+    audit = _FakeAudit()
+    fired: list[dict] = []
+
+    async def fake_broadcast(event):
+        fired.append(event)
+
+    class _DummyStore:
+        def list_rules(self):
+            return []
+
+    engine = AlertEngine(rules_store=_DummyStore(), audit_admin_event=audit, broadcast_fn=fake_broadcast)
+    rule = {
+        "id": "rule-unknown",
+        "name": "Unknown metric",
+        "enabled": True,
+        "metric": "not_a_real_metric",
+        "condition": "above",
+        "threshold": 0,
+        "duration_seconds": 0,
+        "severity": "info",
+        "cooldown_seconds": 60,
+    }
+    await engine._evaluate_rule(rule, time.time())
+    assert fired == []
+
+
+def test_default_signal_sources_cover_builtin_metrics():
+    from jarvis.alert_engine import _default_signal_sources
+    sources = _default_signal_sources(ha_store=None)
+    assert set(sources.keys()) == {"cpu", "ram", "disk", "ha_health", "ha_entity"}
+
+
+# ---------------------------------------------------------------------------
 # AlertBroadcaster test
 # ---------------------------------------------------------------------------
 
@@ -591,3 +662,83 @@ async def test_broadcaster_fanout():
     broadcaster.disconnect(ws1)  # type: ignore
     await broadcaster.broadcast({"type": "alert", "message": "world"})
     assert len(received) == 3  # only ws2 receives
+
+
+@pytest.mark.asyncio
+async def test_broadcaster_tracks_connected_user_ids():
+    broadcaster = AlertBroadcaster()
+
+    class _FakeWS:
+        async def send_json(self, data):
+            pass
+
+    ws1, ws2 = _FakeWS(), _FakeWS()
+    broadcaster.connect(ws1, user_id="user-1")  # type: ignore
+    broadcaster.connect(ws2, user_id="user-2")  # type: ignore
+    assert broadcaster.connected_user_ids() == {"user-1", "user-2"}
+
+    broadcaster.disconnect(ws1)  # type: ignore
+    assert broadcaster.connected_user_ids() == {"user-2"}
+
+
+@pytest.mark.asyncio
+async def test_broadcaster_invokes_configured_push_fanout():
+    broadcaster = AlertBroadcaster()
+    calls: list[tuple[dict, set]] = []
+
+    async def fake_fanout(payload, connected_user_ids):
+        calls.append((payload, connected_user_ids))
+
+    broadcaster.configure_push_fanout(fake_fanout)
+    await broadcaster.broadcast({"type": "alert", "message": "hi"})
+    assert len(calls) == 1
+    assert calls[0][0]["message"] == "hi"
+
+
+@pytest.mark.asyncio
+async def test_broadcaster_push_fanout_failure_does_not_crash_broadcast():
+    broadcaster = AlertBroadcaster()
+
+    async def failing_fanout(payload, connected_user_ids):
+        raise RuntimeError("boom")
+
+    broadcaster.configure_push_fanout(failing_fanout)
+    # Should not raise even though the fanout callback fails.
+    await broadcaster.broadcast({"type": "alert", "message": "hi"})
+
+
+@pytest.mark.asyncio
+async def test_broadcast_to_user_only_reaches_target():
+    broadcaster = AlertBroadcaster()
+    received: list[dict] = []
+
+    class _FakeWS:
+        async def send_json(self, data):
+            received.append(data)
+
+    ws1 = _FakeWS()
+    ws2 = _FakeWS()
+    broadcaster.connect(ws1, user_id="user-1")  # type: ignore
+    broadcaster.connect(ws2, user_id="user-1")  # type: ignore
+
+    await broadcaster.broadcast_to_user("user-1", {"type": "briefing_seen", "last_briefing_seen_ts": 123})
+    assert len(received) == 2
+    assert all(payload["type"] == "briefing_seen" for payload in received)
+
+
+@pytest.mark.asyncio
+async def test_broadcast_to_user_ignores_other_users():
+    broadcaster = AlertBroadcaster()
+    received: list[dict] = []
+
+    class _FakeWS:
+        async def send_json(self, data):
+            received.append(data)
+
+    ws1 = _FakeWS()
+    ws2 = _FakeWS()
+    broadcaster.connect(ws1, user_id="user-1")  # type: ignore
+    broadcaster.connect(ws2, user_id="user-2")  # type: ignore
+
+    await broadcaster.broadcast_to_user("user-1", {"type": "briefing_seen", "last_briefing_seen_ts": 456})
+    assert len(received) == 1

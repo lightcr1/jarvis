@@ -163,10 +163,15 @@ class AdminProviderSettingsIn(BaseModel):
     expensive_threshold_chf: float = Field(default=0.10, ge=0)
 
 
+class AdminFilesSettingsIn(BaseModel):
+    default_storage_quota_mb: int = Field(default=12000, ge=1)
+
+
 class AdminSettingsIn(BaseModel):
     usage_limits: AdminUsageLimitsIn = Field(default_factory=AdminUsageLimitsIn)
     voice: AdminVoiceSettingsIn = Field(default_factory=AdminVoiceSettingsIn)
     home_assistant: AdminHomeAssistantSettingsIn = Field(default_factory=AdminHomeAssistantSettingsIn)
+    files: AdminFilesSettingsIn = Field(default_factory=AdminFilesSettingsIn)
     provider: AdminProviderSettingsIn = Field(default_factory=AdminProviderSettingsIn)
 
 
@@ -198,6 +203,59 @@ class AlertRuleUpdate(BaseModel):
     message_template: str | None = None
 
 
+class PolicyConditionIn(BaseModel):
+    metric: str = Field(min_length=1)
+    comparator: str = Field(default="above", pattern="^(above|below|equals|contains)$")
+    threshold: float | str = 0.0
+    duration_sec: int = Field(default=0, ge=0)
+
+
+class PolicyActionIn(BaseModel):
+    type: str = Field(min_length=1)
+    params: dict[str, object] = Field(default_factory=dict)
+
+
+class PolicyCreate(BaseModel):
+    name: str = Field(min_length=1)
+    domain: str = "system"
+    condition: PolicyConditionIn
+    action: PolicyActionIn
+    enabled: bool = True
+    dry_run: bool = True
+    cooldown_sec: int = Field(default=300, ge=60)
+
+
+class PolicyUpdate(BaseModel):
+    name: str | None = None
+    domain: str | None = None
+    condition: PolicyConditionIn | None = None
+    action: PolicyActionIn | None = None
+    enabled: bool | None = None
+    dry_run: bool | None = None
+    cooldown_sec: int | None = None
+
+
+class PlaybookStepIn(BaseModel):
+    step_id: str | None = None
+    description: str = ""
+    action: PolicyActionIn
+    requires_confirmation: bool = False
+
+
+class PlaybookCreate(BaseModel):
+    name: str = Field(min_length=1)
+    description: str = ""
+    dry_run: bool = True
+    steps: list[PlaybookStepIn] = Field(default_factory=list)
+
+
+class PlaybookUpdate(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    dry_run: bool | None = None
+    steps: list[PlaybookStepIn] | None = None
+
+
 class HomeAssistantDiscoveryCandidateIn(BaseModel):
     source: str = Field(default="manual")
     ip_address: str = Field(min_length=1)
@@ -205,6 +263,16 @@ class HomeAssistantDiscoveryCandidateIn(BaseModel):
     suggested_type: str = Field(min_length=1)
     suggested_area: str = ""
     metadata: dict[str, object] = Field(default_factory=dict)
+
+
+class PushSubscriptionKeysIn(BaseModel):
+    p256dh: str = Field(min_length=1)
+    auth: str = Field(min_length=1)
+
+
+class PushSubscriptionIn(BaseModel):
+    endpoint: str = Field(min_length=1)
+    keys: PushSubscriptionKeysIn
 
 
 class MemoryNoteCreate(BaseModel):
@@ -260,6 +328,7 @@ class UserLimitsIn(BaseModel):
     requests_per_min: int | None = Field(default=None, ge=1, le=300)
     expensive_models_per_day: int | None = Field(default=None, ge=0)
     allowed_models: list[str] | None = None
+    storage_quota_mb: int | None = Field(default=None, ge=0)
 
 
 class SignupIn(BaseModel):
