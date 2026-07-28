@@ -47,7 +47,7 @@ a new entry to the handoff snapshot at the bottom).
 - [x] Self-healing rules (service crash → restart → escalate) — `dry_run` (default True) checked before anything else, then `JARVIS_EMERGENCY_STOP`, then real `role_has_permission("admin", "actions.write.execute")` (not a stub) — only then does it restart via the same `infra_actions.py` helpers the `restart <svc>` chat skill uses, with an incident-count/retry-window escalation path and audit logging on every branch
 - [x] Maintenance playbooks + step executor — `jarvis/playbook_store.py` + `jarvis/playbook_executor.py`, checkpointed run records survive a restart, confirmation gates mirror the existing `ActionPlan`/`Skill` flow, dry-run and emergency-stop respected
 - [x] Admin-gated CRUD/test/execute/resume API — `jarvis/api_policies.py`
-- [ ] Admin UI panel for policies/playbooks — deferred (explicitly deprioritized in favor of backend + test coverage)
+- [x] Admin UI panel for policies/playbooks — `PoliciesPage.tsx` (tabbed Policies/Playbooks, condition/action editors, repeatable step cards, execute/resume flow via `OverlayDialog`)
 
 ## Phase 5 — V2.3 Communication Hub
 
@@ -60,7 +60,7 @@ a new entry to the handoff snapshot at the bottom).
 - [x] Both folded into the morning briefing loop, alongside tasks (completed a wiring point Phase 3 had deferred)
 - [ ] Messaging bridge — out of scope, not built
 - [ ] Phone/calls — out of scope, not built
-- [ ] Admin UI panel for calendar/email credentials — deferred, self-service per-user via the new screens is enough for now
+- [x] Admin UI panel for calendar/email credentials — `jarvis/api_admin_integrations.py` (`GET /admin/integrations/status`, non-decrypting `list_users_with_credential()` on `IntegrationCredentialStore`) + `IntegrationsPage.tsx`
 
 ## Phase 6 — V2.6 Extended System Integrations (backlog, pick-and-choose)
 
@@ -84,8 +84,16 @@ Not in the original phase plan — requested directly for a multi-tenant use cas
   storage root path configurable (`JARVIS_USER_FILES_PATH`) so dev (~30GB disk) and
   production (500GB+ disk) run the same code
 - [x] Per-folder JARVIS access grants (owner/admin toggle only) — primitive built and
-  tested, **not yet wired into any chat skill** (deferred, not scope-creeped)
-- [ ] Actual chat/skill integration reading granted-folder contents — next step if wanted
+  tested, wired into a chat skill this session (see below)
+- [x] Chat/skill integration reading granted-folder contents — found and fixed a real bug
+  while wiring this: `try_skill()` calls in `api_auth_chat.py` (both `/chat` and
+  `/chat/stream`) never passed `user_id`, so any per-user skill silently saw `user_id=None`
+  in production. Fixed, then added `_handle_file_drive_skill` in `assistant_domain.py`
+  ("what's in my `<folder>` folder" / "read `<file>` in my `<folder>` folder"), gated on
+  `FileService.jarvis_can_access_folder()`. v1 only resolves top-level folders; text/JSON
+  files only, 20KB cap. Security invariant verified: a nonexistent folder and an
+  existing-but-not-granted folder return the byte-identical denial reply (existence
+  non-leak), and access is confirmed non-inherited by child folders.
 - [ ] File sharing links — not built, not requested yet
 
 ## Phase 7 — V2.7 Interface & Reach (interleaved)
@@ -93,10 +101,23 @@ Not in the original phase plan — requested directly for a multi-tenant use cas
 - [x] PWA shell (manifest + service worker, caching only)
 - [x] Ambient Orb (`OrbScreen.tsx` voice UI)
 - [x] Push notification base (done in Phase 0 — do not rebuild here)
-- [ ] Ambient Display Mode (separate passive kiosk route)
-- [ ] Multi-device sync
-- [ ] Voice Everywhere (multi-speaker routing on existing wakeword engine)
-- [ ] Plugin System — **needs its own dedicated design pass before implementation**
+- [x] Ambient Display Mode — `AmbientDisplayScreen.tsx`, fullscreen kiosk route (clock,
+  weather, next calendar event, HA/system status), reachable from the nav rail,
+  logged-in-only, with a corner exit affordance since it renders before the nav chrome
+  mounts. New `GET /weather` endpoint (`jarvis/api_weather.py`) added since weather was
+  previously chat-pipeline-only with no HTTP route.
+- [x] Multi-device sync — v1 slice, not a full framework: `AlertBroadcaster.broadcast_to_user()`
+  (targeted send, `jarvis/api_alerts.py`) + `POST /sync/briefing-seen`
+  (`jarvis/api_device_sync.py`) proves live cross-device sync end-to-end for one signal
+  (morning-briefing-seen state). Deliberately not generalized into a device registry —
+  extend the same pattern later if more signals are needed.
+- [ ] Voice Everywhere (multi-speaker routing on existing wakeword engine) — **deferred**.
+  Explored and confirmed this is a ground-up build (no device registry, wakeword engine
+  hardcoded to a single mic, no speaker-routing concept anywhere in the codebase) that
+  can't be meaningfully implemented or tested without a second physical JARVIS
+  device/room, which doesn't exist yet. Same bucket as the Phase 6 hardware backlog.
+- [ ] Plugin System — **needs its own dedicated design pass before implementation** (per
+  the roadmap doc's own note — not started this session, on purpose)
 
 ---
 
@@ -200,3 +221,58 @@ Not in the original phase plan — requested directly for a multi-tenant use cas
   choose — Personal Cloud Workspace has no blockers), Phase 7 leftovers (Ambient
   Display Mode, multi-device sync, Voice Everywhere, Plugin System — the last one
   needs its own design pass first).
+
+### 2026-07-28 (continued) — V2 closeout: 5 remaining buildable features
+
+- Goal for this session: finish everything left in the V2 roadmap that's genuinely
+  buildable without external hardware/service specifics — closes out Phase 4's deferred
+  admin panel, Phase 5's deferred admin panel, the Personal Cloud Storage chat-skill
+  follow-up, and two of Phase 7's four leftovers.
+- Deliberately excluded, discussed directly with the user: **Voice Everywhere** (explored
+  first — confirmed it's a ground-up build with no device registry, no multi-speaker
+  concept anywhere in the codebase, and no second physical JARVIS device to test against;
+  same bucket as the Phase 6 hardware backlog) and **Plugin System** (the roadmap doc
+  itself flags this as needing its own dedicated design pass — not started here).
+- Two Explore passes + one Plan pass in plan mode before writing any code, to verify
+  file/line references against the live source rather than working from assumption —
+  full plan at the time is preserved in this session's plan-mode artifact.
+- Built via 5 background agents across two waves (each in an isolated git worktree
+  branched from `v2v2` to avoid concurrent-edit collisions), then merged and integrated
+  by hand:
+  - **Wave 1** (fully non-overlapping backend files): file-drive JARVIS-access chat
+    skill (and the `user_id`-wiring bug fix that made it possible — see below), the
+    multi-device sync v1 slice, and Feature 2's backend half (integrations status
+    endpoint).
+  - **Wave 2**: Policies/Playbooks admin UI, and Integrations admin UI + Ambient Display
+    Mode bundled together.
+  - Two of five worktree agents initially landed on a stale base commit instead of
+    `v2v2`'s tip (a worktree-provisioning defect, not an agent judgment error) — each
+    self-corrected via `git reset --hard v2v2` before starting, confirmed clean.
+- **Found and fixed a real production bug** while wiring the file-drive skill: both live
+  `try_skill()` call sites in `api_auth_chat.py` (`/chat` and `/chat/stream`) never
+  passed `user_id`, even though it was already bound in scope at both sites — meaning
+  every per-user skill (memory notes, and now file-drive) was silently seeing
+  `user_id=None` in real chat traffic before this fix. Added an end-to-end HTTP-layer
+  regression test specifically because the existing unit tests wouldn't have caught this
+  class of bug (they call `try_skill()` directly, bypassing the router layer where the
+  bug actually lived).
+- Verified myself after merging all 5 branches: full suite `pytest tests/ -x -q` → 1964
+  passed, same 9 pre-existing unrelated failures as before this session (8 missing
+  deploy-fixture files, 1 time-of-day-dependent flaky calendar test — reproduced
+  independently on the pre-session base commit to confirm neither is a regression).
+  `tsc --noEmit` clean. Hand-verified the security-sensitive invariants beyond what the
+  automated tests assert: file-drive skill's nonexistent-vs-ungranted-folder denial
+  replies are byte-identical (existence non-leak) and grants are confirmed non-inherited
+  by child folders; integrations endpoint's response never contains ciphertext/raw
+  credential values; targeted broadcast only reaches the intended user's socket(s).
+- Also folded in an earlier-session task: added the Personal Cloud Workspace, Personal
+  Cloud Storage, `JARVIS_LEARNING_PATH`, and identity-session env vars to
+  `config/prod.env.example` (was missing them entirely).
+- Branch: work done on new branch `v2v2` (per user's naming preference — this is the
+  second round of V2 session work, distinct from the earlier `v2-phase-0-4` branch),
+  merged into `main` and pushed to GitHub at the end of this session so the user's
+  production box can pull it via the normal `update.sh` flow (`main` is its default
+  branch).
+- **V2 is now feature-complete** except the two explicitly-deferred Phase 7 items above
+  and the hardware-gated Phase 6 backlog (network/security monitoring, NAS, camera,
+  health, finance, smart car — all blocked on the user providing device/service specifics).
