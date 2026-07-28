@@ -662,6 +662,7 @@ def try_skill(text: str, role: str = "admin", token: str | None = None, granted_
         task_service=task_service,
         calendar_service=calendar_service,
         email_service=email_service,
+        file_service=file_service,
         get_provider=get_provider,
         get_gemini=get_gemini,
         get_openai=get_openai,

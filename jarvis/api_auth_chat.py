@@ -547,7 +547,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                 return {"reply": reply, "data": data, "session_id": session_id}
 
             _skill_prefs = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
-            skill_first = try_skill(text, role=role, token=token, granted_permissions=granted_permissions, user_prefs=_skill_prefs)
+            skill_first = try_skill(text, role=role, token=token, granted_permissions=granted_permissions, user_prefs=_skill_prefs, user_id=effective_user_id)
             if skill_first:
                 reply = skill_first.get("reply", "Done.")
                 data = dict(skill_first.get("data") or {})
@@ -750,7 +750,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                 return StreamingResponse(_ha(), media_type="text/event-stream")
 
             _skill_prefs = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
-            skill_first = try_skill(text, role=role, token=token, granted_permissions=granted_permissions, user_prefs=_skill_prefs)
+            skill_first = try_skill(text, role=role, token=token, granted_permissions=granted_permissions, user_prefs=_skill_prefs, user_id=effective_user_id)
             if skill_first:
                 reply = skill_first.get("reply", "Done.")
                 data = dict(skill_first.get("data") or {})

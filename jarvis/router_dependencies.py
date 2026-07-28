@@ -140,6 +140,7 @@ def build_calendar_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,
         "calendar_service": live_attr(state, "calendar_service"),
+        "file_service": live_attr(state, "file_service"),
     }
 
 
