@@ -72,6 +72,22 @@ a new entry to the handoff snapshot at the bottom).
 - [ ] Finance (optional, needs CH open-banking API confirmed)
 - [ ] Smart car (optional, needs compatible vehicle confirmed)
 
+## Off-roadmap — Personal Cloud Storage (added this session)
+
+Not in the original phase plan — requested directly for a multi-tenant use case
+(owner + club/association members + some outside users).
+
+- [x] Per-user file drive (`jarvis/files/`) — folder/file CRUD, streaming upload/download
+- [x] Path-traversal hardening (`jarvis/files/path_safety.py`) — independently re-verified
+  before commit given the multi-tenant blast radius
+- [x] Quota system — default 12GB/user, admin-overridable, extends `user_limits_store.py`;
+  storage root path configurable (`JARVIS_USER_FILES_PATH`) so dev (~30GB disk) and
+  production (500GB+ disk) run the same code
+- [x] Per-folder JARVIS access grants (owner/admin toggle only) — primitive built and
+  tested, **not yet wired into any chat skill** (deferred, not scope-creeped)
+- [ ] Actual chat/skill integration reading granted-folder contents — next step if wanted
+- [ ] File sharing links — not built, not requested yet
+
 ## Phase 7 — V2.7 Interface & Reach (interleaved)
 
 - [x] PWA shell (manifest + service worker, caching only)
