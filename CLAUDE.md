@@ -518,6 +518,13 @@ LLM providers (env `LLM_PROVIDER`): `openai`, `gemini`, `local`
 | `JARVIS_WORKSPACE_JSON_SECRET` | Shared secret for Guacamole's `guacamole-auth-json` extension — 32 hex chars (16 bytes / 128-bit AES key), must exactly match the `JSON_SECRET_KEY` set on the Guacamole side (see `deploy/guacamole/docker-compose.yml`). If unset, the connect endpoint fails clearly rather than crashing. |
 | `JARVIS_WORKSPACE_STORE_PATH` | Path to the workspace targets JSON store (default: `/var/lib/jarvis/workspace_targets.json`) |
 
+### Optional — Personal Cloud Files
+| Variable | Default | Purpose |
+|---|---|---|
+| `JARVIS_USER_FILES_PATH` | `/var/lib/jarvis/user_files/` | Storage root for per-user file drives — real directories on disk, one root per user (`{JARVIS_USER_FILES_PATH}/{user_id}/...`). Must point at a path with real capacity in production; the code never queries or assumes anything about the underlying disk's physical size — quota enforcement is purely logical (bytes used vs. the user's assigned quota). |
+| `JARVIS_FILES_STORE_PATH` | `/var/lib/jarvis/files_metadata.json` | Metadata store for the file drive — folder tree, file records, per-user running quota-usage totals, and JARVIS per-folder access grants. |
+| `JARVIS_FILES_MAX_UPLOAD_MB` | 2048 | Maximum size of a single upload, enforced server-side while streaming (independent of the user's remaining quota). |
+
 ### Optional — Knowledge / RAG
 | Variable | Purpose |
 |---|---|
@@ -569,6 +576,8 @@ All data is stored locally by default at `/var/lib/jarvis/` (falls back to `/tmp
 | `identity_sessions.json` | JSON | Logged-in user session tokens — persisted as of V2 so a service restart no longer force-logs-out every active user |
 | `proxmox_hosts.json` | JSON | Configured Proxmox hosts |
 | `pending_signups.json` | JSON | Short-lived self-service signup records (email → hashed code + hashed password, auto-pruned) |
+| `files_metadata.json` | JSON | Per-user file drive metadata — folder tree, file records, running quota-usage totals, JARVIS per-folder access grants (`FileStore`) |
+| `user_files/{user_id}/...` | Directory tree | Actual per-user file bytes — real directories on disk mirroring each user's folder structure, rooted at `JARVIS_USER_FILES_PATH` |
 | `/var/lib/jarvis/auto_backups/` | JSON | Rolling auto-backups (7 kept) |
 
 ---

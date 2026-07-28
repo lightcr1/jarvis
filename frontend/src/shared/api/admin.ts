@@ -111,6 +111,21 @@ export function deleteAdminUserConversations(userId: string) {
   return apiRequest<{ ok: boolean; deleted: number }>(`/admin/users/${encodeURIComponent(userId)}/conversations`, { method: "DELETE", includeAdmin: true });
 }
 
+export type AdminUserLimits = {
+  chf_per_day: number;
+  chf_per_month: number;
+  tokens_per_request: number;
+  requests_per_min: number;
+  expensive_models_per_day: number;
+  allowed_models: string[];
+  storage_quota_mb: number;
+  updated_at: number;
+};
+
+export function updateAdminUserLimits(userId: string, body: Partial<Pick<AdminUserLimits, "storage_quota_mb" | "chf_per_day" | "chf_per_month" | "requests_per_min">>) {
+  return apiRequest<AdminUserLimits>(`/admin/users/${encodeURIComponent(userId)}/limits`, { method: "PUT", includeAdmin: true, body });
+}
+
 export function fetchAdminGroups() {
   return apiRequest<{ groups: AdminGroup[] }>("/admin/groups", { includeAdmin: true });
 }

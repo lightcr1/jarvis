@@ -29,6 +29,9 @@ class AdminSettingsStore:
                 "confirmation_ttl_sec": 300,
                 "remote_allowed_cidrs": [],
             },
+            "files": {
+                "default_storage_quota_mb": 12000,
+            },
             "provider": {
                 "default_provider": "openrouter",
                 "openrouter_enabled": True,
@@ -55,6 +58,9 @@ class AdminSettingsStore:
         home_assistant = candidate.get("home_assistant")
         if not isinstance(home_assistant, dict):
             home_assistant = {}
+        files_raw = candidate.get("files")
+        if not isinstance(files_raw, dict):
+            files_raw = {}
         provider_raw = candidate.get("provider")
         if not isinstance(provider_raw, dict):
             provider_raw = {}
@@ -106,6 +112,12 @@ class AdminSettingsStore:
             cidr = str(item or "").strip()
             if cidr and cidr not in normalized_cidrs:
                 normalized_cidrs.append(cidr)
+
+        try:
+            default_storage_quota_mb = int(files_raw.get("default_storage_quota_mb", base["files"]["default_storage_quota_mb"]))
+        except (TypeError, ValueError):
+            default_storage_quota_mb = base["files"]["default_storage_quota_mb"]
+        default_storage_quota_mb = max(1, default_storage_quota_mb)
 
         # Provider section normalization
         bp = base["provider"]
@@ -162,6 +174,9 @@ class AdminSettingsStore:
                 "confirmation_ttl_sec": confirmation_ttl_sec,
                 "remote_allowed_cidrs": normalized_cidrs,
             },
+            "files": {
+                "default_storage_quota_mb": default_storage_quota_mb,
+            },
             "provider": {
                 "default_provider": default_provider,
                 "openrouter_enabled": bool(provider_raw.get("openrouter_enabled", bp["openrouter_enabled"])),
@@ -201,6 +216,9 @@ class AdminSettingsStore:
         home_assistant = payload.get("home_assistant")
         if isinstance(home_assistant, dict):
             merged["home_assistant"].update(home_assistant)
+        files_settings = payload.get("files")
+        if isinstance(files_settings, dict):
+            merged["files"].update(files_settings)
         provider = payload.get("provider")
         if isinstance(provider, dict):
             current_provider = merged.get("provider") or {}

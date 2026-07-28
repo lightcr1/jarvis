@@ -163,10 +163,15 @@ class AdminProviderSettingsIn(BaseModel):
     expensive_threshold_chf: float = Field(default=0.10, ge=0)
 
 
+class AdminFilesSettingsIn(BaseModel):
+    default_storage_quota_mb: int = Field(default=12000, ge=1)
+
+
 class AdminSettingsIn(BaseModel):
     usage_limits: AdminUsageLimitsIn = Field(default_factory=AdminUsageLimitsIn)
     voice: AdminVoiceSettingsIn = Field(default_factory=AdminVoiceSettingsIn)
     home_assistant: AdminHomeAssistantSettingsIn = Field(default_factory=AdminHomeAssistantSettingsIn)
+    files: AdminFilesSettingsIn = Field(default_factory=AdminFilesSettingsIn)
     provider: AdminProviderSettingsIn = Field(default_factory=AdminProviderSettingsIn)
 
 
@@ -323,6 +328,7 @@ class UserLimitsIn(BaseModel):
     requests_per_min: int | None = Field(default=None, ge=1, le=300)
     expensive_models_per_day: int | None = Field(default=None, ge=0)
     allowed_models: list[str] | None = None
+    storage_quota_mb: int | None = Field(default=None, ge=0)
 
 
 class SignupIn(BaseModel):

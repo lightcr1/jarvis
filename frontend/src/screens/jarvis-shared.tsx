@@ -194,6 +194,9 @@ export const IconMail      = (p: { size?: number }) => <Ic {...p}><rect x="2" y=
 export const IconMonitor   = (p: { size?: number }) => <Ic {...p}><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></Ic>;
 export const IconExternal  = (p: { size?: number }) => <Ic {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></Ic>;
 export const IconZap       = (p: { size?: number }) => <Ic {...p}><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></Ic>;
+export const IconFolder    = (p: { size?: number }) => <Ic {...p}><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></Ic>;
+export const IconFile      = (p: { size?: number }) => <Ic {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></Ic>;
+export const IconUpload    = (p: { size?: number }) => <Ic {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Ic>;
 
 export function Badge({ count }: { count: number }) {
   if (count <= 0) return null;

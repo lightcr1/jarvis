@@ -150,6 +150,13 @@ def build_workspace_deps(state: object) -> dict:
     }
 
 
+def build_files_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "file_service": live_attr(state, "file_service"),
+    }
+
+
 def build_email_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,
