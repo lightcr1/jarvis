@@ -28,6 +28,8 @@ except ImportError:
 
 from fastapi import HTTPException
 
+from .email.service import draft_reply_body
+
 # Rotating JARVIS-style acknowledgment phrases — used by newer skill blocks.
 # Keeps responses from feeling repetitive; deliberately formal/British.
 _ACK_PHRASES = [
@@ -547,6 +549,175 @@ def _handle_task_breakdown(
     return {"reply": reply, "data": {"route": "task_breakdown", "task_id": target["id"] if target else None, "steps": steps}}
 
 
+# ── Calendar (CalDAV) natural-language scheduling ───────────────────────────────
+_WEEKDAY_NAMES = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
+_DAYPART_HOURS = {"morning": 9, "afternoon": 14, "evening": 18}
+
+
+def _resolve_day_reference(day_ref: str, now: datetime) -> _date:
+    day_ref = day_ref.lower()
+    if day_ref == "today":
+        return now.date()
+    if day_ref == "tomorrow":
+        return (now + timedelta(days=1)).date()
+    if day_ref in _WEEKDAY_NAMES:
+        target = _WEEKDAY_NAMES.index(day_ref)
+        days_ahead = (target - now.weekday()) % 7
+        return (now + timedelta(days=days_ahead)).date()
+    return now.date()
+
+
+def _handle_calendar_agenda(calendar_service, range_kind: str, *, user_id: str | None, role: str | None) -> dict | None:
+    if not calendar_service:
+        return None
+    now = datetime.now().astimezone()
+    if range_kind == "today":
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=1)
+        label = "today"
+    else:
+        start = (now - timedelta(days=now.weekday())).replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + timedelta(days=7)
+        label = "this week"
+    try:
+        result = calendar_service.list_events(user_id=user_id, role=role, start=int(start.timestamp()), end=int(end.timestamp()))
+    except PermissionError:
+        return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "calendar.read", "role": role}}
+    events = result["events"]
+    if not events:
+        return {"reply": f"Nothing on your calendar {label}, sir.", "data": {"route": "calendar_agenda", "events": []}}
+    lines = []
+    for ev in events[:10]:
+        ev_start = datetime.fromtimestamp(ev["start"]).astimezone()
+        lines.append(f"  • {ev_start.strftime('%a %H:%M')} — {ev['title']}")
+    reply = f"On it. Here's {label}'s agenda:\n" + "\n".join(lines)
+    return {"reply": reply, "data": {"route": "calendar_agenda", "events": events}}
+
+
+def _handle_calendar_block(
+    calendar_service, hours: float, day_ref: str, daypart: str | None, subject: str, *, user_id: str | None, role: str | None,
+) -> dict | None:
+    if not calendar_service:
+        return None
+    now = datetime.now().astimezone()
+    target_date = _resolve_day_reference(day_ref, now)
+    start_hour = _DAYPART_HOURS.get((daypart or "").lower(), 9)
+    start_dt = datetime.combine(target_date, datetime.min.time(), tzinfo=now.tzinfo).replace(hour=start_hour)
+    end_dt = start_dt + timedelta(hours=hours)
+    subject = subject.strip().rstrip(".,!?") or "Blocked time"
+    try:
+        result = calendar_service.create_event(
+            {"title": subject, "start": int(start_dt.timestamp()), "end": int(end_dt.timestamp())}, user_id=user_id, role=role,
+        )
+    except PermissionError:
+        return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "calendar.write", "role": role}}
+    except LookupError:
+        return {"reply": "Your calendar isn't configured yet. Set up your CalDAV account first.", "data": {"error": "not_configured"}}
+    except ValueError as exc:
+        return {"reply": str(exc), "data": {"error": "validation_error"}}
+    except RuntimeError as exc:
+        return {"reply": f"Couldn't reach the calendar server: {exc}", "data": {"error": "sync_failed"}}
+    if not result.get("created"):
+        conflicts = result.get("conflicts", [])
+        names = ", ".join(c["title"] for c in conflicts[:3])
+        return {
+            "reply": f"That overlaps with {names}. Pick another time or confirm the double-booking from the calendar screen.",
+            "data": {"route": "calendar_conflict", "conflicts": conflicts},
+        }
+    reply = f"Done. {subject} blocked {start_dt.strftime('%A %H:%M')}–{end_dt.strftime('%H:%M')}."
+    return {"reply": reply, "data": {"route": "calendar_event_created", "event": result["event"]}}
+
+
+# ── Email (IMAP/SMTP) triage + draft-with-approval ──────────────────────────────
+def _handle_email_check(email_service, *, user_id: str | None, role: str | None) -> dict | None:
+    if not email_service:
+        return None
+    try:
+        email_service.sync_inbox(user_id=user_id, role=role, limit=20)
+        result = email_service.list_messages(user_id=user_id, role=role, unread_only=True)
+    except PermissionError:
+        return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "email.read", "role": role}}
+    except LookupError:
+        return {"reply": "Your email isn't configured yet. Set up your IMAP/SMTP account first.", "data": {"error": "not_configured"}}
+    unread = result["messages"]
+    if not unread:
+        return {"reply": "Inbox is clear, sir. No unread messages.", "data": {"route": "email_check", "unread": []}}
+    lines = [f"  • {m['sender']} — {m['subject']}" for m in unread[:5]]
+    reply = f"You have {len(unread)} unread message(s):\n" + "\n".join(lines)
+    return {"reply": reply, "data": {"route": "email_check", "unread": unread}}
+
+
+def _handle_email_draft_reply(
+    email_service, target_query: str, instruction: str, *, user_id: str | None, role: str | None, get_provider, get_gemini, get_openai,
+) -> dict | None:
+    if not email_service:
+        return None
+    try:
+        candidates = email_service.list_messages(user_id=user_id, role=role)["messages"]
+    except PermissionError:
+        return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "email.read", "role": role}}
+    needle = target_query.strip().lower()
+    target = next(
+        (m for m in candidates if needle in (m.get("sender") or "").lower() or needle in (m.get("subject") or "").lower()), None,
+    )
+    if not target:
+        return {"reply": f"I couldn't find a message from '{target_query}'. Try 'check email' first to sync.", "data": {"error": "message_not_found"}}
+    try:
+        fetched = email_service.fetch_body(target["id"], user_id=user_id, role=role)
+    except (LookupError, RuntimeError):
+        return {"reply": "Couldn't retrieve that message body.", "data": {"error": "fetch_failed"}}
+    body = draft_reply_body(instruction, fetched["body"], get_provider=get_provider, get_gemini=get_gemini, get_openai=get_openai)
+    sender_addr = target.get("sender", "")
+    addr_match = re.search(r"<([^>]+)>", sender_addr)
+    to_addr = addr_match.group(1) if addr_match else sender_addr
+    subject = target.get("subject", "")
+    reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+    try:
+        result = email_service.create_draft(
+            {"to": to_addr, "subject": reply_subject, "body": body, "in_reply_to_message_id": target["id"]}, user_id=user_id, role=role,
+        )
+    except PermissionError:
+        return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "email.write", "role": role}}
+    draft = result["draft"]
+    reply = f"Here's a draft reply to {target.get('sender')}:\n\n{body}\n\nSay 'send it' to confirm, or 'discard draft' to cancel."
+    return {"reply": reply, "data": {"route": "email_draft_created", "draft_id": draft["id"], "draft": draft}}
+
+
+def _handle_email_send_confirm(email_service, *, user_id: str | None, role: str | None) -> dict | None:
+    if not email_service:
+        return None
+    try:
+        pending = email_service.list_drafts(user_id=user_id, role=role, status="pending_approval")["drafts"]
+    except PermissionError:
+        return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "email.read", "role": role}}
+    if not pending:
+        return {"reply": "No draft is waiting for approval.", "data": {"error": "no_pending_draft"}}
+    draft = pending[0]
+    try:
+        result = email_service.send_draft(draft["id"], user_id=user_id, role=role, confirm=True)
+    except PermissionError as exc:
+        return {"reply": "Permission denied, or emergency stop is active.", "data": {"error": "permission_denied_or_emergency_stop", "detail": str(exc)}}
+    except LookupError:
+        return {"reply": "Your email isn't configured yet.", "data": {"error": "not_configured"}}
+    except RuntimeError:
+        return {"reply": "Sending failed — the mail server didn't accept the message.", "data": {"error": "send_failed"}}
+    return {"reply": f"Sent to {draft['to']}.", "data": {"route": "email_draft_sent", "draft": result["draft"]}}
+
+
+def _handle_email_discard_draft(email_service, *, user_id: str | None, role: str | None) -> dict | None:
+    if not email_service:
+        return None
+    try:
+        pending = email_service.list_drafts(user_id=user_id, role=role, status="pending_approval")["drafts"]
+    except PermissionError:
+        return {"reply": "Permission denied.", "data": {"error": "permission_denied", "permission": "email.read", "role": role}}
+    if not pending:
+        return {"reply": "No draft to discard.", "data": {"error": "no_pending_draft"}}
+    draft = pending[0]
+    email_service.discard_draft(draft["id"], user_id=user_id, role=role)
+    return {"reply": "Draft discarded.", "data": {"route": "email_draft_discarded", "draft_id": draft["id"]}}
+
+
 def try_skill(
     text: str,
     *,
@@ -570,6 +741,8 @@ def try_skill(
     memory_store=None,
     user_id: str | None = None,
     task_service=None,
+    calendar_service=None,
+    email_service=None,
     get_provider=None,
     get_gemini=None,
     get_openai=None,
@@ -983,6 +1156,11 @@ def try_skill(
             "create task <text> — add a task to your list",
             "list tasks / what's on my list — show open tasks",
             "break down <task> — LLM-assisted step breakdown",
+            "calendar today / calendar this week — personal calendar agenda",
+            "block <N> hours <day>[ morning|afternoon|evening] for <title> — schedule an event",
+            "check email — sync inbox and list unread messages",
+            "reply to <sender> and tell them <instruction> — LLM-drafted reply, held for approval",
+            "send it / discard draft — confirm or cancel the pending email draft",
             "disks — disk usage for all mount points",
             "ports / open ports — listening network ports",
             "kernel — kernel version",
@@ -2221,6 +2399,75 @@ def try_skill(
         )
         if _task_result:
             return _task_result
+
+    # ── Calendar (CalDAV) natural-language scheduling ─────────────────────────
+    if t in {
+        "calendar today", "what's on my calendar today", "whats on my calendar today",
+        "agenda today", "today's agenda", "todays agenda", "what's on today", "whats on today",
+    }:
+        _cal_result = _handle_calendar_agenda(calendar_service, "today", user_id=user_id, role=role)
+        if _cal_result:
+            return _cal_result
+
+    if t in {
+        "calendar this week", "what's on my calendar this week", "whats on my calendar this week",
+        "agenda this week", "this week's agenda", "weekly agenda", "what's on this week",
+    }:
+        _cal_result = _handle_calendar_agenda(calendar_service, "week", user_id=user_id, role=role)
+        if _cal_result:
+            return _cal_result
+
+    _calendar_block = re.match(
+        r"block\s+(\d+(?:\.\d+)?)\s*(?:hour|hours|hr|hrs)\s+(?:on\s+)?"
+        r"(today|tomorrow|monday|tuesday|wednesday|thursday|friday|saturday|sunday)"
+        r"(?:\s+(morning|afternoon|evening))?\s+for\s+(.+)",
+        text.strip(), re.I,
+    )
+    if _calendar_block:
+        _cal_result = _handle_calendar_block(
+            calendar_service,
+            float(_calendar_block.group(1)),
+            _calendar_block.group(2),
+            _calendar_block.group(3),
+            _calendar_block.group(4),
+            user_id=user_id,
+            role=role,
+        )
+        if _cal_result:
+            return _cal_result
+
+    # ── Email (IMAP/SMTP) triage + draft-with-approval ────────────────────────
+    if t in {"check email", "check my email", "check mail", "any new emails", "any new mail", "new emails", "email check", "check inbox"}:
+        _email_result = _handle_email_check(email_service, user_id=user_id, role=role)
+        if _email_result:
+            return _email_result
+
+    _email_reply = re.match(r"reply\s+to\s+(.+?)\s+(?:and\s+)?tell\s+(?:them|him|her)\s+(.+)", text.strip(), re.I)
+    if not _email_reply:
+        _email_reply = re.match(r"reply\s+to\s+(.+?)\s+saying\s+(.+)", text.strip(), re.I)
+    if _email_reply:
+        _email_result = _handle_email_draft_reply(
+            email_service,
+            _email_reply.group(1),
+            _email_reply.group(2),
+            user_id=user_id,
+            role=role,
+            get_provider=get_provider,
+            get_gemini=get_gemini,
+            get_openai=get_openai,
+        )
+        if _email_result:
+            return _email_result
+
+    if t in {"send it", "send the draft", "confirm send", "yes send it", "send email", "send draft"}:
+        _email_result = _handle_email_send_confirm(email_service, user_id=user_id, role=role)
+        if _email_result:
+            return _email_result
+
+    if t in {"discard draft", "cancel draft", "discard the draft", "cancel the draft"}:
+        _email_result = _handle_email_discard_draft(email_service, user_id=user_id, role=role)
+        if _email_result:
+            return _email_result
 
     # ── CPU temperature ───────────────────────────────────────────────────────
     if re.search(

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconCalendar, IconMail } from './jarvis-shared';
 import { GreetingOverlay } from '../components/GreetingOverlay';
 import { OnboardingModal, shouldShowOnboarding } from '../components/OnboardingModal';
 import { LoginScreen } from './LoginScreen';
@@ -12,12 +12,14 @@ import { ServiceHubScreen } from './ServiceHubScreen';
 import { SettingsScreen } from './SettingsScreen';
 import { DocsScreen } from './DocsScreen';
 import { TasksScreen } from './TasksScreen';
+import { CalendarScreen } from './CalendarScreen';
+import { EmailScreen } from './EmailScreen';
 import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill, savePreferences } from '../shared/api/client';
 import { useJarvisAlerts } from '../shared/api/alerts';
 import { useJarvisLiveStatus } from '../shared/api/status';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
-type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'tasks' | 'services' | 'settings' | 'docs';
+type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'tasks' | 'calendar' | 'email' | 'services' | 'settings' | 'docs';
 
 const NAV_ALL: Array<{ id: Screen; label: string; icon: (p: { size?: number }) => JSX.Element }> = [
   { id: 'chat',     label: 'Chat',     icon: IconChat     },
@@ -25,6 +27,8 @@ const NAV_ALL: Array<{ id: Screen; label: string; icon: (p: { size?: number }) =
   { id: 'home',     label: 'Home',     icon: IconHome     },
   { id: 'proxmox',  label: 'Proxmox',  icon: IconServer   },
   { id: 'tasks',    label: 'Tasks',    icon: IconCheck    },
+  { id: 'calendar', label: 'Calendar', icon: IconCalendar },
+  { id: 'email',    label: 'Email',    icon: IconMail     },
   { id: 'services', label: 'Services', icon: IconGrid     },
   { id: 'docs',     label: 'Docs',     icon: IconBook     },
   { id: 'settings', label: 'Settings', icon: IconSettings },
@@ -260,7 +264,7 @@ export function JarvisApp() {
     const params = new URLSearchParams(window.location.search);
     const req = params.get('screen') as Screen | null;
     const publicScreens: Screen[] = ['docs'];
-    const validScreens: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'tasks', 'services', 'settings', 'docs'];
+    const validScreens: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'tasks', 'calendar', 'email', 'services', 'settings', 'docs'];
     const requested = (req && validScreens.includes(req)) ? req : null;
     if (getSessionToken() || isGuestMode()) return requested ?? 'chat';
     if (requested && publicScreens.includes(requested)) return requested;
@@ -356,7 +360,7 @@ export function JarvisApp() {
   };
 
   const navigate = (s: string) => {
-    const valid: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'tasks', 'services', 'settings', 'docs', 'login'];
+    const valid: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'tasks', 'calendar', 'email', 'services', 'settings', 'docs', 'login'];
     if (!valid.includes(s as Screen)) return;
     const guestAllowed: Screen[] = ['chat', 'docs', 'settings', 'login'];
     if (guest && !guestAllowed.includes(s as Screen)) return;
@@ -404,6 +408,8 @@ export function JarvisApp() {
           {screen === 'home'     && <HomeAssistantScreen onNavigate={navigate} />}
           {screen === 'proxmox'  && <ProxmoxScreen onNavigate={navigate} />}
           {screen === 'tasks'    && <TasksScreen onNavigate={navigate} />}
+          {screen === 'calendar' && <CalendarScreen onNavigate={navigate} />}
+          {screen === 'email'    && <EmailScreen onNavigate={navigate} />}
           {screen === 'services' && <ServiceHubScreen onNavigate={navigate} />}
           {screen === 'docs'     && <DocsScreen />}
           {screen === 'settings' && <SettingsScreen />}

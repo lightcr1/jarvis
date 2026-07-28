@@ -10,5 +10,6 @@ python-multipart
 edge-tts
 psutil
 pywebpush
+icalendar
 # optional: pip install openwakeword for hardware wakeword detection (always-on mic keyword spotting)
 # openwakeword

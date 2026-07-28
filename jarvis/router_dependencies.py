@@ -136,6 +136,23 @@ def build_tasks_deps(state: object) -> dict:
     }
 
 
+def build_calendar_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "calendar_service": live_attr(state, "calendar_service"),
+    }
+
+
+def build_email_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "email_service": live_attr(state, "email_service"),
+        "get_provider": state.get_provider,
+        "get_gemini": state.get_gemini,
+        "get_openai": state.get_openai,
+    }
+
+
 def build_status_deps(state: object) -> dict:
     return {
         "status_hub": live_attr(state, "status_hub"),

@@ -114,6 +114,13 @@ from jarvis.home_assistant.store import HomeAssistantStore
 from jarvis.api_tasks import build_tasks_router
 from jarvis.tasks.service import TaskService
 from jarvis.tasks.store import TaskStore
+from jarvis.integration_credentials import IntegrationCredentialStore
+from jarvis.api_calendar import build_calendar_router
+from jarvis.calendar.service import CalendarService
+from jarvis.calendar.store import CalendarEventStore
+from jarvis.api_email import build_email_router
+from jarvis.email.service import EmailService
+from jarvis.email.store import EmailDraftStore, EmailMessageStore
 from jarvis.api_notifications import build_notifications_router
 from jarvis.push_store import PushSubscriptionStore
 from jarvis.push_vapid import get_vapid_keys
@@ -124,7 +131,7 @@ from jarvis.policy_store import PolicyStore
 from jarvis.policy_engine import PolicyEngine
 from jarvis.playbook_store import PlaybookStore
 from jarvis.playbook_executor import PlaybookExecutor, build_default_action_dispatch
-from jarvis.router_dependencies import build_admin_deps, build_alerts_deps, build_auth_chat_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps
+from jarvis.router_dependencies import build_admin_deps, build_alerts_deps, build_auth_chat_deps, build_calendar_deps, build_email_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps
 from jarvis.jarvis_engine import (
     JarvisEngine,
     build_registry,
@@ -206,6 +213,10 @@ task_store = TaskStore()
 push_subscription_store = PushSubscriptionStore()
 policy_store = PolicyStore()
 playbook_store = PlaybookStore()
+integration_credential_store = IntegrationCredentialStore()
+calendar_event_store = CalendarEventStore()
+email_message_store = EmailMessageStore()
+email_draft_store = EmailDraftStore()
 
 wakeword_engine: NullWakewordEngine | SoftwareWakewordEngine = NullWakewordEngine()
 
@@ -504,6 +515,29 @@ task_service = TaskService(
     audit_log=audit_log,
 )
 
+calendar_service = CalendarService(
+    store=calendar_event_store,
+    credential_store=integration_credential_store,
+    user_store=user_store,
+    membership_store=membership_store,
+    permission_store=permission_store,
+    resolve_effective_permissions=resolve_effective_permissions,
+    normalize_role=normalize_role,
+    audit_log=audit_log,
+)
+
+email_service = EmailService(
+    message_store=email_message_store,
+    draft_store=email_draft_store,
+    credential_store=integration_credential_store,
+    user_store=user_store,
+    membership_store=membership_store,
+    permission_store=permission_store,
+    resolve_effective_permissions=resolve_effective_permissions,
+    normalize_role=normalize_role,
+    audit_log=audit_log,
+)
+
 # Transitional modular router activation.
 # The admin router now resolves live dependencies against the current module state,
 # so test suites that replace stores on jarvisappv4 keep working.
@@ -515,6 +549,8 @@ app.include_router(build_status_router(build_status_deps(sys.modules[__name__]))
 app.include_router(build_tasks_router(build_tasks_deps(sys.modules[__name__])))
 app.include_router(build_notifications_router(build_notifications_deps(sys.modules[__name__])))
 app.include_router(build_policies_router(build_policies_deps(sys.modules[__name__])))
+app.include_router(build_calendar_router(build_calendar_deps(sys.modules[__name__])))
+app.include_router(build_email_router(build_email_deps(sys.modules[__name__])))
 
 # ---------------------------
 # Skills (no LLM)
@@ -590,6 +626,8 @@ def try_skill(text: str, role: str = "admin", token: str | None = None, granted_
         memory_store=memory_store,
         user_id=user_id,
         task_service=task_service,
+        calendar_service=calendar_service,
+        email_service=email_service,
         get_provider=get_provider,
         get_gemini=get_gemini,
         get_openai=get_openai,
@@ -741,6 +779,52 @@ def _calendar_lines_for_date(items: list[dict], date_str: str) -> list[str]:
     return lines
 
 
+def _user_role_and_permissions(uid: str) -> tuple[str, list[str]]:
+    user = user_store.get_user(uid)
+    role = normalize_role((user or {}).get("role") or "standard_user")
+    effective = list(resolve_effective_permissions(role, uid, membership_store, permission_store))
+    return role, effective
+
+
+def _briefing_task_line(uid: str, role: str) -> str:
+    try:
+        open_tasks = [t for t in task_service.list_tasks(user_id=uid, role=role)["tasks"] if t.get("status") != "done"]
+    except Exception:
+        return ""
+    if not open_tasks:
+        return ""
+    names = ", ".join(t["title"] for t in open_tasks[:3])
+    if len(open_tasks) > 3:
+        names += f", and {len(open_tasks) - 3} more"
+    return f" You have {len(open_tasks)} open task(s): {names}."
+
+
+def _briefing_calendar_line(uid: str, role: str) -> str:
+    from datetime import datetime as _dt_cls, timedelta as _td
+    try:
+        now = _dt_cls.now().astimezone()
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        end = start + _td(days=1)
+        events = calendar_service.list_events(user_id=uid, role=role, start=int(start.timestamp()), end=int(end.timestamp()))["events"]
+    except Exception:
+        return ""
+    if not events:
+        return ""
+    parts = [f"{_dt_cls.fromtimestamp(e['start']).astimezone().strftime('%H:%M')} {e['title']}" for e in events[:5]]
+    return " Personal calendar today: " + "; ".join(parts) + "."
+
+
+def _briefing_email_line(uid: str, role: str) -> str:
+    try:
+        email_service.sync_inbox(user_id=uid, role=role, limit=20)
+        unread = email_service.list_messages(user_id=uid, role=role, unread_only=True)["messages"]
+    except Exception:
+        return ""
+    if not unread:
+        return ""
+    return f" {len(unread)} unread email(s) in your inbox."
+
+
 async def _morning_briefing_loop() -> None:
     from datetime import datetime as _dt_cls
     _log = logging.getLogger("jarvis")
@@ -770,7 +854,8 @@ async def _morning_briefing_loop() -> None:
                 if prefs.get("morning_briefing_time", "07:30") != current_hm:
                     continue
                 try:
-                    skill_result = try_skill("briefing", role="standard_user", token=None, granted_permissions=[])
+                    role, effective = _user_role_and_permissions(uid)
+                    skill_result = try_skill("briefing", role=role, token=None, granted_permissions=effective, user_id=uid)
                     reply_text = (skill_result or {}).get("reply", "Good morning. All systems nominal.")
                     try:
                         today = now.date().isoformat()
@@ -779,6 +864,10 @@ async def _morning_briefing_loop() -> None:
                             reply_text = reply_text.rstrip(".") + " Today: " + "; ".join(cal_lines) + "."
                     except Exception:
                         pass
+                    reply_text += _briefing_task_line(uid, role)
+                    loop = asyncio.get_event_loop()
+                    reply_text += await loop.run_in_executor(None, _briefing_calendar_line, uid, role)
+                    reply_text += await loop.run_in_executor(None, _briefing_email_line, uid, role)
                     from jarvis.api_alerts import get_alert_broadcaster
                     await get_alert_broadcaster().broadcast({
                         "type": "briefing",

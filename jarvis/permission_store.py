@@ -6,6 +6,8 @@ from pathlib import Path
 
 from .home_assistant.permissions import HOME_ASSISTANT_PERMISSIONS
 from .tasks.permissions import TASKS_PERMISSIONS
+from .calendar.permissions import CALENDAR_PERMISSIONS
+from .email.permissions import EMAIL_PERMISSIONS
 
 
 KNOWN_PERMISSIONS = {
@@ -13,10 +15,6 @@ KNOWN_PERMISSIONS = {
     "assistant.chat",
     "devices.read",
     "devices.manage",
-    "calendar.read",
-    "calendar.write",
-    "email.read",
-    "email.write",
     "actions.write.execute",
     "actions.dangerous.execute",
     "actions.dangerous.approve",
@@ -33,6 +31,8 @@ KNOWN_PERMISSIONS = {
 }
 KNOWN_PERMISSIONS.update(HOME_ASSISTANT_PERMISSIONS)
 KNOWN_PERMISSIONS.update(TASKS_PERMISSIONS)
+KNOWN_PERMISSIONS.update(CALENDAR_PERMISSIONS)
+KNOWN_PERMISSIONS.update(EMAIL_PERMISSIONS)
 
 
 class PermissionStore:
