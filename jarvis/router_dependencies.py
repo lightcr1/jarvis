@@ -228,3 +228,13 @@ def build_admin_integrations_deps(state: object) -> dict:
         "integration_credential_store": live_attr(state, "integration_credential_store"),
         "user_store": live_attr(state, "user_store"),
     }
+
+
+def build_weather_deps(state: object) -> dict:
+    from .assistant_domain import fetch_weather
+
+    return {
+        "require_identity_session": state.require_identity_session,
+        "user_preferences_store": live_attr(state, "user_preferences_store"),
+        "fetch_weather": fetch_weather,
+    }

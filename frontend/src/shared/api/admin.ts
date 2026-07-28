@@ -413,3 +413,19 @@ export function fetchAdminPlaybookRuns(playbookId: string) {
 export function fetchAdminPlaybookRun(runId: string) {
   return apiRequest<{ run: PlaybookRun }>(`/admin/playbooks/runs/${encodeURIComponent(runId)}`, { includeAdmin: true });
 }
+
+export type AdminIntegrationStatusEntry = {
+  user_id: string;
+  username?: string;
+  field_names: string[];
+  updated_at: number;
+};
+
+export type AdminIntegrationsStatus = {
+  calendar: AdminIntegrationStatusEntry[];
+  email: AdminIntegrationStatusEntry[];
+};
+
+export function fetchAdminIntegrationsStatus() {
+  return apiRequest<AdminIntegrationsStatus>("/admin/integrations/status", { includeAdmin: true });
+}

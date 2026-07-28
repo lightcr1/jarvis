@@ -3158,3 +3158,6 @@ def rag_llm_answer(user_text: str, hits: list[dict], *, get_provider, get_gemini
         return (resp.choices[0].message.content or "").strip() or "Understood. No output returned."
 
     raise RuntimeError("No supported cloud LLM configured for RAG smart response")
+
+
+fetch_weather = _fetch_weather
