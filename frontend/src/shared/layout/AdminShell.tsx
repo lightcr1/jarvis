@@ -10,6 +10,7 @@ const NAV_LINKS = [
   { to: "/dashboard/users",     label: "Users",          end: false },
   { to: "/dashboard/groups",    label: "Groups",         end: false },
   { to: "/dashboard/permissions", label: "Permissions",  end: false },
+  { to: "/dashboard/policies",  label: "Policies",       end: false },
   { to: "/dashboard/status",    label: "Status",         end: false },
   { to: "/dashboard/logs",      label: "Logs",           end: false },
   { to: "/dashboard/settings",  label: "Settings",       end: false },
