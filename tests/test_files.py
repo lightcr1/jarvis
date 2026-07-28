@@ -885,6 +885,40 @@ class FileApiTests(unittest.TestCase):
         self.assertEqual(200, quota.status_code)
         self.assertEqual(7 * 1024 * 1024, quota.json()["quota_bytes"])
 
+    def test_chat_skill_reads_granted_folder_via_real_http_request(self):
+        # End-to-end regression test for the /chat -> try_skill(user_id=...) wiring.
+        # Before that fix, effective_user_id was resolved in the chat handler but
+        # never forwarded into try_skill(), so a per-user skill like this one could
+        # never resolve "my" folders through the real HTTP path — only a direct,
+        # unit-level try_skill() call (with user_id passed by hand) would work.
+        # This test goes through the real app + a real session token instead.
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        _, session_token = self._create_user_with_permissions(
+            admin["token"], admin["user_id"], "chatfilesuser", ["files.read", "files.write"]
+        )
+        headers = {"X-Jarvis-Session": session_token}
+
+        created = self.client.post("/files/folders", headers=headers, json={"name": "Reports"})
+        self.assertEqual(200, created.status_code)
+        folder = created.json()["folder"]
+
+        upload = self.client.post(
+            "/files/upload", headers=headers,
+            files={"file": ("q1.txt", b"quarterly numbers", "text/plain")},
+            data={"folder_id": folder["id"]},
+        )
+        self.assertEqual(200, upload.status_code)
+
+        grant = self.client.put(f"/files/folders/{folder['id']}/jarvis-access", headers=headers, json={"granted": True})
+        self.assertEqual(200, grant.status_code)
+        self.assertTrue(grant.json()["folder"]["jarvis_access_granted"])
+
+        chat = self.client.post("/chat", headers=headers, json={"text": "what's in my Reports folder"})
+        self.assertEqual(200, chat.status_code)
+        body = chat.json()
+        self.assertEqual("file_drive_list", body["data"]["route"])
+        self.assertIn("q1.txt", body["reply"])
+
 
 if __name__ == "__main__":
     unittest.main()
