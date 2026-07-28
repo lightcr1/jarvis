@@ -64,7 +64,7 @@ a new entry to the handoff snapshot at the bottom).
 
 ## Phase 6 — V2.6 Extended System Integrations (backlog, pick-and-choose)
 
-- [ ] Personal Cloud Workspace (Guacamole + CF Tunnel + WoL) — **no blockers, can jump the queue**
+- [x] Personal Cloud Workspace — **code complete, infra setup pending (user-run)**. Connectivity = Tailscale, not a plain LAN/port-forward (target PCs are on a different physical network). `jarvis/workspace/` (target registry, Guacamole `guacamole-auth-json` token signing, WoL-via-optional-relay), `deploy/guacamole/docker-compose.yml` (not started), `WorkspaceScreen.tsx`. **Two things need the user's hands before this is live:** (1) install+auth Tailscale on the JARVIS server and both target PCs, (2) bring up the Guacamole docker-compose stack and set `JARVIS_WORKSPACE_GUACAMOLE_URL`/`JARVIS_WORKSPACE_JSON_SECRET`. Runbook: see below / separate doc. Also flagged: the Guacamole token's PKCS7-padding assumption should be verified against a live instance before real use.
 - [ ] Network & security monitoring (needs hardware confirmed)
 - [ ] NAS/storage integration (needs brand/model confirmed)
 - [ ] Camera/surveillance integration (needs hardware confirmed)
