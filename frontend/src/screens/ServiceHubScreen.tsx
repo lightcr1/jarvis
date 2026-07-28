@@ -176,7 +176,7 @@ export function ServiceHubScreen({ onNavigate }: { onNavigate: (screen: string) 
     Promise.allSettled([
       apiRequest<{ healthy?: boolean }>('/proxmox/health', { includeUser: true }),
       apiRequest<{ healthy?: boolean }>('/home-assistant/health', { includeUser: true }),
-      apiRequest<{ counts?: Record<string, number> }>('/rag/status'),
+      apiRequest<{ counts?: Record<string, number> }>('/rag/status', { includeUser: true }),
       apiRequest<HealthInfo>('/health'),
     ]).then(([px, ha, rag, health]) => {
       setLiveStatus({
