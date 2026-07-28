@@ -51,13 +51,16 @@ a new entry to the handoff snapshot at the bottom).
 
 ## Phase 5 — V2.3 Communication Hub
 
-- [ ] **Open decision needed:** email provider (Gmail API vs. IMAP)
-- [ ] **Open decision needed:** calls provider (Twilio/SIPGATE vs. self-hosted SIP)
-- [ ] **Open decision needed:** messaging bridge, or skip for V2
-- [ ] Calendar integration (extend HA calendar plumbing vs. new module)
-- [ ] Email integration
-- [ ] Messaging bridge (deferred until provider chosen)
-- [ ] Phone/calls (deferred until provider chosen)
+- [x] **Decided:** email = generic IMAP/SMTP (not Gmail API/OAuth — provider-agnostic on purpose)
+- [x] **Decided:** calls = skipped (user confirmed, matches roadmap's own "stretch goal" note)
+- [x] **Decided:** messaging bridge = skipped for now (Telegram bot flagged as the pick if revisited)
+- [x] Calendar integration — dedicated CalDAV module (`jarvis/calendar/`), not the HA calendar plumbing (that's for HA-entity calendars, not the user's personal calendar); conflict detection on create, natural-language scheduling skills, `CalendarScreen.tsx`
+- [x] Email integration — `jarvis/email/` (IMAP/SMTP, metadata-only cache), LLM-assisted draft-and-approve with explicit confirm-before-send, `EmailScreen.tsx`
+- [x] Shared `jarvis/integration_credentials.py` — Fernet-encrypted multi-field credential store reused by both, excluded from `/admin/backup`
+- [x] Both folded into the morning briefing loop, alongside tasks (completed a wiring point Phase 3 had deferred)
+- [ ] Messaging bridge — out of scope, not built
+- [ ] Phone/calls — out of scope, not built
+- [ ] Admin UI panel for calendar/email credentials — deferred, self-service per-user via the new screens is enough for now
 
 ## Phase 6 — V2.6 Extended System Integrations (backlog, pick-and-choose)
 
@@ -158,3 +161,26 @@ a new entry to the handoff snapshot at the bottom).
 - Immediate next step: user decisions needed to unblock Phase 5 (see Open Decisions in
   `ROADMAP_V2.md`); otherwise pick from Phase 6 backlog or polish Phase 4's deferred
   admin UI panel.
+
+### 2026-07-28 — Phase 5 (Communication Hub)
+- User decisions: IMAP/SMTP over Gmail API, calls skipped, messaging skipped
+  (Telegram noted as the pick if revisited later).
+- Dispatched Calendar (CalDAV) + Email (IMAP/SMTP) together to one agent rather than
+  parallel agents, since both need a shared credential store and both hook into the
+  same morning-briefing assembly point — avoided the collision risk two separate
+  agents would have had on those shared touchpoints.
+- Verified myself before committing: full suite (1810 passed, same 8 pre-existing
+  unrelated failures), and hand-checked the security-sensitive paths — credential
+  store only ever returns field names (never decrypted values) outside the server,
+  and email send requires an explicit `confirm=True` after a first `confirmation_required`
+  response, mirroring the Phase 4 playbook executor's gate rather than inventing a
+  third confirmation mechanism.
+- Deployed to `/opt/jarvis` and confirmed live (previous deploy attempt via
+  `JARVIS_BRANCH=... update.sh` silently deployed stale `main` instead of the target
+  branch — `git pull` doesn't switch branches, it merges into whatever's checked out.
+  Fixed by checking out the branch directly in the source root and using
+  `update.sh --local` instead, which skips the branch-pull step entirely).
+- **Phases 0–5 complete.** Remaining: Phase 6 (Extended Integrations, backlog/pick-and-
+  choose — Personal Cloud Workspace has no blockers), Phase 7 leftovers (Ambient
+  Display Mode, multi-device sync, Voice Everywhere, Plugin System — the last one
+  needs its own design pass first).
