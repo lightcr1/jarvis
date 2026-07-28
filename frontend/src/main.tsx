@@ -26,6 +26,7 @@ import { StatusPage } from "./routes/admin/pages/StatusPage";
 import { ProviderSettingsPage } from "./routes/admin/pages/ProviderSettingsPage";
 import { UsagePage } from "./routes/admin/pages/UsagePage";
 import { AdminDocsPage } from "./routes/admin/pages/AdminDocsPage";
+import { IntegrationsPage } from "./routes/admin/pages/IntegrationsPage";
 import "./styles.css";
 
 const router = createBrowserRouter([
@@ -44,6 +45,7 @@ const router = createBrowserRouter([
       { path: "provider",         element: <ProviderSettingsPage /> },
       { path: "usage",            element: <UsagePage /> },
       { path: "docs",             element: <AdminDocsPage /> },
+      { path: "integrations",     element: <IntegrationsPage /> },
     ],
   },
   { path: "*", element: <JarvisApp /> },

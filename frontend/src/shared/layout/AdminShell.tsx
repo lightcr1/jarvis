@@ -15,6 +15,7 @@ const NAV_LINKS = [
   { to: "/dashboard/settings",  label: "Settings",       end: false },
   { to: "/dashboard/provider",  label: "AI Provider",    end: false },
   { to: "/dashboard/usage",     label: "Usage",          end: false },
+  { to: "/dashboard/integrations", label: "Integrations", end: false },
   { to: "/dashboard/docs",      label: "Docs",           end: false },
 ];
 

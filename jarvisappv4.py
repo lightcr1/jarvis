@@ -139,7 +139,8 @@ from jarvis.policy_engine import PolicyEngine
 from jarvis.playbook_store import PlaybookStore
 from jarvis.playbook_executor import PlaybookExecutor, build_default_action_dispatch
 from jarvis.api_admin_integrations import build_admin_integrations_router
-from jarvis.router_dependencies import build_admin_deps, build_admin_integrations_deps, build_alerts_deps, build_auth_chat_deps, build_calendar_deps, build_device_sync_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_workspace_deps
+from jarvis.api_weather import build_weather_router
+from jarvis.router_dependencies import build_admin_deps, build_admin_integrations_deps, build_alerts_deps, build_auth_chat_deps, build_calendar_deps, build_device_sync_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_weather_deps, build_workspace_deps
 from jarvis.jarvis_engine import (
     JarvisEngine,
     build_registry,
@@ -585,6 +586,7 @@ app.include_router(build_tasks_router(build_tasks_deps(sys.modules[__name__])))
 app.include_router(build_notifications_router(build_notifications_deps(sys.modules[__name__])))
 app.include_router(build_policies_router(build_policies_deps(sys.modules[__name__])))
 app.include_router(build_admin_integrations_router(build_admin_integrations_deps(sys.modules[__name__])))
+app.include_router(build_weather_router(build_weather_deps(sys.modules[__name__])))
 app.include_router(build_calendar_router(build_calendar_deps(sys.modules[__name__])))
 app.include_router(build_email_router(build_email_deps(sys.modules[__name__])))
 app.include_router(build_workspace_router(build_workspace_deps(sys.modules[__name__])))

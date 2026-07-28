@@ -229,3 +229,19 @@ export async function restoreAdminBackup(payload: Record<string, unknown>) {
     body: payload,
   });
 }
+
+export type AdminIntegrationStatusEntry = {
+  user_id: string;
+  username?: string;
+  field_names: string[];
+  updated_at: number;
+};
+
+export type AdminIntegrationsStatus = {
+  calendar: AdminIntegrationStatusEntry[];
+  email: AdminIntegrationStatusEntry[];
+};
+
+export function fetchAdminIntegrationsStatus() {
+  return apiRequest<AdminIntegrationsStatus>("/admin/integrations/status", { includeAdmin: true });
+}
