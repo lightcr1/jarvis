@@ -98,3 +98,15 @@ class IntegrationCredentialStore:
         del self.data["credentials"][key]
         self._save()
         return True
+
+    def list_users_with_credential(self, integration: str) -> list[dict]:
+        suffix = f":{integration}"
+        return [
+            {
+                "user_id": key[: -len(suffix)],
+                "field_names": entry.get("field_names", []),
+                "updated_at": entry.get("updated_at"),
+            }
+            for key, entry in self.data["credentials"].items()
+            if key.endswith(suffix)
+        ]

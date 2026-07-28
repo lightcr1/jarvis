@@ -209,3 +209,11 @@ def build_policies_deps(state: object) -> dict:
         "playbook_executor": live_attr(state, "playbook_executor"),
         "audit_admin_event": state._audit_admin_event,
     }
+
+
+def build_admin_integrations_deps(state: object) -> dict:
+    return {
+        "require_admin_access": state.require_admin_access,
+        "integration_credential_store": live_attr(state, "integration_credential_store"),
+        "user_store": live_attr(state, "user_store"),
+    }
