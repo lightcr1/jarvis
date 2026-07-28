@@ -67,13 +67,21 @@ type IncomingPayload = {
   kind?: string;
   message?: string;
   timestamp?: number;
+  last_briefing_seen_ts?: number;
 };
+
+function markBriefingSeenLocally(userId: string | null) {
+  if (!userId) return;
+  const today = new Date().toISOString().slice(0, 10);
+  localStorage.setItem(`jarvis_briefing_${userId}_${today}`, "1");
+}
 
 export function useJarvisAlerts() {
   const [alerts, setAlerts] = useState<JarvisAlert[]>([]);
   const [briefings, setBriefings] = useState<BriefingPush[]>([]);
   const [suggestions, setSuggestions] = useState<SuggestionEvent[]>([]);
   const [digests, setDigests] = useState<DigestPush[]>([]);
+  const [briefingSeenTs, setBriefingSeenTs] = useState<number | null>(null);
 
   useEffect(() => {
     const token = getSessionToken();
@@ -109,6 +117,9 @@ export function useJarvisAlerts() {
               message: payload.message ?? "",
               timestamp: payload.timestamp ?? Date.now(),
             }]);
+          } else if (payload.type === "briefing_seen") {
+            markBriefingSeenLocally(currentUserId);
+            setBriefingSeenTs(payload.last_briefing_seen_ts ?? Date.now());
           }
         } catch {
           // ignore malformed payloads
@@ -144,7 +155,14 @@ export function useJarvisAlerts() {
     setDigests((prev) => prev.filter((d) => d.ts !== ts));
   };
 
-  return { alerts, dismissAlert, briefings, dismissBriefing, suggestions, dismissSuggestion, digests, dismissDigest };
+  return { alerts, dismissAlert, briefings, dismissBriefing, suggestions, dismissSuggestion, digests, dismissDigest, briefingSeenTs };
+}
+
+export function markBriefingSeen() {
+  return apiRequest<{ preferences: { last_briefing_seen_ts: number } }>("/sync/briefing-seen", {
+    method: "POST",
+    includeUser: true,
+  });
 }
 
 export function fetchAlertRules() {

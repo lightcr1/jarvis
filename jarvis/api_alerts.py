@@ -59,6 +59,16 @@ class AlertBroadcaster:
         except Exception as exc:
             logger.warning("Push fanout failed: %s", exc)
 
+    async def broadcast_to_user(self, user_id: str, payload: dict) -> None:
+        with self._lock:
+            targets = [ws for ws, uid in self._clients.items() if uid == user_id]
+        for ws in targets:
+            try:
+                await ws.send_json(payload)
+            except Exception:
+                with self._lock:
+                    self._clients.pop(ws, None)
+
 
 _broadcaster = AlertBroadcaster()
 

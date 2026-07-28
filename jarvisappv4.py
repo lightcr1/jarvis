@@ -99,6 +99,7 @@ from jarvis.pending_signup_store import PendingSignupStore
 from jarvis.api_admin import build_admin_router
 from jarvis.api_auth_chat import build_auth_chat_router
 from jarvis.api_alerts import build_alerts_router, get_alert_broadcaster
+from jarvis.api_device_sync import build_device_sync_router
 from jarvis.api_home_assistant import build_home_assistant_router
 from jarvis.alert_store import AlertRulesStore
 from jarvis.alert_engine import AlertEngine
@@ -137,7 +138,7 @@ from jarvis.policy_store import PolicyStore
 from jarvis.policy_engine import PolicyEngine
 from jarvis.playbook_store import PlaybookStore
 from jarvis.playbook_executor import PlaybookExecutor, build_default_action_dispatch
-from jarvis.router_dependencies import build_admin_deps, build_alerts_deps, build_auth_chat_deps, build_calendar_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_workspace_deps
+from jarvis.router_dependencies import build_admin_deps, build_alerts_deps, build_auth_chat_deps, build_calendar_deps, build_device_sync_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_workspace_deps
 from jarvis.jarvis_engine import (
     JarvisEngine,
     build_registry,
@@ -575,6 +576,7 @@ file_service = FileService(
 # so test suites that replace stores on jarvisappv4 keep working.
 app.include_router(build_admin_router(build_admin_deps(sys.modules[__name__])))
 app.include_router(build_alerts_router(build_alerts_deps(sys.modules[__name__])))
+app.include_router(build_device_sync_router(build_device_sync_deps(sys.modules[__name__])))
 app.include_router(build_home_assistant_router(build_home_assistant_deps(sys.modules[__name__])))
 app.include_router(build_memory_router(build_memory_deps(sys.modules[__name__])))
 app.include_router(build_status_router(build_status_deps(sys.modules[__name__])))
