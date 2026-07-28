@@ -460,6 +460,8 @@ def build_admin_router(deps: dict) -> APIRouter:
         revoked = [tok for tok, data in list(tokens.items()) if data.get("user_id") == user_id]
         for tok in revoked:
             tokens.pop(tok, None)
+        if revoked:
+            deps.get("persist_identity_tokens", lambda: None)()
         current("audit_log").write("admin_sessions_revoked", {"target_user_id": user_id, "revoked_count": len(revoked)})
         return {"ok": True, "revoked": len(revoked), "user_id": user_id}
 

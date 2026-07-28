@@ -21,7 +21,61 @@ DEFAULT_PREFERENCES = {
     "quick_actions": ["Briefing", "System status", "Weather"],
     "notifications_enabled": True,
     "persona_tone": "formal",
+    "quiet_hours_enabled": False,
+    "quiet_hours_start": "22:00",
+    "quiet_hours_end": "07:00",
+    "weekly_digest_enabled": False,
+    "weekly_digest_day": "sunday",
+    "weekly_digest_time": "18:00",
+    "nightly_summary_enabled": False,
+    "nightly_summary_time": "21:00",
 }
+
+_WEEKDAY_NAMES = {"monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"}
+
+
+def _validate_weekday(value: object, fallback: str) -> str:
+    candidate = str(value).strip().lower()
+    return candidate if candidate in _WEEKDAY_NAMES else fallback
+
+
+def _validate_hm(value: object, fallback: str) -> str:
+    text = str(value).strip()
+    parts = text.split(":")
+    if len(parts) != 2:
+        return fallback
+    try:
+        hour, minute = int(parts[0]), int(parts[1])
+    except ValueError:
+        return fallback
+    if not (0 <= hour <= 23 and 0 <= minute <= 59):
+        return fallback
+    return f"{hour:02d}:{minute:02d}"
+
+
+def is_within_quiet_hours(now_hm: str, start_hm: str, end_hm: str) -> bool:
+    try:
+        now_h, now_m = (int(p) for p in now_hm.split(":"))
+        start_h, start_m = (int(p) for p in start_hm.split(":"))
+        end_h, end_m = (int(p) for p in end_hm.split(":"))
+    except (ValueError, AttributeError):
+        return False
+    now, start, end = now_h * 60 + now_m, start_h * 60 + start_m, end_h * 60 + end_m
+    if start == end:
+        return False
+    if start < end:
+        return start <= now < end
+    return now >= start or now < end  # overnight range, e.g. 22:00 -> 07:00
+
+
+def time_of_day_bucket(hour: int) -> str:
+    if 5 <= hour < 12:
+        return "morning"
+    if 12 <= hour < 18:
+        return "day"
+    if 18 <= hour < 22:
+        return "evening"
+    return "night"
 
 # Curated voices — best options for J.A.R.V.I.S. feel
 JARVIS_VOICES = [
@@ -91,6 +145,14 @@ class UserPreferencesStore:
             "quick_actions": list(payload.get("quick_actions", current.get("quick_actions") or ["Briefing", "System status", "Weather"])),
             "notifications_enabled": bool(payload.get("notifications_enabled", current.get("notifications_enabled", True))),
             "persona_tone": str(payload.get("persona_tone", current.get("persona_tone", "formal"))).strip() if str(payload.get("persona_tone", current.get("persona_tone", "formal"))) in {"formal", "casual"} else "formal",
+            "quiet_hours_enabled": bool(payload.get("quiet_hours_enabled", current.get("quiet_hours_enabled", False))),
+            "quiet_hours_start": _validate_hm(payload.get("quiet_hours_start", current.get("quiet_hours_start", "22:00")), current.get("quiet_hours_start", "22:00")),
+            "quiet_hours_end": _validate_hm(payload.get("quiet_hours_end", current.get("quiet_hours_end", "07:00")), current.get("quiet_hours_end", "07:00")),
+            "weekly_digest_enabled": bool(payload.get("weekly_digest_enabled", current.get("weekly_digest_enabled", False))),
+            "weekly_digest_day": _validate_weekday(payload.get("weekly_digest_day", current.get("weekly_digest_day", "sunday")), current.get("weekly_digest_day", "sunday")),
+            "weekly_digest_time": _validate_hm(payload.get("weekly_digest_time", current.get("weekly_digest_time", "18:00")), current.get("weekly_digest_time", "18:00")),
+            "nightly_summary_enabled": bool(payload.get("nightly_summary_enabled", current.get("nightly_summary_enabled", False))),
+            "nightly_summary_time": _validate_hm(payload.get("nightly_summary_time", current.get("nightly_summary_time", "21:00")), current.get("nightly_summary_time", "21:00")),
             "updated_at": int(time.time()),
         }
         self.data.setdefault("preferences", {})[user_id] = merged

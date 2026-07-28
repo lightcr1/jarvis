@@ -10,6 +10,7 @@ DEFAULT_LIMITS: dict = {
     "requests_per_min": 30,
     "expensive_models_per_day": 0,  # 0 = unlimited
     "allowed_models": [],           # empty = all allowed
+    "storage_quota_mb": 0,           # 0 = use admin_settings_store default_storage_quota_mb
     "updated_at": 0,
 }
 
@@ -57,6 +58,8 @@ class UserLimitsStore:
                 out["allowed_models"] = [str(m) for m in models if str(m).strip()]
             else:
                 out["allowed_models"] = []
+        if "storage_quota_mb" in raw:
+            out["storage_quota_mb"] = max(0, int(raw["storage_quota_mb"] or 0))
         out["updated_at"] = int(raw.get("updated_at") or 0)
         return out
 

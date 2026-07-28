@@ -1,6 +1,8 @@
+import json
 import os
 import re
 import secrets
+import tempfile
 import time
 
 from fastapi import HTTPException
@@ -160,25 +162,65 @@ def issue_token(*, tokens, admin_settings_store, unlock_out_type, prune_expired_
     return unlock_out_type(token=token, expires_in_sec=ttl_min * 60)
 
 
-def prune_identity_tokens(identity_tokens: dict[str, dict]) -> int:
+def default_identity_sessions_path() -> str:
+    configured = os.getenv("JARVIS_IDENTITY_SESSIONS_PATH")
+    if configured:
+        return configured
+    preferred = "/var/lib/jarvis/identity_sessions.json"
+    try:
+        os.makedirs(os.path.dirname(preferred), exist_ok=True)
+        with open(preferred, "a", encoding="utf-8"):
+            pass
+        return preferred
+    except OSError:
+        fallback_dir = os.path.join(tempfile.gettempdir(), "jarvis")
+        os.makedirs(fallback_dir, exist_ok=True)
+        return os.path.join(fallback_dir, "identity_sessions.json")
+
+
+def load_identity_tokens(path: str | None = None) -> dict[str, dict]:
+    target = path or default_identity_sessions_path()
+    try:
+        with open(target, "r", encoding="utf-8") as fh:
+            data = json.load(fh)
+        return data if isinstance(data, dict) else {}
+    except (OSError, json.JSONDecodeError):
+        return {}
+
+
+def save_identity_tokens(identity_tokens: dict[str, dict], path: str | None = None) -> None:
+    target = path or default_identity_sessions_path()
+    try:
+        os.makedirs(os.path.dirname(target), exist_ok=True)
+        with open(target, "w", encoding="utf-8") as fh:
+            json.dump(identity_tokens, fh)
+    except OSError:
+        pass
+
+
+def prune_identity_tokens(identity_tokens: dict[str, dict], path: str | None = None) -> int:
     now = time.time()
     expired = [token for token, data in identity_tokens.items() if float(data.get("exp", 0)) < now]
     for token in expired:
         identity_tokens.pop(token, None)
+    if expired and path is not None:
+        save_identity_tokens(identity_tokens, path)
     return len(expired)
 
 
-def issue_identity_token(*, identity_tokens: dict[str, dict], user_id: str, role: str, normalize_role) -> dict:
-    prune_identity_tokens(identity_tokens)
+def issue_identity_token(*, identity_tokens: dict[str, dict], user_id: str, role: str, normalize_role, path: str | None = None) -> dict:
+    prune_identity_tokens(identity_tokens, path)
     ttl_min = env_int("JARVIS_IDENTITY_TOKEN_TTL_MIN", default=60 * 24 * 7, minimum=5)
     token = secrets.token_urlsafe(32)
     exp = time.time() + ttl_min * 60
     identity_tokens[token] = {"user_id": user_id, "role": normalize_role(role), "exp": exp}
+    if path is not None:
+        save_identity_tokens(identity_tokens, path)
     return {"session_token": token, "expires_in_sec": ttl_min * 60}
 
 
-def get_identity_session(*, identity_tokens: dict[str, dict], x_jarvis_session: str | None, user_store, normalize_role) -> dict | None:
-    prune_identity_tokens(identity_tokens)
+def get_identity_session(*, identity_tokens: dict[str, dict], x_jarvis_session: str | None, user_store, normalize_role, path: str | None = None) -> dict | None:
+    prune_identity_tokens(identity_tokens, path)
     token = (x_jarvis_session or "").strip()
     if not token:
         return None
@@ -187,10 +229,14 @@ def get_identity_session(*, identity_tokens: dict[str, dict], x_jarvis_session: 
         return None
     if time.time() > float(session.get("exp", 0)):
         identity_tokens.pop(token, None)
+        if path is not None:
+            save_identity_tokens(identity_tokens, path)
         return None
     user = user_store.get_user(session.get("user_id", ""))
     if not user or not bool(user.get("enabled", False)):
         identity_tokens.pop(token, None)
+        if path is not None:
+            save_identity_tokens(identity_tokens, path)
         return None
     return {"token": token, "user": user, "role": normalize_role(session.get("role"))}
 

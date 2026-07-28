@@ -5,6 +5,7 @@ import { synthesizeSpeech } from '../shared/api/chat';
 import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
 import { fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, type BillingInfo, type ByokKey } from '../shared/api/billing';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
+import { getPushSubscriptionStatus, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../shared/api/push';
 
 type IntegrationState = 'checking' | 'online' | 'offline' | 'unconfigured';
 
@@ -536,8 +537,31 @@ export function SettingsScreen() {
   const [intStatus, setIntStatus] = useState<Record<string, IntegrationState>>({
     proxmox: 'checking', ha: 'checking', rag: 'checking',
   });
+  const [pushSupported, setPushSupported] = useState(false);
+  const [pushEnabled, setPushEnabled] = useState(false);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushError, setPushError] = useState('');
   const testAudioRef = useRef<HTMLAudioElement | null>(null);
   const previewAudioRef = useRef<HTMLAudioElement | null>(null);
+
+  const handleTogglePush = async (next: boolean) => {
+    setPushBusy(true);
+    setPushError('');
+    try {
+      if (next) {
+        const ok = await subscribeToPush();
+        if (!ok) throw new Error('Permission denied or push unavailable.');
+        setPushEnabled(true);
+      } else {
+        await unsubscribeFromPush();
+        setPushEnabled(false);
+      }
+    } catch (err) {
+      setPushError((err as Error).message || 'Could not update push notifications.');
+    } finally {
+      setPushBusy(false);
+    }
+  };
 
   const handlePreviewVoice = (voiceId: string) => {
     previewAudioRef.current?.pause();
@@ -621,6 +645,11 @@ export function SettingsScreen() {
       });
     };
     void checkInt();
+
+    if (isPushSupported()) {
+      setPushSupported(true);
+      getPushSubscriptionStatus().then(setPushEnabled).catch(() => setPushEnabled(false));
+    }
   }, []);
 
   const set = <K extends keyof UserPreferences>(k: K, v: UserPreferences[K]) => {
@@ -701,6 +730,24 @@ export function SettingsScreen() {
       <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted, lineHeight: 1.6 }}>
         When disabled, alert toasts and the notification badge on the Services item will not appear.
       </div>
+      {pushSupported && (
+        <>
+          <Row label="Push Notifications"
+            desc={pushError || 'Get alerts, briefings and digests on this device even when JARVIS is closed'}>
+            <Toggle on={pushEnabled} onChange={v => { if (!pushBusy) void handleTogglePush(v); }} />
+          </Row>
+          {pushError && (
+            <div style={{ padding: '4px 0 10px', fontSize: 12, color: J.error }}>{pushError}</div>
+          )}
+        </>
+      )}
+      <Row label="Quiet Hours" desc="JARVIS keeps replies minimal and holds non-urgent alerts">
+        <Toggle on={prefs.quiet_hours_enabled ?? false} onChange={v => set('quiet_hours_enabled', v)} />
+      </Row>
+      <Field label="Quiet from" value={prefs.quiet_hours_start || '22:00'}
+        onChange={v => set('quiet_hours_start', v)} type="time" />
+      <Field label="Quiet until" value={prefs.quiet_hours_end || '07:00'}
+        onChange={v => set('quiet_hours_end', v)} type="time" />
     </>),
 
     briefing: (<>

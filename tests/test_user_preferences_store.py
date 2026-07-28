@@ -2,7 +2,12 @@ import os
 import tempfile
 import unittest
 
-from jarvis.user_preferences_store import UserPreferencesStore, DEFAULT_PREFERENCES
+from jarvis.user_preferences_store import (
+    UserPreferencesStore,
+    DEFAULT_PREFERENCES,
+    is_within_quiet_hours,
+    time_of_day_bucket,
+)
 
 
 class UserPreferencesStoreTests(unittest.TestCase):
@@ -102,6 +107,56 @@ class UserPreferencesStoreTests(unittest.TestCase):
         for key in ["display_name", "accent_color", "auto_play_voice", "compact_mode",
                     "orb_detail", "theme", "location", "notes"]:
             self.assertIn(key, DEFAULT_PREFERENCES)
+
+    def test_quiet_hours_defaults(self):
+        prefs = self.store.get("usr-new")
+        self.assertFalse(prefs["quiet_hours_enabled"])
+        self.assertEqual("22:00", prefs["quiet_hours_start"])
+        self.assertEqual("07:00", prefs["quiet_hours_end"])
+
+    def test_quiet_hours_update_persists(self):
+        self.store.update("usr-1", {
+            "quiet_hours_enabled": True,
+            "quiet_hours_start": "23:00",
+            "quiet_hours_end": "6:5",
+        })
+        prefs = self.store.get("usr-1")
+        self.assertTrue(prefs["quiet_hours_enabled"])
+        self.assertEqual("23:00", prefs["quiet_hours_start"])
+        self.assertEqual("06:05", prefs["quiet_hours_end"])
+
+    def test_quiet_hours_invalid_value_falls_back_to_current(self):
+        self.store.update("usr-1", {"quiet_hours_start": "22:00"})
+        self.store.update("usr-1", {"quiet_hours_start": "not-a-time"})
+        self.assertEqual("22:00", self.store.get("usr-1")["quiet_hours_start"])
+
+
+class QuietHoursHelperTests(unittest.TestCase):
+    def test_overnight_range_active_late_night(self):
+        self.assertTrue(is_within_quiet_hours("23:30", "22:00", "07:00"))
+
+    def test_overnight_range_active_early_morning(self):
+        self.assertTrue(is_within_quiet_hours("06:59", "22:00", "07:00"))
+
+    def test_overnight_range_inactive_midday(self):
+        self.assertFalse(is_within_quiet_hours("13:00", "22:00", "07:00"))
+
+    def test_same_day_range(self):
+        self.assertTrue(is_within_quiet_hours("13:00", "12:00", "14:00"))
+        self.assertFalse(is_within_quiet_hours("15:00", "12:00", "14:00"))
+
+    def test_equal_start_end_never_active(self):
+        self.assertFalse(is_within_quiet_hours("12:00", "12:00", "12:00"))
+
+    def test_malformed_input_returns_false(self):
+        self.assertFalse(is_within_quiet_hours("nope", "22:00", "07:00"))
+
+    def test_time_of_day_buckets(self):
+        self.assertEqual("morning", time_of_day_bucket(6))
+        self.assertEqual("day", time_of_day_bucket(14))
+        self.assertEqual("evening", time_of_day_bucket(19))
+        self.assertEqual("night", time_of_day_bucket(2))
+        self.assertEqual("night", time_of_day_bucket(23))
 
 
 class PermissionStoreEdgeCaseTests(unittest.TestCase):

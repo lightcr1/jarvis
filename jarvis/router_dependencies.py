@@ -27,6 +27,7 @@ def build_auth_chat_deps(state: object) -> dict:
         "issue_identity_token": state._issue_identity_token,
         "user_preferences_store": live_attr(state, "user_preferences_store"),
         "identity_tokens": live_attr(state, "_identity_tokens"),
+        "persist_identity_tokens": getattr(state, "_persist_identity_tokens", lambda: None),
         "require_identity_session": state.require_identity_session,
         "normalize_role": state.normalize_role,
         "get_identity_session": state._get_identity_session,
@@ -79,6 +80,7 @@ def build_admin_deps(state: object) -> dict:
         "require_admin_access": state.require_admin_access,
         "identity_tokens": live_attr(state, "_identity_tokens"),
         "prune_identity_tokens": getattr(state, "_prune_identity_tokens", lambda t: None),
+        "persist_identity_tokens": getattr(state, "_persist_identity_tokens", lambda: None),
         "prepare_audit_filters": state._prepare_audit_filters,
         "validate_audit_query": state._validate_audit_query,
         "audit_log": live_attr(state, "audit_log"),
@@ -127,6 +129,44 @@ def build_home_assistant_deps(state: object) -> dict:
     }
 
 
+def build_tasks_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "task_service": live_attr(state, "task_service"),
+    }
+
+
+def build_calendar_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "calendar_service": live_attr(state, "calendar_service"),
+    }
+
+
+def build_workspace_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "workspace_service": live_attr(state, "workspace_service"),
+    }
+
+
+def build_files_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "file_service": live_attr(state, "file_service"),
+    }
+
+
+def build_email_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "email_service": live_attr(state, "email_service"),
+        "get_provider": state.get_provider,
+        "get_gemini": state.get_gemini,
+        "get_openai": state.get_openai,
+    }
+
+
 def build_status_deps(state: object) -> dict:
     return {
         "status_hub": live_attr(state, "status_hub"),
@@ -148,4 +188,24 @@ def build_memory_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,
         "memory_store": live_attr(state, "memory_store"),
+    }
+
+
+def build_notifications_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "push_subscription_store": live_attr(state, "push_subscription_store"),
+        "vapid_keys": state.get_vapid_keys(),
+        "audit_admin_event": state._audit_admin_event,
+    }
+
+
+def build_policies_deps(state: object) -> dict:
+    return {
+        "require_admin_access": state.require_admin_access,
+        "policy_store": live_attr(state, "policy_store"),
+        "policy_engine": live_attr(state, "policy_engine"),
+        "playbook_store": live_attr(state, "playbook_store"),
+        "playbook_executor": live_attr(state, "playbook_executor"),
+        "audit_admin_event": state._audit_admin_event,
     }

@@ -30,6 +30,9 @@ def build_system_prompt(
     location: str | None = None,
     notes: list[str] | None = None,
     persona_tone: str = "formal",
+    time_of_day: str | None = None,
+    quiet_hours_active: bool = False,
+    related_history: list[str] | None = None,
 ) -> str:
     name_line = f" Address the user as '{user_name}'." if user_name else ""
     context_parts = []
@@ -38,6 +41,11 @@ def build_system_prompt(
     if notes:
         context_parts.append(f"User's personal notes: {'; '.join(notes[:10])}.")
     context_line = ("\n\nPERSONAL CONTEXT: " + " ".join(context_parts)) if context_parts else ""
+    history_line = (
+        "\n\nRELEVANT PAST CONVERSATIONS: " + " | ".join(related_history[:3])
+        + " If genuinely relevant to the current message, you may reference this briefly — "
+        "don't force it in."
+    ) if related_history else ""
     voice_line = (
         "\n\nVOICE MODE: This response will be spoken aloud by text-to-speech. "
         "Use absolutely NO markdown formatting — no asterisks, no hashtags, no backticks, no bullet points, no numbered lists. "
@@ -46,6 +54,21 @@ def build_system_prompt(
     tone_line = (
         "\n\nTONE ADJUSTMENT: Adopt a slightly warmer, more conversational tone — still precise, but less terse."
     ) if persona_tone == "casual" else ""
+    if quiet_hours_active:
+        context_mode_line = (
+            "\n\nQUIET HOURS ACTIVE: The user has Do Not Disturb enabled right now. Keep responses "
+            "minimal — answer only what was asked, suppress non-urgent elaboration, and do not "
+            "proactively surface alerts or suggestions unless explicitly requested."
+        )
+    elif time_of_day == "night":
+        context_mode_line = "\n\nLATE HOUR: It's late. Keep responses brief and calm, avoid non-urgent detail."
+    elif time_of_day == "morning":
+        context_mode_line = (
+            "\n\nMORNING CONTEXT: The user is starting their day — a fuller status/briefing style "
+            "answer is welcome if relevant."
+        )
+    else:
+        context_mode_line = ""
     return (
         "You are J.A.R.V.I.S. — Just A Rather Very Intelligent System — the personal AI of this "
         "household and infrastructure network. You embody the JARVIS from the Iron Man films: calm, "
@@ -69,8 +92,10 @@ def build_system_prompt(
         f"DEPLOYMENT: Running on host '{platform.node()}' at {Path(__file__).resolve().parent.parent}. "
         f"Data directory: {os.environ.get('JARVIS_CHAT_HISTORY_PATH', '/var/lib/jarvis/')}."
         f"{context_line}"
+        f"{history_line}"
         f"{voice_line}"
         f"{tone_line}"
+        f"{context_mode_line}"
     )
 def get_provider() -> str:
     configured = (os.getenv("LLM_PROVIDER") or "").lower().strip()

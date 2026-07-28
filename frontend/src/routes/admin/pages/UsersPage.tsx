@@ -7,6 +7,7 @@ import {
   fetchAdminUsers,
   setAdminUserPassword,
   updateAdminUser,
+  updateAdminUserLimits,
 } from "../../../shared/api/admin";
 import { useJ } from "../../../screens/jarvis-shared";
 
@@ -73,6 +74,67 @@ function PasswordReset({ user, onDone }: { user: AdminUser; onDone: (msg: string
         background: J.amber, color: J.bg0, border: "none", opacity: saving ? 0.6 : 1,
       }}>{saving ? "…" : "Set"}</button>
       <button onClick={() => { setOpen(false); setPw(""); }} style={{
+        padding: "4px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+        background: "transparent", color: J.textMuted, border: `1px solid ${J.border}`,
+      }}>✕</button>
+    </div>
+  );
+}
+
+function StorageQuotaEditor({ user, onDone }: { user: AdminUser; onDone: (msg: string) => void }) {
+  const J = useJ();
+  const [open, setOpen] = useState(false);
+  const [mb, setMb] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [lastSet, setLastSet] = useState<number | null>(null);
+
+  if (!open) {
+    return (
+      <button onClick={() => setOpen(true)} style={{
+        padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+        background: "transparent", color: J.textSec, border: `1px solid ${J.border}`,
+      }}>{lastSet !== null ? `Quota: ${lastSet === 0 ? "default" : `${lastSet} MB`}` : "Storage quota"}</button>
+    );
+  }
+
+  const submit = async () => {
+    const trimmed = mb.trim();
+    const value = trimmed === "" ? 0 : Number(trimmed);
+    if (Number.isNaN(value) || value < 0) return;
+    setSaving(true);
+    try {
+      const updated = await updateAdminUserLimits(user.id, { storage_quota_mb: value });
+      setLastSet(updated.storage_quota_mb);
+      onDone(`Storage quota updated for ${user.username}.`);
+      setMb("");
+      setOpen(false);
+    } catch (e) {
+      onDone(`Error: ${e instanceof Error ? e.message : "Failed."}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+      <input
+        autoFocus
+        type="number"
+        min={0}
+        value={mb}
+        onChange={e => setMb(e.target.value)}
+        onKeyDown={e => { if (e.key === "Enter") void submit(); if (e.key === "Escape") { setOpen(false); setMb(""); } }}
+        placeholder="MB (0 = default)"
+        style={{
+          width: 130, padding: "4px 8px", fontSize: 11, borderRadius: 4,
+          background: J.bg3, border: `1px solid ${J.border}`, color: J.text, outline: "none",
+        }}
+      />
+      <button onClick={() => void submit()} disabled={saving} style={{
+        padding: "4px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+        background: J.amber, color: J.bg0, border: "none", opacity: saving ? 0.6 : 1,
+      }}>{saving ? "…" : "Set"}</button>
+      <button onClick={() => { setOpen(false); setMb(""); }} style={{
         padding: "4px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer",
         background: "transparent", color: J.textMuted, border: `1px solid ${J.border}`,
       }}>✕</button>
@@ -349,6 +411,7 @@ export function UsersPage() {
                   border: `1px solid ${u.enabled ? J.warn + "30" : J.success + "30"}`,
                 }}>{u.enabled ? "Disable" : "Enable"}</button>
                 <PasswordReset user={u} onDone={setStatus} />
+                <StorageQuotaEditor user={u} onDone={setStatus} />
                 <button onClick={async () => {
                   if (!window.confirm(`Clear all chat history for "${u.username}"? This cannot be undone.`)) return;
                   try {
