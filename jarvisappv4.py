@@ -118,6 +118,9 @@ from jarvis.integration_credentials import IntegrationCredentialStore
 from jarvis.api_calendar import build_calendar_router
 from jarvis.calendar.service import CalendarService
 from jarvis.calendar.store import CalendarEventStore
+from jarvis.api_workspace import build_workspace_router
+from jarvis.workspace.service import WorkspaceService
+from jarvis.workspace.store import WorkspaceTargetStore
 from jarvis.api_email import build_email_router
 from jarvis.email.service import EmailService
 from jarvis.email.store import EmailDraftStore, EmailMessageStore
@@ -131,7 +134,7 @@ from jarvis.policy_store import PolicyStore
 from jarvis.policy_engine import PolicyEngine
 from jarvis.playbook_store import PlaybookStore
 from jarvis.playbook_executor import PlaybookExecutor, build_default_action_dispatch
-from jarvis.router_dependencies import build_admin_deps, build_alerts_deps, build_auth_chat_deps, build_calendar_deps, build_email_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps
+from jarvis.router_dependencies import build_admin_deps, build_alerts_deps, build_auth_chat_deps, build_calendar_deps, build_email_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_workspace_deps
 from jarvis.jarvis_engine import (
     JarvisEngine,
     build_registry,
@@ -217,6 +220,7 @@ integration_credential_store = IntegrationCredentialStore()
 calendar_event_store = CalendarEventStore()
 email_message_store = EmailMessageStore()
 email_draft_store = EmailDraftStore()
+workspace_target_store = WorkspaceTargetStore()
 
 wakeword_engine: NullWakewordEngine | SoftwareWakewordEngine = NullWakewordEngine()
 
@@ -538,6 +542,18 @@ email_service = EmailService(
     audit_log=audit_log,
 )
 
+workspace_service = WorkspaceService(
+    store=workspace_target_store,
+    credential_store=integration_credential_store,
+    membership_store=membership_store,
+    permission_store=permission_store,
+    resolve_effective_permissions=resolve_effective_permissions,
+    normalize_role=normalize_role,
+    audit_log=audit_log,
+    guacamole_url_fn=lambda: os.getenv("JARVIS_WORKSPACE_GUACAMOLE_URL"),
+    guacamole_secret_fn=lambda: os.getenv("JARVIS_WORKSPACE_JSON_SECRET"),
+)
+
 # Transitional modular router activation.
 # The admin router now resolves live dependencies against the current module state,
 # so test suites that replace stores on jarvisappv4 keep working.
@@ -551,6 +567,7 @@ app.include_router(build_notifications_router(build_notifications_deps(sys.modul
 app.include_router(build_policies_router(build_policies_deps(sys.modules[__name__])))
 app.include_router(build_calendar_router(build_calendar_deps(sys.modules[__name__])))
 app.include_router(build_email_router(build_email_deps(sys.modules[__name__])))
+app.include_router(build_workspace_router(build_workspace_deps(sys.modules[__name__])))
 
 # ---------------------------
 # Skills (no LLM)

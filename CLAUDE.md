@@ -511,6 +511,13 @@ LLM providers (env `LLM_PROVIDER`): `openai`, `gemini`, `local`
 | `PROXMOX_API_TOKEN` | Default API token |
 | `PROXMOX_HOSTS_FILE` | Path to hosts JSON file |
 
+### Optional — Personal Cloud Workspace
+| Variable | Purpose |
+|---|---|
+| `JARVIS_WORKSPACE_GUACAMOLE_URL` | Base URL of the Apache Guacamole web client (e.g. `http://guac-host:8081/guacamole`). If unset, `/workspace/targets/{id}/connect` fails clearly with "workspace not configured" instead of crashing. |
+| `JARVIS_WORKSPACE_JSON_SECRET` | Shared secret for Guacamole's `guacamole-auth-json` extension — 32 hex chars (16 bytes / 128-bit AES key), must exactly match the `JSON_SECRET_KEY` set on the Guacamole side (see `deploy/guacamole/docker-compose.yml`). If unset, the connect endpoint fails clearly rather than crashing. |
+| `JARVIS_WORKSPACE_STORE_PATH` | Path to the workspace targets JSON store (default: `/var/lib/jarvis/workspace_targets.json`) |
+
 ### Optional — Knowledge / RAG
 | Variable | Purpose |
 |---|---|

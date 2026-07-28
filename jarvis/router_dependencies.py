@@ -143,6 +143,13 @@ def build_calendar_deps(state: object) -> dict:
     }
 
 
+def build_workspace_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "workspace_service": live_attr(state, "workspace_service"),
+    }
+
+
 def build_email_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,

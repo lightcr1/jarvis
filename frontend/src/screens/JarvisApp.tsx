@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconCalendar, IconMail } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconCalendar, IconMail, IconMonitor } from './jarvis-shared';
 import { GreetingOverlay } from '../components/GreetingOverlay';
 import { OnboardingModal, shouldShowOnboarding } from '../components/OnboardingModal';
 import { LoginScreen } from './LoginScreen';
@@ -14,24 +14,26 @@ import { DocsScreen } from './DocsScreen';
 import { TasksScreen } from './TasksScreen';
 import { CalendarScreen } from './CalendarScreen';
 import { EmailScreen } from './EmailScreen';
+import { WorkspaceScreen } from './WorkspaceScreen';
 import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill, savePreferences } from '../shared/api/client';
 import { useJarvisAlerts } from '../shared/api/alerts';
 import { useJarvisLiveStatus } from '../shared/api/status';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
-type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'tasks' | 'calendar' | 'email' | 'services' | 'settings' | 'docs';
+type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'tasks' | 'calendar' | 'email' | 'workspace' | 'services' | 'settings' | 'docs';
 
 const NAV_ALL: Array<{ id: Screen; label: string; icon: (p: { size?: number }) => JSX.Element }> = [
-  { id: 'chat',     label: 'Chat',     icon: IconChat     },
-  { id: 'orb',      label: 'Voice',    icon: IconOrb      },
-  { id: 'home',     label: 'Home',     icon: IconHome     },
-  { id: 'proxmox',  label: 'Proxmox',  icon: IconServer   },
-  { id: 'tasks',    label: 'Tasks',    icon: IconCheck    },
-  { id: 'calendar', label: 'Calendar', icon: IconCalendar },
-  { id: 'email',    label: 'Email',    icon: IconMail     },
-  { id: 'services', label: 'Services', icon: IconGrid     },
-  { id: 'docs',     label: 'Docs',     icon: IconBook     },
-  { id: 'settings', label: 'Settings', icon: IconSettings },
+  { id: 'chat',      label: 'Chat',      icon: IconChat     },
+  { id: 'orb',       label: 'Voice',     icon: IconOrb      },
+  { id: 'home',      label: 'Home',      icon: IconHome     },
+  { id: 'proxmox',   label: 'Proxmox',   icon: IconServer   },
+  { id: 'tasks',     label: 'Tasks',     icon: IconCheck    },
+  { id: 'calendar',  label: 'Calendar',  icon: IconCalendar },
+  { id: 'email',     label: 'Email',     icon: IconMail     },
+  { id: 'workspace', label: 'Workspace', icon: IconMonitor  },
+  { id: 'services',  label: 'Services',  icon: IconGrid     },
+  { id: 'docs',      label: 'Docs',      icon: IconBook     },
+  { id: 'settings',  label: 'Settings',  icon: IconSettings },
 ];
 
 const NAV_GUEST: Array<{ id: Screen; label: string; icon: (p: { size?: number }) => JSX.Element }> = [
@@ -410,6 +412,7 @@ export function JarvisApp() {
           {screen === 'tasks'    && <TasksScreen onNavigate={navigate} />}
           {screen === 'calendar' && <CalendarScreen onNavigate={navigate} />}
           {screen === 'email'    && <EmailScreen onNavigate={navigate} />}
+          {screen === 'workspace' && <WorkspaceScreen onNavigate={navigate} />}
           {screen === 'services' && <ServiceHubScreen onNavigate={navigate} />}
           {screen === 'docs'     && <DocsScreen />}
           {screen === 'settings' && <SettingsScreen />}
