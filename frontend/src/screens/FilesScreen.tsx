@@ -279,12 +279,28 @@ function QuotaBar({ used, total }: { used: number; total: number }) {
   const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
   const color = pct > 90 ? J.error : pct > 70 ? J.warn : J.success;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 200 }}>
-      <div style={{ flex: 1, height: 6, background: J.bg3, borderRadius: 3, overflow: 'hidden', minWidth: 90 }}>
+    <div>
+      <div style={{ height: 5, background: J.bg3, borderRadius: 3, overflow: 'hidden' }}>
         <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3, transition: 'width .2s' }} />
       </div>
-      <div style={{ fontSize: 11, color: J.textMuted, whiteSpace: 'nowrap' }}>{formatBytes(used)} / {formatBytes(total)}</div>
+      <div style={{ fontSize: 11, color: J.textMuted, marginTop: 7 }}>{formatBytes(used)} of {formatBytes(total)} used</div>
     </div>
+  );
+}
+
+function SidebarNavItem({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+      padding: '8px 12px 8px 10px', borderRadius: 7, fontSize: 13, cursor: 'pointer', border: 'none',
+      borderLeft: `2px solid ${active ? J.amber : 'transparent'}`,
+      background: active ? J.amberGlow : 'transparent',
+      color: active ? J.amber : J.textSec,
+      fontWeight: active ? 600 : 400,
+    }}>
+      {icon}
+      {label}
+    </button>
   );
 }
 
@@ -413,25 +429,45 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
 
   return (
     <div
-      style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: J.bg0, position: 'relative' }}
+      style={{ flex: 1, display: 'flex', overflow: 'hidden', background: J.bg0, position: 'relative' }}
       onDragOver={e => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={e => { e.preventDefault(); setDragOver(false); }}
       onDrop={e => { e.preventDefault(); setDragOver(false); void doUpload(e.dataTransfer.files); }}
     >
-      <div style={{ minHeight: 50, borderBottom: `1px solid ${J.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 24px', background: J.bg1, flexShrink: 0, flexWrap: 'wrap', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, flexWrap: 'wrap' }}>
-          <span onClick={() => navigateTo(null)} style={{ cursor: 'pointer', color: parentId === null ? J.text : J.textSec, fontWeight: parentId === null ? 600 : 400 }}>
-            {view === 'mine' ? 'My Files' : 'Shared with me'}
-          </span>
-          {breadcrumb.map(b => (
-            <span key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <IconChevRight size={11} />
-              <span onClick={() => navigateTo(b.id)} style={{ cursor: 'pointer', color: b.id === parentId ? J.text : J.textSec, fontWeight: b.id === parentId ? 600 : 400 }}>{b.name}</span>
-            </span>
-          ))}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-          {quota && view === 'mine' && <QuotaBar used={quota.used_bytes} total={quota.quota_bytes} />}
+      <aside style={{ width: 200, flexShrink: 0, borderRight: `1px solid ${J.border}`, background: J.bg1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <nav style={{ padding: '14px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <SidebarNavItem icon={<IconFolder size={15} />} label="My Files" active={view === 'mine'} onClick={() => switchView('mine')} />
+          <SidebarNavItem icon={<IconShare size={15} />} label="Shared with me" active={view === 'shared'} onClick={() => switchView('shared')} />
+        </nav>
+        <div style={{ flex: 1 }} />
+        {quota && (
+          <div style={{ padding: 14, borderTop: `1px solid ${J.border}` }}>
+            <div style={{ fontSize: 10.5, color: J.textMuted, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Storage</div>
+            <QuotaBar used={quota.used_bytes} total={quota.quota_bytes} />
+          </div>
+        )}
+      </aside>
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ minHeight: 50, borderBottom: `1px solid ${J.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 24px', background: J.bg1, flexShrink: 0, flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, flexWrap: 'wrap' }}>
+              <span onClick={() => navigateTo(null)} style={{ cursor: 'pointer', color: parentId === null ? J.text : J.textSec, fontWeight: parentId === null ? 600 : 400 }}>
+                {view === 'mine' ? 'My Files' : 'Shared with me'}
+              </span>
+              {breadcrumb.map(b => (
+                <span key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <IconChevRight size={11} />
+                  <span onClick={() => navigateTo(b.id)} style={{ cursor: 'pointer', color: b.id === parentId ? J.text : J.textSec, fontWeight: b.id === parentId ? 600 : 400 }}>{b.name}</span>
+                </span>
+              ))}
+            </div>
+            {access !== 'owner' && parentId !== null && (
+              <span style={{ fontSize: 11, color: J.textMuted, background: J.bg3, borderRadius: 6, padding: '3px 9px', whiteSpace: 'nowrap' }}>
+                Shared by {ownerUsername || 'unknown'} · {access === 'write' ? 'can edit' : 'can view'}
+              </span>
+            )}
+          </div>
           {canWrite && (
             <div style={{ display: 'flex', gap: 8 }}>
               <button onClick={() => setShowCreate(true)} className="j-btn"
@@ -446,23 +482,8 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
             </div>
           )}
         </div>
-      </div>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '22px 24px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 10, marginBottom: 18 }}>
-          <div style={{ display: 'flex', gap: 6 }}>
-            {(['mine', 'shared'] as const).map(v => (
-              <button key={v} onClick={() => switchView(v)}
-                style={{ background: view === v ? J.amberDim : J.bg2, border: `1px solid ${view === v ? J.borderAccent : J.border}`, color: view === v ? J.amber : J.textSec, borderRadius: 7, padding: '4px 13px', fontSize: 12, fontWeight: view === v ? 500 : 400, cursor: 'pointer' }}>
-                {v === 'mine' ? 'My Files' : 'Shared with me'}
-              </button>
-            ))}
-          </div>
-          {access !== 'owner' && parentId !== null && (
-            <div style={{ fontSize: 11.5, color: J.textMuted }}>Shared by {ownerUsername || 'unknown'} · {access === 'write' ? 'can edit' : 'can view'}</div>
-          )}
-        </div>
-
+        <div style={{ flex: 1, overflowY: 'auto', padding: '22px 24px' }}>
         {loading && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: J.textMuted, fontSize: 13, padding: '24px 0' }}>
             <Spinner size={14} /> Loading...
@@ -558,6 +579,7 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {dragOver && (
