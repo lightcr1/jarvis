@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { J, useJ, Spinner, showToast, IconPlus, IconTrash, IconX, IconCalendar, IconRefresh, IconSettings } from './jarvis-shared';
+import { J, useJ, Spinner, showToast, IconPlus, IconTrash, IconPencil, IconX, IconCalendar, IconRefresh, IconSettings } from './jarvis-shared';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 import {
   CalendarEvent, createCalendarEvent, deleteCalendarCredentials, deleteCalendarEvent, fetchCalendarCredentialsStatus,
-  fetchCalendarEvents, setCalendarCredentials, syncCalendar,
+  fetchCalendarEvents, setCalendarCredentials, syncCalendar, updateCalendarEvent,
 } from '../shared/api/calendar';
 
 function toLocalInputValue(epoch: number): string {
@@ -276,17 +276,114 @@ function CreateEventModal({ onClose, onCreated }: { onClose: () => void; onCreat
   );
 }
 
-function EventCard({ event, onDelete }: { event: CalendarEvent; onDelete: (id: string) => void }) {
+function EditEventModal({ event, onClose, onUpdated }: { event: CalendarEvent; onClose: () => void; onUpdated: (event: CalendarEvent) => void }) {
+  const [title, setTitle] = useState(event.title);
+  const [start, setStart] = useState(toLocalInputValue(event.start));
+  const [end, setEnd] = useState(toLocalInputValue(event.end));
+  const [location, setLocation] = useState(event.location || '');
+  const [description, setDescription] = useState(event.description || '');
+  const [saving, setSaving] = useState(false);
+  const [conflicts, setConflicts] = useState<CalendarEvent[] | null>(null);
+
+  const submit = async (force = false) => {
+    const trimmed = title.trim();
+    const startEpoch = fromLocalInputValue(start);
+    const endEpoch = fromLocalInputValue(end);
+    if (!trimmed || !start || !end || endEpoch <= startEpoch || saving) return;
+    setSaving(true);
+    try {
+      const res = await updateCalendarEvent(event.id, { title: trimmed, start: startEpoch, end: endEpoch, location: location.trim() || undefined, description: description.trim() || undefined, force });
+      if (!res.updated) {
+        setConflicts(res.conflicts);
+        showToast('That overlaps with an existing event', 'error');
+        return;
+      }
+      onUpdated(res.event as CalendarEvent);
+      showToast('Event updated', 'success');
+      onClose();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update event', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <OverlayDialog
+      title="Edit Event"
+      onClose={onClose}
+      actions={
+        <>
+          <button onClick={onClose} className="j-btn" style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, padding: '8px 16px', fontSize: 13 }}>Cancel</button>
+          {conflicts ? (
+            <button onClick={() => submit(true)} disabled={saving} className="j-btn"
+              style={{ background: J.error, color: '#fff', borderRadius: 8, padding: '8px 20px', fontSize: 13, fontWeight: 600 }}>
+              {saving ? <Spinner size={13} color="#fff" /> : 'Book anyway'}
+            </button>
+          ) : (
+            <button onClick={() => submit(false)} disabled={!title.trim() || saving} className="j-btn"
+              style={{ background: J.amber, color: J.bg0, borderRadius: 8, padding: '8px 20px', fontSize: 13, fontWeight: 600, opacity: title.trim() ? 1 : .5 }}>
+              {saving ? <Spinner size={13} color={J.bg0} /> : 'Save'}
+            </button>
+          )}
+        </>
+      }
+    >
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div>
+          <label style={{ fontSize: 12, color: J.textSec, display: 'block', marginBottom: 5 }}>Title</label>
+          <input className="j-input" autoFocus value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Design review"
+            style={{ width: '100%', borderRadius: 8, padding: '9px 12px', fontSize: 13 }} />
+        </div>
+        <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 12, color: J.textSec, display: 'block', marginBottom: 5 }}>Start</label>
+            <input className="j-input" type="datetime-local" value={start} onChange={e => { setStart(e.target.value); setConflicts(null); }}
+              style={{ width: '100%', borderRadius: 8, padding: '9px 12px', fontSize: 13 }} />
+          </div>
+          <div style={{ flex: 1 }}>
+            <label style={{ fontSize: 12, color: J.textSec, display: 'block', marginBottom: 5 }}>End</label>
+            <input className="j-input" type="datetime-local" value={end} onChange={e => { setEnd(e.target.value); setConflicts(null); }}
+              style={{ width: '100%', borderRadius: 8, padding: '9px 12px', fontSize: 13 }} />
+          </div>
+        </div>
+        <div>
+          <label style={{ fontSize: 12, color: J.textSec, display: 'block', marginBottom: 5 }}>Location (optional)</label>
+          <input className="j-input" value={location} onChange={e => setLocation(e.target.value)}
+            style={{ width: '100%', borderRadius: 8, padding: '9px 12px', fontSize: 13 }} />
+        </div>
+        <div>
+          <label style={{ fontSize: 12, color: J.textSec, display: 'block', marginBottom: 5 }}>Description (optional)</label>
+          <textarea className="j-input" value={description} onChange={e => setDescription(e.target.value)} rows={2}
+            style={{ width: '100%', borderRadius: 8, padding: '9px 12px', fontSize: 13, resize: 'vertical', fontFamily: 'inherit' }} />
+        </div>
+        {conflicts && conflicts.length > 0 && (
+          <div style={{ background: J.errorDim, border: `1px solid ${J.error}`, borderRadius: 8, padding: '10px 12px', fontSize: 12.5, color: J.error }}>
+            Overlaps with: {conflicts.map(c => c.title).join(', ')}. Choose another time, or book anyway.
+          </div>
+        )}
+      </div>
+    </OverlayDialog>
+  );
+}
+
+function EventCard({ event, onDelete, onEdit }: { event: CalendarEvent; onDelete: (id: string) => void; onEdit: (event: CalendarEvent) => void }) {
   const start = new Date(event.start * 1000);
   const end = new Date(event.end * 1000);
   return (
     <div style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
         <div style={{ fontSize: 14, fontWeight: 500, color: J.text }}>{event.title}</div>
-        <button onClick={() => onDelete(event.id)} title="Delete event" aria-label="Delete event"
-          style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textMuted, borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
-          <IconTrash size={13} />
-        </button>
+        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+          <button onClick={() => onEdit(event)} title="Edit event" aria-label="Edit event"
+            style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textMuted, borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+            <IconPencil size={12} />
+          </button>
+          <button onClick={() => onDelete(event.id)} title="Delete event" aria-label="Delete event"
+            style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textMuted, borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
+            <IconTrash size={13} />
+          </button>
+        </div>
       </div>
       <div style={{ fontSize: 12, color: J.textSec }}>
         {start.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
@@ -307,6 +404,7 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [showManage, setShowManage] = useState(false);
+  const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [syncing, setSyncing] = useState(false);
 
   const load = () => {
@@ -397,12 +495,19 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
 
         {!loading && !error && configured && events.length > 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 10 }}>
-            {events.map(ev => <EventCard key={ev.id} event={ev} onDelete={handleDelete} />)}
+            {events.map(ev => <EventCard key={ev.id} event={ev} onDelete={handleDelete} onEdit={setEditingEvent} />)}
           </div>
         )}
       </div>
       {showCreate && (
         <CreateEventModal onClose={() => setShowCreate(false)} onCreated={ev => setEvents(prev => [...prev, ev].sort((a, b) => a.start - b.start))} />
+      )}
+      {editingEvent && (
+        <EditEventModal
+          event={editingEvent}
+          onClose={() => setEditingEvent(null)}
+          onUpdated={updated => setEvents(prev => prev.map(e => (e.id === updated.id ? updated : e)).sort((a, b) => a.start - b.start))}
+        />
       )}
       {showManage && (
         <ManageCalendarDialog

@@ -326,21 +326,25 @@ class CalDavClient:
     def _event_url(self, collection_url: str, uid: str) -> str:
         return f"{collection_url.rstrip('/')}/{uid}.ics"
 
-    def put_event(self, event: dict) -> bool:
+    def _resolve_write_target(self, uid: str, href: str | None) -> str:
+        collection = self._discover_calendar_urls()[0]
+        return urljoin(collection, href) if href else self._event_url(collection, uid)
+
+    def put_event(self, event: dict, *, href: str | None = None) -> str | None:
         try:
-            collection = self._discover_calendar_urls()[0]
+            target = self._resolve_write_target(event["uid"], href)
             status, _, _ = self._request(
-                self._event_url(collection, event["uid"]), method="PUT", body=build_ics(event),
+                target, method="PUT", body=build_ics(event),
                 content_type="text/calendar; charset=utf-8", timeout=10,
             )
         except CalDavConnectionError:
-            return False
-        return status in (200, 201, 204)
+            return None
+        return target if status in (200, 201, 204) else None
 
-    def delete_event(self, uid: str) -> bool:
+    def delete_event(self, uid: str, *, href: str | None = None) -> bool:
         try:
-            collection = self._discover_calendar_urls()[0]
-            status, _, _ = self._request(self._event_url(collection, uid), method="DELETE", timeout=10)
+            target = self._resolve_write_target(uid, href)
+            status, _, _ = self._request(target, method="DELETE", timeout=10)
         except CalDavConnectionError:
             return False
         return status in (200, 204, 404)

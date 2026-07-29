@@ -35,6 +35,7 @@ class FakeCalDavClient:
     def __init__(self):
         self.events: list[dict] = []
         self.deleted: list[str] = []
+        self.delete_calls: list[dict] = []
         self.put_calls: list[dict] = []
         self.fail_put = False
         self.fail_list_events = False
@@ -45,15 +46,16 @@ class FakeCalDavClient:
             raise CalDavConnectionError("simulated connection failure")
         return list(self.events)
 
-    def put_event(self, event: dict) -> bool:
-        self.put_calls.append(event)
+    def put_event(self, event: dict, *, href: str | None = None) -> str | None:
+        self.put_calls.append({**event, "href": href})
         if self.fail_put:
-            return False
+            return None
         self.events.append({**event, "start": event["start"], "end": event["end"]})
-        return True
+        return href or f"https://caldav.example/cal/{event['uid']}.ics"
 
-    def delete_event(self, uid: str) -> bool:
+    def delete_event(self, uid: str, *, href: str | None = None) -> bool:
         self.deleted.append(uid)
+        self.delete_calls.append({"uid": uid, "href": href})
         return True
 
     def test_connection(self) -> bool:
@@ -96,6 +98,15 @@ class CalendarStoreTests(unittest.TestCase):
         self.assertEqual(1, len(synced))
         all_events = self.store.list_events("u1")
         self.assertEqual(2, len(all_events))
+
+    def test_replace_synced_events_preserves_href_and_etag(self):
+        synced = self.store.replace_synced_events("u1", [
+            {"uid": "remote1", "title": "Remote", "start": 500, "end": 600, "href": "/cal/opaque-name-123.ics", "etag": '"abc"'},
+        ])
+        self.assertEqual("/cal/opaque-name-123.ics", synced[0]["href"])
+        self.assertEqual('"abc"', synced[0]["etag"])
+        stored = self.store.list_events("u1")[0]
+        self.assertEqual("/cal/opaque-name-123.ics", stored["href"])
 
     def test_store_self_heals_on_corrupt_file(self):
         path = os.environ["JARVIS_CALENDAR_STORE_PATH"]
@@ -324,6 +335,42 @@ class CalDavClientTests(unittest.TestCase):
             ok = client.delete_event("evt-1")
         self.assertFalse(ok)
 
+    def test_put_event_writes_to_explicit_href_not_guessed_url(self):
+        requested_urls = []
+
+        def fake_urlopen(req, timeout=None):
+            requested_urls.append((req.get_method(), req.full_url))
+            if req.get_method() == "PROPFIND":
+                body = _multistatus(_resourcetype_response("/cal/home/", is_calendar=True))
+                return _FakeCalDavResponse(207, body, req.full_url)
+            return _FakeCalDavResponse(204, b"", req.full_url)
+
+        client = self._client(base_url="https://dav.example.com/cal/home/")
+        with patch("jarvis.calendar.client.request.urlopen", side_effect=fake_urlopen):
+            target = client.put_event({"uid": "opaque-uid", "title": "X", "start": 1000, "end": 2000}, href="/cal/home/apple-opaque-name.ics")
+
+        self.assertEqual("https://dav.example.com/cal/home/apple-opaque-name.ics", target)
+        put_calls = [(m, u) for m, u in requested_urls if m == "PUT"]
+        self.assertEqual([("PUT", "https://dav.example.com/cal/home/apple-opaque-name.ics")], put_calls)
+
+    def test_delete_event_uses_explicit_href_not_guessed_url(self):
+        requested_urls = []
+
+        def fake_urlopen(req, timeout=None):
+            requested_urls.append((req.get_method(), req.full_url))
+            if req.get_method() == "PROPFIND":
+                body = _multistatus(_resourcetype_response("/cal/home/", is_calendar=True))
+                return _FakeCalDavResponse(207, body, req.full_url)
+            return _FakeCalDavResponse(204, b"", req.full_url)
+
+        client = self._client(base_url="https://dav.example.com/cal/home/")
+        with patch("jarvis.calendar.client.request.urlopen", side_effect=fake_urlopen):
+            ok = client.delete_event("opaque-uid", href="/cal/home/apple-opaque-name.ics")
+
+        self.assertTrue(ok)
+        delete_calls = [(m, u) for m, u in requested_urls if m == "DELETE"]
+        self.assertEqual([("DELETE", "https://dav.example.com/cal/home/apple-opaque-name.ics")], delete_calls)
+
 
 class CalendarServiceTests(unittest.TestCase):
     def setUp(self):
@@ -402,6 +449,61 @@ class CalendarServiceTests(unittest.TestCase):
         result = self.service.create_event({"title": "Overlaps", "start": 1500, "end": 2500}, user_id=user["id"], role=user["role"], force=True)
         self.assertTrue(result["created"])
         self.assertEqual(1, len(result["conflicts"]))
+
+    def test_update_event_succeeds_and_pushes_href(self):
+        user = self._configured_user()
+        created = self.service.create_event({"title": "Design review", "start": 1000, "end": 2000}, user_id=user["id"], role=user["role"])
+        event_id = created["event"]["id"]
+        result = self.service.update_event(event_id, {"title": "Design review (moved)", "start": 3000, "end": 4000}, user_id=user["id"], role=user["role"])
+        self.assertTrue(result["updated"])
+        self.assertEqual("Design review (moved)", result["event"]["title"])
+        self.assertEqual(3000, result["event"]["start"])
+        self.assertEqual("calendar_event_updated", self.audit_probe.events[-1]["event"])
+        # The update was pushed to the CalDAV client using the event's own href, not a fresh guess.
+        last_put = self.fake_client.put_calls[-1]
+        self.assertEqual(created["event"]["href"], last_put["href"])
+
+    def test_update_event_conflict_blocks_without_force(self):
+        user = self._configured_user()
+        first = self.service.create_event({"title": "First", "start": 1000, "end": 2000}, user_id=user["id"], role=user["role"])
+        second = self.service.create_event({"title": "Second", "start": 5000, "end": 6000}, user_id=user["id"], role=user["role"])
+        result = self.service.update_event(second["event"]["id"], {"title": "Second", "start": 1500, "end": 2500}, user_id=user["id"], role=user["role"])
+        self.assertFalse(result["updated"])
+        self.assertEqual(1, len(result["conflicts"]))
+        self.assertEqual(first["event"]["id"], result["conflicts"][0]["id"])
+
+    def test_update_event_conflict_can_be_forced(self):
+        user = self._configured_user()
+        self.service.create_event({"title": "First", "start": 1000, "end": 2000}, user_id=user["id"], role=user["role"])
+        second = self.service.create_event({"title": "Second", "start": 5000, "end": 6000}, user_id=user["id"], role=user["role"])
+        result = self.service.update_event(second["event"]["id"], {"title": "Second", "start": 1500, "end": 2500}, user_id=user["id"], role=user["role"], force=True)
+        self.assertTrue(result["updated"])
+
+    def test_update_event_does_not_conflict_with_its_own_previous_time(self):
+        user = self._configured_user()
+        created = self.service.create_event({"title": "Standup", "start": 1000, "end": 2000}, user_id=user["id"], role=user["role"])
+        # Editing an event to keep (part of) its own original time range must not
+        # be reported as conflicting with itself (find_overlapping excludes it).
+        result = self.service.update_event(created["event"]["id"], {"title": "Standup (renamed)", "start": 1000, "end": 2000}, user_id=user["id"], role=user["role"])
+        self.assertTrue(result["updated"])
+        self.assertEqual(0, len(result["conflicts"]))
+
+    def test_update_event_rejects_editing_other_users_event(self):
+        alice = self._configured_user("alice3")
+        created = self.service.create_event({"title": "Alice's event", "start": 1000, "end": 2000}, user_id=alice["id"], role=alice["role"])
+        bob = self._configured_user("bob3")
+        with self.assertRaises(LookupError):
+            self.service.update_event(created["event"]["id"], {"title": "Hijacked", "start": 1000, "end": 2000}, user_id=bob["id"], role=bob["role"])
+
+    def test_delete_event_uses_tracked_href_not_guessed_url(self):
+        user = self._configured_user()
+        self.fake_client.events = [{"uid": "remote-1", "title": "Remote", "start": 5000, "end": 6000, "href": "/cal/apple-opaque-name.ics"}]
+        self.service.sync(user_id=user["id"], role=user["role"])
+        events = self.service.list_events(user_id=user["id"], role=user["role"])["events"]
+        event_id = events[0]["id"]
+        self.service.delete_event(event_id, user_id=user["id"], role=user["role"])
+        self.assertEqual(1, len(self.fake_client.delete_calls))
+        self.assertEqual("/cal/apple-opaque-name.ics", self.fake_client.delete_calls[0]["href"])
 
     def test_emergency_stop_blocks_create(self):
         user = self._configured_user()
@@ -559,9 +661,32 @@ class CalendarApiTests(unittest.TestCase):
         self.assertEqual(200, conflict.status_code)
         self.assertFalse(conflict.json()["created"])
 
+        updated = self.client.put(f"/calendar/events/{event_id}", headers=headers, json={"title": "Kickoff (renamed)", "start": 1000, "end": 2000})
+        self.assertEqual(200, updated.status_code)
+        self.assertTrue(updated.json()["updated"])
+        self.assertEqual("Kickoff (renamed)", updated.json()["event"]["title"])
+
         deleted = self.client.delete(f"/calendar/events/{event_id}", headers=headers)
         self.assertEqual(200, deleted.status_code)
         self.assertTrue(deleted.json()["deleted"])
+
+    def test_update_conflict_returns_conflicts_without_force_via_api(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        _, session_token = self._create_user_with_permissions(admin["token"], admin["user_id"], "calconflict", ["calendar.read", "calendar.write"])
+        headers = {"X-Jarvis-Session": session_token}
+        self.client.put("/calendar/credentials", headers=headers, json={"url": "https://caldav.example/cal", "username": "u", "password": "p"})
+
+        first = self.client.post("/calendar/events", headers=headers, json={"title": "First", "start": 1000, "end": 2000}).json()
+        second = self.client.post("/calendar/events", headers=headers, json={"title": "Second", "start": 5000, "end": 6000}).json()
+
+        conflict = self.client.put(f"/calendar/events/{second['event']['id']}", headers=headers, json={"title": "Second", "start": 1500, "end": 2500})
+        self.assertEqual(200, conflict.status_code)
+        self.assertFalse(conflict.json()["updated"])
+        self.assertEqual(1, len(conflict.json()["conflicts"]))
+
+        forced = self.client.put(f"/calendar/events/{second['event']['id']}", headers=headers, json={"title": "Second", "start": 1500, "end": 2500, "force": True})
+        self.assertEqual(200, forced.status_code)
+        self.assertTrue(forced.json()["updated"])
 
     def test_permission_denied_returns_403(self):
         admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()

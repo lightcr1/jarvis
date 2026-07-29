@@ -93,6 +93,8 @@ class CalendarEventStore:
                 "location": raw.get("location", ""),
                 "start": raw.get("start"),
                 "end": raw.get("end"),
+                "href": raw.get("href", ""),
+                "etag": raw.get("etag", ""),
                 "source": "caldav",
                 "synced_at": now,
                 "created_at": now,

@@ -149,8 +149,8 @@ class CalendarService:
         if client is None:
             raise LookupError("calendar not configured")
         uid = uuid.uuid4().hex
-        pushed = client.put_event({"uid": uid, **fields})
-        if not pushed:
+        pushed_href = client.put_event({"uid": uid, **fields})
+        if not pushed_href:
             raise RuntimeError("failed to create event on CalDAV server")
         now = int(time.time())
         event = self.store.add_event({
@@ -158,6 +158,7 @@ class CalendarService:
             "user_id": user_id,
             "uid": uid,
             **fields,
+            "href": pushed_href,
             "source": "caldav",
             "synced_at": now,
             "created_at": now,
@@ -166,6 +167,25 @@ class CalendarService:
         self._write_audit("calendar_event_created", actor_user_id=user_id, actor_role=role, payload={"event_id": event["id"]})
         return {"policy": policy, "event": event, "conflicts": conflicts, "created": True}
 
+    def update_event(self, event_id: str, payload: dict, *, user_id: str | None, role: str | None, force: bool = False) -> dict:
+        if _emergency_stop_active():
+            raise PermissionError("emergency stop is active — write actions are blocked")
+        policy = self.require_access(user_id=user_id, role=role, required_permission="calendar.write")
+        event = self._owned_event(event_id, user_id=user_id, role=role)
+        fields = self._validate_event_fields(payload)
+        conflicts = self.store.find_overlapping(user_id or "", fields["start"], fields["end"], exclude_id=event_id)
+        if conflicts and not force:
+            return {"policy": policy, "conflicts": conflicts, "updated": False}
+        client = self._client_for(event.get("user_id"))
+        if client is None:
+            raise LookupError("calendar not configured")
+        pushed_href = client.put_event({"uid": event["uid"], **fields}, href=event.get("href") or None)
+        if not pushed_href:
+            raise RuntimeError("failed to update event on CalDAV server")
+        updated = self.store.update_event(event_id, {**fields, "href": pushed_href, "updated_at": int(time.time())})
+        self._write_audit("calendar_event_updated", actor_user_id=user_id, actor_role=role, payload={"event_id": event_id})
+        return {"policy": policy, "event": updated, "conflicts": conflicts, "updated": True}
+
     def delete_event(self, event_id: str, *, user_id: str | None, role: str | None) -> dict:
         if _emergency_stop_active():
             raise PermissionError("emergency stop is active — write actions are blocked")
@@ -173,7 +193,7 @@ class CalendarService:
         event = self._owned_event(event_id, user_id=user_id, role=role)
         client = self._client_for(event.get("user_id"))
         if client is not None and event.get("uid"):
-            client.delete_event(event["uid"])
+            client.delete_event(event["uid"], href=event.get("href") or None)
         deleted = self.store.delete_event(event_id)
         self._write_audit("calendar_event_deleted", actor_user_id=user_id, actor_role=role, payload={"event_id": event_id})
         return {"policy": policy, "deleted": deleted}
