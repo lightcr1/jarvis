@@ -4,7 +4,7 @@ import { J } from "../../screens/jarvis-shared";
 export type AppArea = "jarvis" | "workspace" | "admin";
 
 const AREA_META: Record<AppArea, { label: string; sublabel: string; href: string }> = {
-  jarvis: { label: "JARVIS", sublabel: "Chat, voice, home & infra", href: "/chat" },
+  jarvis: { label: "JARVIS", sublabel: "Chat, voice, home & infra", href: "/?screen=chat" },
   workspace: { label: "Workspace", sublabel: "Files, mail, calendar, desktop", href: "/workspace" },
   admin: { label: "Admin Dashboard", sublabel: "Operator console", href: "/dashboard" },
 };

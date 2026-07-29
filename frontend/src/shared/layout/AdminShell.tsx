@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 import { getStoredPreferences } from "../api/client";
-import { J, useJ, IconMoon, IconSun, applyTheme } from "../../screens/jarvis-shared";
+import { J, useJ, IconMoon, IconSun, applyTheme, applyAccent, applyCompact } from "../../screens/jarvis-shared";
 import { AppSwitcher } from "./AppSwitcher";
 
 const NAV_LINKS = [
@@ -30,8 +30,10 @@ export function AdminShell() {
   const isDark = (preferences.theme ?? "dark") === "dark";
 
   useEffect(() => {
-    const storedTheme = getStoredPreferences().theme;
-    if (storedTheme) applyTheme(storedTheme as "dark" | "light");
+    const storedPrefs = getStoredPreferences();
+    if (storedPrefs.theme) applyTheme(storedPrefs.theme as "dark" | "light");
+    if (storedPrefs.accent_color) applyAccent(storedPrefs.accent_color);
+    applyCompact(storedPrefs.compact_mode ?? false);
   }, []);
 
   useEffect(() => {
@@ -105,6 +107,13 @@ export function AdminShell() {
               <div style={{ fontSize: 10, color: J.textMuted }}>admin</div>
             </div>
           </div>
+          <button
+            onClick={() => { window.location.href = "/?screen=settings"; }}
+            style={{
+              width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 5, cursor: "pointer", marginBottom: 6,
+              background: "transparent", color: J.textSec, border: `1px solid ${J.border}`,
+            }}
+          >Preferences</button>
           <button
             onClick={() => logout().then(() => navigate("/chat"))}
             style={{

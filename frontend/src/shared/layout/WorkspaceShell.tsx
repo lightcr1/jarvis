@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 import { getStoredPreferences } from "../api/client";
-import { J, useJ, IconMoon, IconSun, IconFolder, IconMail, IconCalendar, IconMonitor, applyTheme } from "../../screens/jarvis-shared";
+import { J, useJ, IconMoon, IconSun, IconFolder, IconMail, IconCalendar, IconMonitor, applyTheme, applyAccent, applyCompact } from "../../screens/jarvis-shared";
 import { AppSwitcher } from "./AppSwitcher";
 
 const NAV_LINKS = [
@@ -41,8 +41,10 @@ export function WorkspaceShell() {
   const isDark = (preferences.theme ?? "dark") === "dark";
 
   useEffect(() => {
-    const storedTheme = getStoredPreferences().theme;
-    if (storedTheme) applyTheme(storedTheme as "dark" | "light");
+    const storedPrefs = getStoredPreferences();
+    if (storedPrefs.theme) applyTheme(storedPrefs.theme as "dark" | "light");
+    if (storedPrefs.accent_color) applyAccent(storedPrefs.accent_color);
+    applyCompact(storedPrefs.compact_mode ?? false);
   }, []);
 
   useEffect(() => {
@@ -161,6 +163,12 @@ export function WorkspaceShell() {
               <div style={{ fontSize: 12, color: J.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{user.username}</div>
             </div>
           </div>
+          <button
+            onClick={() => { window.location.href = "/?screen=settings"; }}
+            style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 5, cursor: "pointer", marginBottom: 6, background: "transparent", color: J.textSec, border: `1px solid ${J.border}` }}
+          >
+            Preferences
+          </button>
           <button
             onClick={() => logout().then(() => navigate("/"))}
             style={{ width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 5, cursor: "pointer", background: J.errorDim, color: J.error, border: `1px solid ${J.error}30` }}
