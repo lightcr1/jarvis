@@ -13,7 +13,7 @@ class FrontendRouteModuleTests(unittest.TestCase):
 
     def test_workspace_spa_paths_are_registered(self):
         registered = {route.path for route in frontend_router.routes}
-        for path in ("/workspace", "/workspace/files", "/workspace/email", "/workspace/calendar", "/workspace/desktop"):
+        for path in ("/workspace", "/workspace/files", "/workspace/communication", "/workspace/desktop"):
             self.assertIn(path, registered)
 
     def test_workspace_spa_route_is_not_a_wildcard(self):

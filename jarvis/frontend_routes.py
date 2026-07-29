@@ -62,8 +62,7 @@ def chat_legacy_redirect():
 # sub-page explicitly instead.
 @frontend_router.get("/workspace")
 @frontend_router.get("/workspace/files")
-@frontend_router.get("/workspace/email")
-@frontend_router.get("/workspace/calendar")
+@frontend_router.get("/workspace/communication")
 @frontend_router.get("/workspace/desktop")
 def frontend_routes(path: str | None = None):
     return frontend_index_response()

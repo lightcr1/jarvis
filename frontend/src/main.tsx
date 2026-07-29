@@ -30,8 +30,7 @@ import { AdminDocsPage } from "./routes/admin/pages/AdminDocsPage";
 import { IntegrationsPage } from "./routes/admin/pages/IntegrationsPage";
 import { WorkspaceShell } from "./shared/layout/WorkspaceShell";
 import { FilesScreen } from "./screens/FilesScreen";
-import { EmailScreen } from "./screens/EmailScreen";
-import { CalendarScreen } from "./screens/CalendarScreen";
+import { CommunicationScreen } from "./screens/CommunicationScreen";
 import { DesktopScreen } from "./screens/DesktopScreen";
 import "./styles.css";
 
@@ -59,11 +58,10 @@ const router = createBrowserRouter([
     path: "/workspace",
     element: <WorkspaceShell />,
     children: [
-      { index: true,      element: <Navigate to="files" replace /> },
-      { path: "files",    element: <FilesScreen /> },
-      { path: "email",    element: <EmailScreen /> },
-      { path: "calendar", element: <CalendarScreen /> },
-      { path: "desktop",  element: <DesktopScreen /> },
+      { index: true,          element: <Navigate to="files" replace /> },
+      { path: "files",        element: <FilesScreen /> },
+      { path: "communication", element: <CommunicationScreen /> },
+      { path: "desktop",      element: <DesktopScreen /> },
     ],
   },
   { path: "*", element: <JarvisApp /> },
