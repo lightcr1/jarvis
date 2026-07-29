@@ -17,6 +17,7 @@ import { AppSwitcher } from '../shared/layout/AppSwitcher';
 import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill, savePreferences } from '../shared/api/client';
 import { useJarvisAlerts } from '../shared/api/alerts';
 import { useJarvisLiveStatus } from '../shared/api/status';
+import { useIntegrationStatus } from '../shared/api/integrationStatus';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
 type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'tasks' | 'services' | 'settings' | 'docs' | 'ambient';
@@ -253,6 +254,7 @@ export function JarvisApp() {
   useJ(); // re-render when theme changes
   const liveStatus = useJarvisLiveStatus();
   const { alerts, dismissAlert } = useJarvisAlerts();
+  const integrationStatus = useIntegrationStatus();
   const guest = isGuestMode();
   const [screen, setScreen] = useState<Screen>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -269,7 +271,11 @@ export function JarvisApp() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const prevAlertCount = useRef(0);
 
-  const nav = guest ? NAV_GUEST : NAV_ALL;
+  const nav = guest ? NAV_GUEST : NAV_ALL.filter(item => {
+    if (item.id === 'home') return integrationStatus.ha === 'connected';
+    if (item.id === 'proxmox') return integrationStatus.proxmox === 'online' || integrationStatus.proxmox === 'offline';
+    return true;
+  });
   const GREETING_COOLDOWN_MS = 4 * 60 * 60 * 1000;
   const GREETING_KEY = 'jarvis_last_greeting';
   const _greetingDue = () => {

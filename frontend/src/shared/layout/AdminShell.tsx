@@ -4,6 +4,8 @@ import { useAuth } from "../../features/auth/AuthProvider";
 import { getStoredPreferences } from "../api/client";
 import { J, useJ, IconMoon, IconSun, applyTheme, applyAccent, applyCompact } from "../../screens/jarvis-shared";
 import { AppSwitcher } from "./AppSwitcher";
+import { AppearancePanel } from "../ui/AppearancePanel";
+import { OverlayDialog } from "../ui/OverlayDialog";
 
 const NAV_LINKS = [
   { to: "/dashboard",           label: "Overview",       end: true  },
@@ -27,6 +29,7 @@ export function AdminShell() {
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState("");
   const [showSwitcher, setShowSwitcher] = useState(false);
+  const [showPreferences, setShowPreferences] = useState(false);
   const isDark = (preferences.theme ?? "dark") === "dark";
 
   useEffect(() => {
@@ -108,7 +111,7 @@ export function AdminShell() {
             </div>
           </div>
           <button
-            onClick={() => { window.location.href = "/?screen=settings"; }}
+            onClick={() => setShowPreferences(true)}
             style={{
               width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 5, cursor: "pointer", marginBottom: 6,
               background: "transparent", color: J.textSec, border: `1px solid ${J.border}`,
@@ -161,6 +164,12 @@ export function AdminShell() {
           <Outlet />
         </main>
       </div>
+
+      {showPreferences && (
+        <OverlayDialog title="Preferences" eyebrow="Appearance" onClose={() => setShowPreferences(false)}>
+          <AppearancePanel />
+        </OverlayDialog>
+      )}
     </div>
   );
 }

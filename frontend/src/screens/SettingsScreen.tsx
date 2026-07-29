@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey, IconBell, IconBook } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey, IconBell, IconBook, Toggle, Row, Sel } from './jarvis-shared';
 import { getStoredPreferences, setStoredPreferences, getSessionToken, getStoredUser, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
 import { synthesizeSpeech } from '../shared/api/chat';
 import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
 import { fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, type BillingInfo, type ByokKey } from '../shared/api/billing';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 import { getPushSubscriptionStatus, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../shared/api/push';
+import { useIntegrationStatus } from '../shared/api/integrationStatus';
+import { AppearancePanel } from '../shared/ui/AppearancePanel';
 
 type IntegrationState = 'checking' | 'online' | 'offline' | 'unconfigured';
 
@@ -23,36 +25,6 @@ const CATS = [
   { id: 'security',     label: 'Security',     icon: <IconShield size={13} /> },
   { id: 'developer',    label: 'Developer',    icon: <IconCode size={13} /> },
 ];
-
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button onClick={() => onChange(!on)}
-      style={{ width: 38, height: 21, borderRadius: 11, background: on ? J.amber : J.bg4, border: `1px solid ${on ? J.amber : J.border}`, cursor: 'pointer', position: 'relative', transition: 'all .18s', flexShrink: 0 }}>
-      <span style={{ position: 'absolute', top: 3, left: on ? 17 : 3, width: 13, height: 13, borderRadius: '50%', background: on ? J.bg0 : J.textMuted, transition: 'left .18s' }} />
-    </button>
-  );
-}
-
-function Row({ label, desc, children }: { label: string; desc?: string; children?: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 0', borderBottom: `1px solid ${J.border}`, gap: 16 }}>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 14, color: J.text }}>{label}</div>
-        {desc && <div style={{ fontSize: 12, color: J.textMuted, marginTop: 2 }}>{desc}</div>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Sel({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: Array<{ v: string; l: string }> }) {
-  return (
-    <select className="j-input" value={value} onChange={e => onChange(e.target.value)}
-      style={{ borderRadius: 7, padding: '6px 10px', fontSize: 13, cursor: 'pointer', flexShrink: 0 }}>
-      {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-    </select>
-  );
-}
 
 function Field({ label, value, onChange, placeholder, type = 'text', readOnly }: { label: string; value: string; onChange?: (v: string) => void; placeholder?: string; type?: string; readOnly?: boolean }) {
   return (
@@ -79,8 +51,6 @@ function Integration({ name, status, note, icon }: { name: string; status: strin
     </div>
   );
 }
-
-const ACCENT_COLORS = ['#e09a1a', '#5294e8', '#3dba84', '#a855f7', '#e05555', '#f97316'];
 
 function MemoryPanel() {
   useJ();
@@ -537,9 +507,8 @@ export function SettingsScreen() {
   const [testingVoice, setTestingVoice] = useState(false);
   const [voiceTestErr, setVoiceTestErr] = useState('');
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
-  const [intStatus, setIntStatus] = useState<Record<string, IntegrationState>>({
-    proxmox: 'checking', ha: 'checking', rag: 'checking',
-  });
+  const [intStatus, setIntStatus] = useState<Record<string, IntegrationState>>({ rag: 'checking' });
+  const integrationStatus = useIntegrationStatus();
   const [pushSupported, setPushSupported] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
@@ -634,18 +603,10 @@ export function SettingsScreen() {
       .then(data => setVoices(data.voices))
       .catch(() => setVoices([]));
 
-    // Check integration status dynamically
+    // Check RAG status dynamically (Proxmox/HA come from useIntegrationStatus())
     const checkInt = async () => {
-      const [px, ha, rag] = await Promise.allSettled([
-        apiRequest<{ healthy?: boolean }>('/proxmox/health', { includeUser: true }),
-        apiRequest<{ healthy?: boolean }>('/home-assistant/health', { includeUser: true }),
-        apiRequest<{ counts?: Record<string, number> }>('/rag/status', { includeUser: true }),
-      ]);
-      setIntStatus({
-        proxmox: px.status === 'fulfilled' ? 'online' : 'offline',
-        ha: ha.status === 'fulfilled' ? 'online' : 'offline',
-        rag: rag.status === 'fulfilled' ? 'online' : 'offline',
-      });
+      const rag = await apiRequest<{ counts?: Record<string, number> }>('/rag/status', { includeUser: true }).catch(() => null);
+      setIntStatus({ rag: rag ? 'online' : 'offline' });
     };
     void checkInt();
 
@@ -688,23 +649,7 @@ export function SettingsScreen() {
   const isAdmin = getStoredUser()?.role === 'admin';
 
   const panels: Record<string, React.ReactNode> = {
-    appearance: (<>
-      <Row label="Theme" desc="Applies immediately">
-        <Sel value={prefs.theme || 'dark'} onChange={v => set('theme', v as 'dark' | 'light')}
-          options={[{ v: 'dark', l: 'Dark' }, { v: 'light', l: 'Light' }]} />
-      </Row>
-      <Row label="Accent Color" desc="Saved with preferences">
-        <div style={{ display: 'flex', gap: 6 }}>
-          {ACCENT_COLORS.map(c => (
-            <button key={c} onClick={() => set('accent_color', c)}
-              style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: (prefs.accent_color || '#e09a1a') === c ? `2px solid ${J.text}` : '2px solid transparent', cursor: 'pointer', transition: 'border .15s' }} />
-          ))}
-        </div>
-      </Row>
-      <Row label="Compact Mode" desc="Reduce spacing and element sizes">
-        <Toggle on={prefs.compact_mode ?? false} onChange={v => set('compact_mode', v)} />
-      </Row>
-    </>),
+    appearance: (<AppearancePanel />),
 
     chat: (<>
       <Row label="Auto-play Voice" desc="Automatically play voice responses">
@@ -859,8 +804,8 @@ export function SettingsScreen() {
     billing: (<AIBillingPanel />),
 
     integrations: (<>
-      <Integration name="Proxmox" status={intStatus.proxmox === 'checking' ? 'checking' : intStatus.proxmox === 'online' ? 'online' : 'offline'} note="Via JARVIS_PROXMOX_HOST env var" icon={<IconSettings size={14} />} />
-      <Integration name="Home Assistant" status={intStatus.ha === 'checking' ? 'checking' : intStatus.ha === 'online' ? 'online' : 'offline'} note="Via JARVIS_HA_BASE_URL env var" icon={<IconSettings size={14} />} />
+      <Integration name="Proxmox" status={integrationStatus.proxmox === 'not_configured' ? 'not configured' : integrationStatus.proxmox} note="Via JARVIS_PROXMOX_HOST env var" icon={<IconSettings size={14} />} />
+      <Integration name="Home Assistant" status={integrationStatus.ha === 'not_configured' ? 'not configured' : integrationStatus.ha} note="Via JARVIS_HA_BASE_URL env var" icon={<IconSettings size={14} />} />
       <Integration name="RAG / Knowledge" status={intStatus.rag === 'checking' ? 'checking' : intStatus.rag === 'online' ? 'active' : 'offline'} note="GitHub repos + WikiJS indexing" icon={<IconCode size={14} />} />
       {isAdmin && (
         <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
@@ -938,7 +883,7 @@ export function SettingsScreen() {
         <h2 style={{ fontSize: 18, fontWeight: 600, color: J.text, marginBottom: 3 }}>{current?.label}</h2>
         <p style={{ fontSize: 13, color: J.textMuted, marginBottom: 24 }}>Configure {current?.label?.toLowerCase()} preferences</p>
         {panels[cat]}
-        {['appearance', 'chat', 'notifications', 'briefing', 'voice', 'developer'].includes(cat) && (
+        {['chat', 'notifications', 'briefing', 'voice', 'developer'].includes(cat) && (
           <div style={{ padding: '22px 0 8px', display: 'flex', gap: 9, alignItems: 'center' }}>
             <button onClick={handleSave} disabled={saving} className="j-btn"
               style={{ background: saved ? J.success : J.amber, color: J.bg0, borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 600, opacity: saving ? 0.7 : 1, transition: 'background .2s' }}>

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { J, useJ, StatusBadge, MetricCard, Spinner, IconSettings, IconPlus, IconX, IconCheck, IconActivity, IconGrid, IconShield, IconCode, IconMemory } from './jarvis-shared';
 import { apiRequest } from '../shared/api/client';
+import { useIntegrationStatus } from '../shared/api/integrationStatus';
 
 const SERVICES = [
   { id: 'chat',    name: 'Chat',           desc: 'AI conversation — text and context',      status: 'connected',  cat: 'Core',           screen: 'chat',    note: 'Always active' },
@@ -160,7 +161,7 @@ function AddModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-type LiveStatus = 'checking' | 'online' | 'offline' | 'connected';
+type LiveStatus = 'checking' | 'online' | 'offline' | 'connected' | 'not configured';
 type LiveStatusMap = Record<string, LiveStatus>;
 
 type HealthInfo = { version?: string; uptime_sec?: number; alert_engine?: boolean; wakeword_engine?: string };
@@ -169,35 +170,38 @@ export function ServiceHubScreen({ onNavigate }: { onNavigate: (screen: string) 
   useJ();
   const [cat, setCat]             = useState('All');
   const [showAdd, setShowAdd]     = useState(false);
-  const [liveStatus, setLiveStatus] = useState<LiveStatusMap>({ ha: 'checking', proxmox: 'checking', github: 'checking', wikijs: 'checking' });
+  const integrationStatus = useIntegrationStatus();
+  const [liveStatus, setLiveStatus] = useState<LiveStatusMap>({ github: 'checking', wikijs: 'checking' });
   const [healthInfo, setHealthInfo] = useState<HealthInfo>({});
 
   useEffect(() => {
     Promise.allSettled([
-      apiRequest<{ healthy?: boolean }>('/proxmox/health', { includeUser: true }),
-      apiRequest<{ healthy?: boolean }>('/home-assistant/health', { includeUser: true }),
       apiRequest<{ counts?: Record<string, number> }>('/rag/status', { includeUser: true }),
       apiRequest<HealthInfo>('/health'),
-    ]).then(([px, ha, rag, health]) => {
+    ]).then(([rag, health]) => {
       setLiveStatus({
-        proxmox: px.status === 'fulfilled' ? 'online' : 'offline',
-        ha:      ha.status === 'fulfilled' ? 'online' : 'offline',
-        github:  rag.status === 'fulfilled' ? 'online' : 'offline',
-        wikijs:  rag.status === 'fulfilled' ? 'online' : 'offline',
+        github: rag.status === 'fulfilled' ? 'online' : 'offline',
+        wikijs: rag.status === 'fulfilled' ? 'online' : 'offline',
       });
       if (health.status === 'fulfilled') setHealthInfo(health.value);
     });
   }, []);
 
+  const combinedStatus: LiveStatusMap = {
+    ...liveStatus,
+    proxmox: integrationStatus.proxmox === 'not_configured' ? 'not configured' : integrationStatus.proxmox,
+    ha: integrationStatus.ha === 'not_configured' ? 'not configured' : integrationStatus.ha,
+  };
+
   const getStatus = (svc: typeof SERVICES[number]): string => {
     if (svc.status === 'connected') return 'connected';
-    return liveStatus[svc.id] ?? 'checking';
+    return combinedStatus[svc.id] ?? 'checking';
   };
 
   const shown      = cat === 'All' ? SERVICES : SERVICES.filter(s => s.cat === cat);
   const connected  = SERVICES.filter(s => s.status === 'connected').length;
-  const online     = Object.values(liveStatus).filter(s => s === 'online').length;
-  const offline    = Object.values(liveStatus).filter(s => s === 'offline').length;
+  const online     = Object.values(combinedStatus).filter(s => s === 'online').length;
+  const offline    = Object.values(combinedStatus).filter(s => s === 'offline').length;
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: J.bg0 }}>

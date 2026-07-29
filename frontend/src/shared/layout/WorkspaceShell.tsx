@@ -5,6 +5,8 @@ import { getStoredPreferences } from "../api/client";
 import { J, useJ, IconMoon, IconSun, IconGrid, applyTheme, applyAccent, applyCompact } from "../../screens/jarvis-shared";
 import { AppSwitcher } from "./AppSwitcher";
 import { WorkspaceLauncher, workspaceAppFromPath } from "./WorkspaceLauncher";
+import { AppearancePanel } from "../ui/AppearancePanel";
+import { OverlayDialog } from "../ui/OverlayDialog";
 
 const APP_TITLES: Record<string, string> = {
   drive: "Drive",
@@ -20,6 +22,7 @@ export function WorkspaceShell() {
   const [showSwitcher, setShowSwitcher] = useState(false);
   const [showLauncher, setShowLauncher] = useState(false);
   const [showAccount, setShowAccount] = useState(false);
+  const [showPreferences, setShowPreferences] = useState(false);
   const isDark = (preferences.theme ?? "dark") === "dark";
   const currentApp = workspaceAppFromPath(location.pathname);
 
@@ -116,7 +119,7 @@ export function WorkspaceShell() {
                     {user.username}
                   </div>
                   <button
-                    onClick={() => { window.location.href = "/?screen=settings"; }}
+                    onClick={() => { setShowAccount(false); setShowPreferences(true); }}
                     style={{ width: "100%", textAlign: "left", padding: "10px 14px", background: "none", border: "none", color: J.textSec, fontSize: 13, cursor: "pointer" }}
                     onMouseEnter={e => { e.currentTarget.style.background = J.bg3; e.currentTarget.style.color = J.text; }}
                     onMouseLeave={e => { e.currentTarget.style.background = "none"; e.currentTarget.style.color = J.textSec; }}
@@ -141,6 +144,12 @@ export function WorkspaceShell() {
       <main style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         <Outlet />
       </main>
+
+      {showPreferences && (
+        <OverlayDialog title="Preferences" eyebrow="Appearance" onClose={() => setShowPreferences(false)}>
+          <AppearancePanel />
+        </OverlayDialog>
+      )}
     </div>
   );
 }

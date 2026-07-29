@@ -326,6 +326,38 @@ function renderInline(text: string): React.ReactNode[] {
   return parts;
 }
 
+export const ACCENT_COLORS = ['#e09a1a', '#5294e8', '#3dba84', '#a855f7', '#e05555', '#f97316'];
+
+export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button onClick={() => onChange(!on)}
+      style={{ width: 38, height: 21, borderRadius: 11, background: on ? J.amber : J.bg4, border: `1px solid ${on ? J.amber : J.border}`, cursor: 'pointer', position: 'relative', transition: 'all .18s', flexShrink: 0 }}>
+      <span style={{ position: 'absolute', top: 3, left: on ? 17 : 3, width: 13, height: 13, borderRadius: '50%', background: on ? J.bg0 : J.textMuted, transition: 'left .18s' }} />
+    </button>
+  );
+}
+
+export function Row({ label, desc, children }: { label: string; desc?: string; children?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 0', borderBottom: `1px solid ${J.border}`, gap: 16 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 14, color: J.text }}>{label}</div>
+        {desc && <div style={{ fontSize: 12, color: J.textMuted, marginTop: 2 }}>{desc}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function Sel({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: Array<{ v: string; l: string }> }) {
+  return (
+    <select className="j-input" value={value} onChange={e => onChange(e.target.value)}
+      style={{ borderRadius: 7, padding: '6px 10px', fontSize: 13, cursor: 'pointer', flexShrink: 0 }}>
+      {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+    </select>
+  );
+}
+
 export function MarkdownText({ text, style }: { text: string; style?: React.CSSProperties }) {
   const lines = text.split('\n');
   return (
