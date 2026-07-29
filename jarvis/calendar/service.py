@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Callable
 
-from .client import CalDavClient
+from .client import CalDavClient, CalDavConnectionError
 
 REQUIRED_CREDENTIAL_FIELDS = ("url", "username", "password")
 INTEGRATION_NAME = "calendar"
@@ -77,6 +77,12 @@ class CalendarService:
         if missing:
             raise ValueError(f"missing required field(s): {', '.join(missing)}")
         clean = {k: str(fields[k]).strip() for k in REQUIRED_CREDENTIAL_FIELDS}
+        client = self.client_factory(clean)
+        if not client.test_connection():
+            raise CalDavConnectionError(
+                "could not connect to this CalDAV server with the given URL, username, and password "
+                "(checked the URL directly and via automatic calendar discovery)"
+            )
         record = self.credential_store.set_credentials(user_id, INTEGRATION_NAME, clean)
         self._write_audit("calendar_credentials_set", actor_user_id=user_id, actor_role=role)
         return {"policy": policy, "credentials": record}

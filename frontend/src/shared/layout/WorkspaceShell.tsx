@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 import { getStoredPreferences } from "../api/client";
-import { J, useJ, IconMoon, IconSun, IconGrid, applyTheme, applyAccent, applyCompact } from "../../screens/jarvis-shared";
+import { J, useJ, IconMoon, IconSun, IconGrid, applyTheme, applyAccent, applyCompact, ToastContainer } from "../../screens/jarvis-shared";
 import { AppSwitcher } from "./AppSwitcher";
 import { WorkspaceLauncher, workspaceAppFromPath } from "./WorkspaceLauncher";
 import { AppearancePanel } from "../ui/AppearancePanel";
@@ -150,6 +150,7 @@ export function WorkspaceShell() {
           <AppearancePanel />
         </OverlayDialog>
       )}
+      <ToastContainer />
     </div>
   );
 }

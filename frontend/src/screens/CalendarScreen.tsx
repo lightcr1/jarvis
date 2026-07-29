@@ -48,8 +48,13 @@ function ConnectCalendarPanel({ onConnected }: { onConnected: () => void }) {
         <IconCalendar size={20} />
         <div style={{ fontSize: 16, fontWeight: 600, color: J.text }}>Connect your calendar</div>
       </div>
-      <div style={{ fontSize: 12.5, color: J.textSec, marginBottom: 20, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 12.5, color: J.textSec, marginBottom: 12, lineHeight: 1.6 }}>
         Enter your CalDAV account details (Google Calendar, iCloud, Nextcloud, or any CalDAV server).
+      </div>
+      <div style={{ fontSize: 11.5, color: J.textMuted, marginBottom: 20, lineHeight: 1.6 }}>
+        For iCloud: use <code>https://caldav.icloud.com</code> as the URL and your Apple ID as the username.
+        Generate an app-specific password at appleid.apple.com → Sign-In and Security → App-Specific Passwords —
+        your regular Apple ID password will not work.
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div>
@@ -127,9 +132,14 @@ function ManageCalendarDialog({ onClose, onUpdated, onDisconnected }: { onClose:
         </>
       }
     >
-      <div style={{ fontSize: 12.5, color: J.textSec, marginBottom: 16, lineHeight: 1.6 }}>
+      <div style={{ fontSize: 12.5, color: J.textSec, marginBottom: 10, lineHeight: 1.6 }}>
         Re-enter your CalDAV details to change the connected account, or disconnect below.
         For security, existing credentials are never shown here.
+      </div>
+      <div style={{ fontSize: 11.5, color: J.textMuted, marginBottom: 16, lineHeight: 1.6 }}>
+        For iCloud: use <code>https://caldav.icloud.com</code> as the URL and your Apple ID as the username.
+        Generate an app-specific password at appleid.apple.com → Sign-In and Security → App-Specific Passwords —
+        your regular Apple ID password will not work.
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
         <div>

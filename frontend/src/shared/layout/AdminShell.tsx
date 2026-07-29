@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 import { getStoredPreferences } from "../api/client";
-import { J, useJ, IconMoon, IconSun, applyTheme, applyAccent, applyCompact } from "../../screens/jarvis-shared";
+import { J, useJ, IconMoon, IconSun, applyTheme, applyAccent, applyCompact, ToastContainer } from "../../screens/jarvis-shared";
 import { AppSwitcher } from "./AppSwitcher";
 import { AppearancePanel } from "../ui/AppearancePanel";
 import { OverlayDialog } from "../ui/OverlayDialog";
@@ -170,6 +170,7 @@ export function AdminShell() {
           <AppearancePanel />
         </OverlayDialog>
       )}
+      <ToastContainer />
     </div>
   );
 }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Header, HTTPException
 
+from .calendar.client import CalDavConnectionError
 from .router_dependencies import LiveRef
 from .secret_crypto import SecretEncryptionUnavailable
 
@@ -73,6 +74,8 @@ def build_calendar_router(deps: dict) -> APIRouter:
             raise HTTPException(400, str(exc)) from exc
         except SecretEncryptionUnavailable as exc:
             raise HTTPException(503, str(exc)) from exc
+        except CalDavConnectionError as exc:
+            raise HTTPException(502, str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
 
@@ -95,6 +98,8 @@ def build_calendar_router(deps: dict) -> APIRouter:
             )
         except LookupError as exc:
             raise HTTPException(409, str(exc)) from exc
+        except CalDavConnectionError as exc:
+            raise HTTPException(502, str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
 
