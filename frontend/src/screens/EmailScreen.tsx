@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { J, useJ, Spinner, showToast, IconMail, IconRefresh, IconX, IconSend, IconTrash, IconPencil } from './jarvis-shared';
+import { J, useJ, Spinner, showToast, IconMail, IconRefresh, IconX, IconSend, IconTrash, IconPencil, IconSettings } from './jarvis-shared';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 import {
-  EmailDraft, EmailMessage, createEmailDraft, discardEmailDraft, fetchEmailBody, fetchEmailCredentialsStatus,
+  EmailDraft, EmailMessage, createEmailDraft, deleteEmailCredentials, discardEmailDraft, fetchEmailBody, fetchEmailCredentialsStatus,
   fetchEmailDrafts, fetchEmailMessages, sendEmailDraft, setEmailCredentials, summarizeEmail, syncEmail,
 } from '../shared/api/email';
 
@@ -57,6 +57,100 @@ function ConnectEmailPanel({ onConnected }: { onConnected: () => void }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function ManageEmailDialog({ onClose, onUpdated, onDisconnected }: { onClose: () => void; onUpdated: () => void; onDisconnected: () => void }) {
+  const [fields, setFields] = useState({ imap_host: '', imap_port: '993', imap_username: '', imap_password: '', smtp_host: '', smtp_port: '587', smtp_username: '', smtp_password: '' });
+  const [saving, setSaving] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+  const set = (key: keyof typeof fields) => (e: React.ChangeEvent<HTMLInputElement>) => setFields(prev => ({ ...prev, [key]: e.target.value }));
+  const ready = Object.values(fields).every(v => v.trim());
+
+  const submit = async () => {
+    if (!ready || saving) return;
+    setSaving(true);
+    try {
+      await setEmailCredentials(fields);
+      showToast('Email connection updated', 'success');
+      onUpdated();
+      onClose();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update email', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const disconnect = async () => {
+    setDisconnecting(true);
+    try {
+      await deleteEmailCredentials();
+      showToast('Email disconnected', 'info');
+      onDisconnected();
+      onClose();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to disconnect email', 'error');
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  const field = (key: keyof typeof fields, label: string, type = 'text') => (
+    <div style={{ flex: key.includes('port') ? '0 0 90px' : 1 }}>
+      <label style={{ fontSize: 11.5, color: J.textSec, display: 'block', marginBottom: 4 }}>{label}</label>
+      <input className="j-input" type={type} value={fields[key]} onChange={set(key)} style={{ width: '100%', borderRadius: 7, padding: '8px 10px', fontSize: 12.5 }} />
+    </div>
+  );
+
+  return (
+    <OverlayDialog
+      title="Manage Email Connection"
+      onClose={onClose}
+      actions={
+        <>
+          <button onClick={onClose} className="j-btn" style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, padding: '8px 16px', fontSize: 13 }}>Cancel</button>
+          <button onClick={submit} disabled={!ready || saving} className="j-btn"
+            style={{ background: J.amber, color: J.bg0, borderRadius: 8, padding: '8px 20px', fontSize: 13, fontWeight: 600, opacity: ready ? 1 : .5 }}>
+            {saving ? <Spinner size={13} color={J.bg0} /> : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <div style={{ fontSize: 12.5, color: J.textSec, marginBottom: 16, lineHeight: 1.6 }}>
+        Re-enter your IMAP/SMTP details to change the connected account, or disconnect below.
+        For security, existing credentials are never shown here.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+        <div style={{ fontSize: 11, color: J.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em' }}>IMAP (incoming)</div>
+        <div style={{ display: 'flex', gap: 8 }}>{field('imap_host', 'Host')}{field('imap_port', 'Port')}</div>
+        <div style={{ display: 'flex', gap: 8 }}>{field('imap_username', 'Username')}{field('imap_password', 'Password', 'password')}</div>
+        <div style={{ fontSize: 11, color: J.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginTop: 6 }}>SMTP (outgoing)</div>
+        <div style={{ display: 'flex', gap: 8 }}>{field('smtp_host', 'Host')}{field('smtp_port', 'Port')}</div>
+        <div style={{ display: 'flex', gap: 8 }}>{field('smtp_username', 'Username')}{field('smtp_password', 'Password', 'password')}</div>
+      </div>
+      <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${J.border}` }}>
+        {!confirmDisconnect ? (
+          <button onClick={() => setConfirmDisconnect(true)} className="j-btn"
+            style={{ background: 'none', border: `1px solid ${J.error}30`, color: J.error, borderRadius: 8, padding: '8px 14px', fontSize: 12.5 }}>
+            <IconTrash size={12} /> Disconnect email
+          </button>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 12.5, color: J.textSec }}>Remove this email connection?</span>
+            <button onClick={disconnect} disabled={disconnecting} className="j-btn"
+              style={{ background: J.error, color: '#fff', borderRadius: 7, padding: '6px 14px', fontSize: 12.5, fontWeight: 600 }}>
+              {disconnecting ? <Spinner size={12} color="#fff" /> : 'Yes, disconnect'}
+            </button>
+            <button onClick={() => setConfirmDisconnect(false)} className="j-btn"
+              style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 7, padding: '6px 14px', fontSize: 12.5 }}>
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+    </OverlayDialog>
   );
 }
 
@@ -204,6 +298,7 @@ export function EmailScreen(_props: { onNavigate?: (screen: string) => void }) {
   const [openMessage, setOpenMessage] = useState<EmailMessage | null>(null);
   const [compose, setCompose] = useState<{ to: string; subject: string; replyToId?: string } | null>(null);
   const [pendingSend, setPendingSend] = useState<EmailDraft | null>(null);
+  const [showManage, setShowManage] = useState(false);
 
   const loadMessages = () => fetchEmailMessages().then(res => setMessages(res.messages));
   const loadDrafts = () => fetchEmailDrafts().then(res => setDrafts(res.drafts));
@@ -283,6 +378,10 @@ export function EmailScreen(_props: { onNavigate?: (screen: string) => void }) {
             <button onClick={() => setCompose({ to: '', subject: '' })} className="j-btn"
               style={{ background: J.amberDim, border: `1px solid ${J.borderAccent}`, color: J.amber, borderRadius: 8, padding: '6px 14px', fontSize: 13, fontWeight: 500 }}>
               <IconPencil size={13} /> Compose
+            </button>
+            <button onClick={() => setShowManage(true)} title="Manage connection" aria-label="Manage email connection" className="j-btn"
+              style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, width: 32, padding: 0, justifyContent: 'center' }}>
+              <IconSettings size={13} />
             </button>
           </div>
         )}
@@ -385,6 +484,14 @@ export function EmailScreen(_props: { onNavigate?: (screen: string) => void }) {
             <div style={{ marginTop: 10, background: J.bg3, borderRadius: 8, padding: '10px 12px', fontSize: 12.5, color: J.textSec, whiteSpace: 'pre-wrap' }}>{pendingSend.body}</div>
           </div>
         </OverlayDialog>
+      )}
+
+      {showManage && (
+        <ManageEmailDialog
+          onClose={() => setShowManage(false)}
+          onUpdated={load}
+          onDisconnected={() => { setConfigured(false); setMessages([]); setDrafts([]); }}
+        />
       )}
     </div>
   );

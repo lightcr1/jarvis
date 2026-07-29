@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { J, useJ, Spinner, showToast, IconPlus, IconTrash, IconX, IconCalendar, IconRefresh } from './jarvis-shared';
+import { J, useJ, Spinner, showToast, IconPlus, IconTrash, IconX, IconCalendar, IconRefresh, IconSettings } from './jarvis-shared';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 import {
-  CalendarEvent, createCalendarEvent, deleteCalendarEvent, fetchCalendarCredentialsStatus,
+  CalendarEvent, createCalendarEvent, deleteCalendarCredentials, deleteCalendarEvent, fetchCalendarCredentialsStatus,
   fetchCalendarEvents, setCalendarCredentials, syncCalendar,
 } from '../shared/api/calendar';
 
@@ -73,6 +73,102 @@ function ConnectCalendarPanel({ onConnected }: { onConnected: () => void }) {
         </button>
       </div>
     </div>
+  );
+}
+
+function ManageCalendarDialog({ onClose, onUpdated, onDisconnected }: { onClose: () => void; onUpdated: () => void; onDisconnected: () => void }) {
+  const [url, setUrl] = useState('');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [confirmDisconnect, setConfirmDisconnect] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  const submit = async () => {
+    if (!url.trim() || !username.trim() || !password.trim() || saving) return;
+    setSaving(true);
+    try {
+      await setCalendarCredentials({ url: url.trim(), username: username.trim(), password });
+      showToast('Calendar connection updated', 'success');
+      onUpdated();
+      onClose();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to update calendar', 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const disconnect = async () => {
+    setDisconnecting(true);
+    try {
+      await deleteCalendarCredentials();
+      showToast('Calendar disconnected', 'info');
+      onDisconnected();
+      onClose();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to disconnect calendar', 'error');
+    } finally {
+      setDisconnecting(false);
+    }
+  };
+
+  return (
+    <OverlayDialog
+      title="Manage Calendar Connection"
+      onClose={onClose}
+      actions={
+        <>
+          <button onClick={onClose} className="j-btn" style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, padding: '8px 16px', fontSize: 13 }}>Cancel</button>
+          <button onClick={submit} disabled={!url.trim() || !username.trim() || !password.trim() || saving} className="j-btn"
+            style={{ background: J.amber, color: J.bg0, borderRadius: 8, padding: '8px 20px', fontSize: 13, fontWeight: 600, opacity: url.trim() && username.trim() && password.trim() ? 1 : .5 }}>
+            {saving ? <Spinner size={13} color={J.bg0} /> : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <div style={{ fontSize: 12.5, color: J.textSec, marginBottom: 16, lineHeight: 1.6 }}>
+        Re-enter your CalDAV details to change the connected account, or disconnect below.
+        For security, existing credentials are never shown here.
+      </div>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div>
+          <label style={{ fontSize: 12, color: J.textSec, display: 'block', marginBottom: 5 }}>CalDAV URL</label>
+          <input className="j-input" value={url} onChange={e => setUrl(e.target.value)} placeholder="https://caldav.example.com/calendars/me/home/"
+            style={{ width: '100%', borderRadius: 8, padding: '9px 12px', fontSize: 13 }} />
+        </div>
+        <div>
+          <label style={{ fontSize: 12, color: J.textSec, display: 'block', marginBottom: 5 }}>Username</label>
+          <input className="j-input" value={username} onChange={e => setUsername(e.target.value)}
+            style={{ width: '100%', borderRadius: 8, padding: '9px 12px', fontSize: 13 }} />
+        </div>
+        <div>
+          <label style={{ fontSize: 12, color: J.textSec, display: 'block', marginBottom: 5 }}>Password / App Password</label>
+          <input className="j-input" type="password" value={password} onChange={e => setPassword(e.target.value)}
+            style={{ width: '100%', borderRadius: 8, padding: '9px 12px', fontSize: 13 }} />
+        </div>
+      </div>
+      <div style={{ marginTop: 20, paddingTop: 16, borderTop: `1px solid ${J.border}` }}>
+        {!confirmDisconnect ? (
+          <button onClick={() => setConfirmDisconnect(true)} className="j-btn"
+            style={{ background: 'none', border: `1px solid ${J.error}30`, color: J.error, borderRadius: 8, padding: '8px 14px', fontSize: 12.5 }}>
+            <IconTrash size={12} /> Disconnect calendar
+          </button>
+        ) : (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 12.5, color: J.textSec }}>Remove this calendar connection?</span>
+            <button onClick={disconnect} disabled={disconnecting} className="j-btn"
+              style={{ background: J.error, color: '#fff', borderRadius: 7, padding: '6px 14px', fontSize: 12.5, fontWeight: 600 }}>
+              {disconnecting ? <Spinner size={12} color="#fff" /> : 'Yes, disconnect'}
+            </button>
+            <button onClick={() => setConfirmDisconnect(false)} className="j-btn"
+              style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 7, padding: '6px 14px', fontSize: 12.5 }}>
+              Cancel
+            </button>
+          </div>
+        )}
+      </div>
+    </OverlayDialog>
   );
 }
 
@@ -200,6 +296,7 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showManage, setShowManage] = useState(false);
   const [syncing, setSyncing] = useState(false);
 
   const load = () => {
@@ -257,6 +354,10 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
               style={{ background: J.amberDim, border: `1px solid ${J.borderAccent}`, color: J.amber, borderRadius: 8, padding: '6px 14px', fontSize: 13, fontWeight: 500 }}>
               <IconPlus size={13} /> New Event
             </button>
+            <button onClick={() => setShowManage(true)} title="Manage connection" aria-label="Manage calendar connection" className="j-btn"
+              style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, width: 32, padding: 0, justifyContent: 'center' }}>
+              <IconSettings size={13} />
+            </button>
           </div>
         )}
       </div>
@@ -292,6 +393,13 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
       </div>
       {showCreate && (
         <CreateEventModal onClose={() => setShowCreate(false)} onCreated={ev => setEvents(prev => [...prev, ev].sort((a, b) => a.start - b.start))} />
+      )}
+      {showManage && (
+        <ManageCalendarDialog
+          onClose={() => setShowManage(false)}
+          onUpdated={load}
+          onDisconnected={() => { setConfigured(false); setEvents([]); }}
+        />
       )}
     </div>
   );
