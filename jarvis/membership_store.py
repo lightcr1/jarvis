@@ -37,6 +37,9 @@ class MembershipStore:
     def list_user_groups(self, user_id: str) -> list[str]:
         return [m["group_id"] for m in self.data.get("memberships", []) if m.get("user_id") == user_id]
 
+    def list_group_members(self, group_id: str) -> list[str]:
+        return [m["user_id"] for m in self.data.get("memberships", []) if m.get("group_id") == group_id]
+
     def add_membership(self, user_id: str, group_id: str) -> dict:
         now = int(time.time())
         memberships = self.data.setdefault("memberships", [])

@@ -11,6 +11,7 @@ from jarvis.admin_settings_store import AdminSettingsStore
 from jarvis.authz import resolve_effective_permissions
 from jarvis.files.path_safety import PathSafetyError, resolve_within_root, sanitize_segment
 from jarvis.files.service import FileAccessError, FileService
+from jarvis.files.share_store import FolderShareStore
 from jarvis.files.store import FileStore
 from jarvis.group_store import GroupStore
 from jarvis.jarvis_engine import normalize_role
@@ -248,12 +249,14 @@ class FileServiceTests(unittest.TestCase):
         os.environ["JARVIS_USER_FILES_PATH"] = os.path.join(base, "user_files")
         os.environ["JARVIS_USER_LIMITS_STORE_PATH"] = os.path.join(base, "user_limits.json")
         os.environ["JARVIS_ADMIN_SETTINGS_PATH"] = os.path.join(base, "admin_settings.json")
+        os.environ["JARVIS_FILES_SHARE_STORE_PATH"] = os.path.join(base, "files_shares.json")
 
         self.user_store = UserStore()
         self.group_store = GroupStore()
         self.membership_store = MembershipStore()
         self.permission_store = PermissionStore()
         self.store = FileStore()
+        self.share_store = FolderShareStore()
         self.user_limits_store = UserLimitsStore()
         self.admin_settings_store = AdminSettingsStore()
         self.audit_probe = _AuditLogProbe()
@@ -266,6 +269,8 @@ class FileServiceTests(unittest.TestCase):
             normalize_role=normalize_role,
             user_limits_store=self.user_limits_store,
             admin_settings_store=self.admin_settings_store,
+            share_store=self.share_store,
+            group_store=self.group_store,
             audit_log=self.audit_probe,
         )
 
@@ -274,7 +279,7 @@ class FileServiceTests(unittest.TestCase):
             "JARVIS_USER_STORE_PATH", "JARVIS_GROUP_STORE_PATH", "JARVIS_MEMBERSHIP_STORE_PATH",
             "JARVIS_PERMISSION_STORE_PATH", "JARVIS_FILES_STORE_PATH", "JARVIS_USER_FILES_PATH",
             "JARVIS_USER_LIMITS_STORE_PATH", "JARVIS_ADMIN_SETTINGS_PATH", "JARVIS_EMERGENCY_STOP",
-            "JARVIS_FILES_MAX_UPLOAD_MB",
+            "JARVIS_FILES_MAX_UPLOAD_MB", "JARVIS_FILES_SHARE_STORE_PATH",
         ):
             os.environ.pop(key, None)
         self.tmpdir.cleanup()
@@ -674,6 +679,168 @@ class FileServiceTests(unittest.TestCase):
         self.assertTrue(self.service.jarvis_can_access_folder(parent["id"]))
         self.assertFalse(self.service.jarvis_can_access_folder(child["id"]))
 
+    # -- folder sharing via groups --------------------------------------
+
+    def _share_via_group(self, owner, member_username, folder_id, permission):
+        group = self.group_store.create_group(f"grp-{member_username}")
+        member = self._rw_user(member_username)
+        self.membership_store.add_membership(member["id"], group["id"])
+        self.permission_store.set_user_permissions(owner["id"], ["files.read", "files.write", "files.manage", "files.share"])
+        self.service.share_folder(folder_id, group["id"], permission, user_id=owner["id"], role=owner["role"])
+        return member, group
+
+    def test_folder_share_store_crud_and_duplicate_rejection(self):
+        share = self.share_store.add_share("folder-1", "group-1", "read", "user-1")
+        self.assertEqual([share], self.share_store.list_shares_for_folder("folder-1"))
+        self.assertEqual([share], self.share_store.list_shares_for_group("group-1"))
+        with self.assertRaises(ValueError):
+            self.share_store.add_share("folder-1", "group-1", "write", "user-1")
+        self.assertTrue(self.share_store.remove_share(share["id"]))
+        self.assertEqual([], self.share_store.list_shares_for_folder("folder-1"))
+
+    def test_membership_store_list_group_members_mirrors_list_user_groups(self):
+        group = self.group_store.create_group("mirror-test")
+        alice = self.user_store.create_user("mirror-alice", role="standard_user", enabled=True)
+        bob = self.user_store.create_user("mirror-bob", role="standard_user", enabled=True)
+        self.membership_store.add_membership(alice["id"], group["id"])
+        self.membership_store.add_membership(bob["id"], group["id"])
+        self.assertEqual({alice["id"], bob["id"]}, set(self.membership_store.list_group_members(group["id"])))
+
+    def test_share_is_cascading_unlike_jarvis_grant(self):
+        # Deliberate divergence from test_jarvis_access_is_per_folder_not_inherited above:
+        # human-to-human folder sharing cascades to subfolders, the AI-agent grant does not.
+        owner = self._rw_user("cascade-owner")
+        parent = self.service.create_folder({"name": "Parent"}, user_id=owner["id"], role=owner["role"])["folder"]
+        child = self.service.create_folder({"name": "Child", "parent_id": parent["id"]}, user_id=owner["id"], role=owner["role"])["folder"]
+        member, _ = self._share_via_group(owner, "cascade-member", parent["id"], "read")
+        result = self.service.browse(child["id"], user_id=member["id"], role=member["role"])
+        self.assertEqual(child["id"], result["parent_id"])
+        self.assertEqual("read", result["access"])
+
+    def test_read_share_can_browse_and_download_but_not_write(self):
+        owner = self._rw_user("read-owner")
+        folder = self.service.create_folder({"name": "Docs"}, user_id=owner["id"], role=owner["role"])["folder"]
+        uploaded = self._upload(folder_id=folder["id"], filename="a.txt", content=b"hi", user=owner)["file"]
+        member, _ = self._share_via_group(owner, "read-member", folder["id"], "read")
+
+        browsed = self.service.browse(folder["id"], user_id=member["id"], role=member["role"])
+        self.assertEqual(1, len(browsed["files"]))
+        download = self.service.resolve_download(uploaded["id"], user_id=member["id"], role=member["role"])
+        self.assertTrue(download["disk_path"].is_file())
+
+        with self.assertRaises(FileAccessError):
+            self.service.create_folder({"name": "New", "parent_id": folder["id"]}, user_id=member["id"], role=member["role"])
+        with self.assertRaises(FileAccessError):
+            self._upload(folder_id=folder["id"], filename="intrusion.txt", content=b"x", user=member)
+        with self.assertRaises(LookupError):
+            self.service.update_folder(folder["id"], {"name": "Hijacked"}, user_id=member["id"], role=member["role"])
+        # Grant files.manage too, so this specifically isolates the ownership check
+        # (a write/read share never grants delete rights, regardless of global permission strings).
+        self.permission_store.set_user_permissions(member["id"], ["files.read", "files.write", "files.manage"])
+        with self.assertRaises(LookupError):
+            self.service.delete_folder(folder["id"], user_id=member["id"], role=member["role"])
+
+    def test_write_share_can_upload_and_create_subfolder_charged_to_owner(self):
+        owner = self._rw_user("write-owner")
+        folder = self.service.create_folder({"name": "Drop"}, user_id=owner["id"], role=owner["role"])["folder"]
+        member, _ = self._share_via_group(owner, "write-member", folder["id"], "write")
+
+        sub = self.service.create_folder({"name": "New", "parent_id": folder["id"]}, user_id=member["id"], role=member["role"])["folder"]
+        self.assertEqual(owner["id"], sub["owner_user_id"])
+
+        content = b"y" * 500
+        uploaded = self._upload(folder_id=folder["id"], filename="dropped.txt", content=content, user=member)["file"]
+        self.assertEqual(owner["id"], uploaded["owner_user_id"])
+        self.assertEqual(500, self.store.get_quota_usage_bytes(owner["id"]))
+        self.assertEqual(0, self.store.get_quota_usage_bytes(member["id"]))
+
+    def test_user_in_no_relevant_group_gets_404_not_403(self):
+        owner = self._rw_user("hidden-owner")
+        outsider = self._rw_user("outsider")
+        folder = self.service.create_folder({"name": "Secret"}, user_id=owner["id"], role=owner["role"])["folder"]
+        with self.assertRaises(LookupError):
+            self.service.browse(folder["id"], user_id=outsider["id"], role=outsider["role"])
+
+    def test_only_owner_or_admin_can_manage_shares(self):
+        owner = self._rw_user("share-owner")
+        folder = self.service.create_folder({"name": "Team"}, user_id=owner["id"], role=owner["role"])["folder"]
+        member, group = self._share_via_group(owner, "manage-member", folder["id"], "write")
+        self.permission_store.set_user_permissions(member["id"], ["files.read", "files.write", "files.share"])
+        other_group = self.group_store.create_group("re-share-target")
+        with self.assertRaises(LookupError):
+            self.service.share_folder(folder["id"], other_group["id"], "read", user_id=member["id"], role=member["role"])
+
+    def test_delete_folder_cleans_up_share_rows_for_itself_and_descendants(self):
+        owner = self._rw_user("cleanup-owner")
+        parent = self.service.create_folder({"name": "Parent"}, user_id=owner["id"], role=owner["role"])["folder"]
+        child = self.service.create_folder({"name": "Child", "parent_id": parent["id"]}, user_id=owner["id"], role=owner["role"])["folder"]
+        self.permission_store.set_user_permissions(owner["id"], ["files.read", "files.write", "files.manage", "files.share"])
+        group = self.group_store.create_group("cleanup-group")
+        self.service.share_folder(parent["id"], group["id"], "read", user_id=owner["id"], role=owner["role"])
+        self.service.share_folder(child["id"], group["id"], "write", user_id=owner["id"], role=owner["role"])
+
+        self.service.delete_folder(parent["id"], user_id=owner["id"], role=owner["role"])
+        self.assertEqual([], self.share_store.list_shares_for_folder(parent["id"]))
+        self.assertEqual([], self.share_store.list_shares_for_folder(child["id"]))
+
+    def test_files_share_permission_gate(self):
+        owner = self._rw_user("gate-owner")
+        folder = self.service.create_folder({"name": "Gated"}, user_id=owner["id"], role=owner["role"])["folder"]
+        group = self.group_store.create_group("gate-group")
+        with self.assertRaises(FileAccessError):
+            self.service.share_folder(folder["id"], group["id"], "read", user_id=owner["id"], role=owner["role"])
+
+    def test_receiving_end_of_share_only_needs_files_read(self):
+        owner = self._rw_user("recv-owner")
+        folder = self.service.create_folder({"name": "Recv"}, user_id=owner["id"], role=owner["role"])["folder"]
+        group = self.group_store.create_group("recv-group")
+        member = self.user_store.create_user("recv-member", role="standard_user", enabled=True)
+        self.permission_store.set_user_permissions(member["id"], ["files.read"])
+        self.membership_store.add_membership(member["id"], group["id"])
+        self.permission_store.set_user_permissions(owner["id"], ["files.read", "files.write", "files.share"])
+        self.service.share_folder(folder["id"], group["id"], "read", user_id=owner["id"], role=owner["role"])
+        result = self.service.browse(folder["id"], user_id=member["id"], role=member["role"])
+        self.assertEqual("read", result["access"])
+
+    def test_list_my_groups_lists_every_group_not_just_own_memberships(self):
+        # The share picker needs every group that exists — an owner can share with
+        # a group they administer but aren't a member of (e.g. a "Kids" group).
+        # Membership itself stays private; only id/name are ever returned.
+        alice = self._rw_user("groups-alice")
+        bob = self._rw_user("groups-bob")
+        g1 = self.group_store.create_group("alice-group")
+        g2 = self.group_store.create_group("bob-group")
+        self.membership_store.add_membership(alice["id"], g1["id"])
+        self.membership_store.add_membership(bob["id"], g2["id"])
+        result = self.service.list_my_groups(user_id=alice["id"], role=alice["role"])
+        self.assertEqual({"alice-group", "bob-group"}, {g["name"] for g in result["groups"]})
+        self.assertEqual({"id", "name"}, set(result["groups"][0].keys()))
+
+    def test_list_shared_with_me_only_shows_my_shares(self):
+        owner = self._rw_user("visible-owner")
+        folder = self.service.create_folder({"name": "Visible"}, user_id=owner["id"], role=owner["role"])["folder"]
+        member, _ = self._share_via_group(owner, "visible-member", folder["id"], "read")
+        outsider = self._rw_user("invisible-outsider")
+
+        member_view = self.service.list_shared_with_me(user_id=member["id"], role=member["role"])
+        self.assertEqual(1, len(member_view["shared"]))
+        self.assertEqual("Visible", member_view["shared"][0]["folder"]["name"])
+        self.assertEqual(owner["username"], member_view["shared"][0]["owner_username"])
+
+        outsider_view = self.service.list_shared_with_me(user_id=outsider["id"], role=outsider["role"])
+        self.assertEqual([], outsider_view["shared"])
+
+    def test_unshare_removes_access_immediately(self):
+        owner = self._rw_user("unshare-owner")
+        folder = self.service.create_folder({"name": "Temp"}, user_id=owner["id"], role=owner["role"])["folder"]
+        member, _ = self._share_via_group(owner, "unshare-member", folder["id"], "read")
+        share_id = self.share_store.list_shares_for_folder(folder["id"])[0]["id"]
+
+        self.service.browse(folder["id"], user_id=member["id"], role=member["role"])
+        self.service.unshare_folder(share_id, user_id=owner["id"], role=owner["role"])
+        with self.assertRaises(LookupError):
+            self.service.browse(folder["id"], user_id=member["id"], role=member["role"])
+
     # -- emergency stop ------------------------------------------------------
 
     def test_emergency_stop_blocks_folder_creation(self):
@@ -729,6 +896,7 @@ class FileApiTests(unittest.TestCase):
         os.environ["JARVIS_USER_FILES_PATH"] = os.path.join(base, "user_files")
         os.environ["JARVIS_USER_LIMITS_STORE_PATH"] = os.path.join(base, "user_limits.json")
         os.environ["JARVIS_ADMIN_SETTINGS_PATH"] = os.path.join(base, "admin_settings.json")
+        os.environ["JARVIS_FILES_SHARE_STORE_PATH"] = os.path.join(base, "files_shares.json")
 
         jarvisappv4.user_store = jarvisappv4.UserStore()
         jarvisappv4.group_store = jarvisappv4.GroupStore()
@@ -739,6 +907,7 @@ class FileApiTests(unittest.TestCase):
         jarvisappv4.user_limits_store = jarvisappv4.UserLimitsStore()
         jarvisappv4.admin_settings_store = jarvisappv4.AdminSettingsStore()
         jarvisappv4.file_store = jarvisappv4.FileStore()
+        jarvisappv4.folder_share_store = jarvisappv4.FolderShareStore()
         jarvisappv4.file_service = jarvisappv4.FileService(
             store=jarvisappv4.file_store,
             user_store=jarvisappv4.user_store,
@@ -748,12 +917,15 @@ class FileApiTests(unittest.TestCase):
             normalize_role=jarvisappv4.normalize_role,
             user_limits_store=jarvisappv4.user_limits_store,
             admin_settings_store=jarvisappv4.admin_settings_store,
+            share_store=jarvisappv4.folder_share_store,
+            group_store=jarvisappv4.group_store,
             audit_log=jarvisappv4.audit_log,
         )
         jarvisappv4._identity_tokens.clear()
         self.client = TestClient(jarvisappv4.app)
 
     def tearDown(self):
+        os.environ.pop("JARVIS_FILES_SHARE_STORE_PATH", None)
         self.tmpdir.cleanup()
 
     def _create_user_with_permissions(self, admin_token, admin_id, username, permissions):
@@ -918,6 +1090,99 @@ class FileApiTests(unittest.TestCase):
         body = chat.json()
         self.assertEqual("file_drive_list", body["data"]["route"])
         self.assertIn("q1.txt", body["reply"])
+
+    def _create_group(self, admin_token, admin_id, name):
+        resp = self.client.post(
+            "/admin/groups",
+            headers={"Authorization": f"Bearer {admin_token}", "X-Jarvis-Role": "admin", "X-Jarvis-User-Id": admin_id},
+            json={"name": name},
+        )
+        self.assertEqual(200, resp.status_code, resp.text)
+        return resp.json()["id"]
+
+    def _assign_group(self, admin_token, admin_id, user_id, group_id):
+        resp = self.client.post(
+            "/admin/assignments",
+            headers={"Authorization": f"Bearer {admin_token}", "X-Jarvis-Role": "admin", "X-Jarvis-User-Id": admin_id},
+            json={"user_id": user_id, "group_id": group_id},
+        )
+        self.assertEqual(200, resp.status_code, resp.text)
+
+    def test_share_folder_lifecycle_via_api(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        admin_token, admin_id = admin["token"], admin["user_id"]
+
+        owner_id, owner_token = self._create_user_with_permissions(
+            admin_token, admin_id, "api-owner", ["files.read", "files.write", "files.share"]
+        )
+        member_id, member_token = self._create_user_with_permissions(
+            admin_token, admin_id, "api-member", ["files.read", "files.write"]
+        )
+        group_id = self._create_group(admin_token, admin_id, "api-team")
+        self._assign_group(admin_token, admin_id, member_id, group_id)
+
+        owner_headers = {"X-Jarvis-Session": owner_token}
+        member_headers = {"X-Jarvis-Session": member_token}
+
+        folder = self.client.post("/files/folders", headers=owner_headers, json={"name": "Team Drop"}).json()["folder"]
+
+        my_groups = self.client.get("/files/my-groups", headers=member_headers)
+        self.assertEqual(200, my_groups.status_code)
+        self.assertEqual(["api-team"], [g["name"] for g in my_groups.json()["groups"]])
+
+        share = self.client.post(
+            f"/files/folders/{folder['id']}/shares", headers=owner_headers,
+            json={"group_id": group_id, "permission": "write"},
+        )
+        self.assertEqual(200, share.status_code, share.text)
+        share_id = share.json()["share"]["id"]
+
+        shared_with_me = self.client.get("/files/shared-with-me", headers=member_headers)
+        self.assertEqual(200, shared_with_me.status_code)
+        self.assertEqual(1, len(shared_with_me.json()["shared"]))
+        self.assertEqual("write", shared_with_me.json()["shared"][0]["access"])
+
+        browse_as_member = self.client.get(f"/files/browse?parent_id={folder['id']}", headers=member_headers)
+        self.assertEqual(200, browse_as_member.status_code)
+        self.assertEqual("write", browse_as_member.json()["access"])
+        self.assertEqual("api-owner", browse_as_member.json()["owner_username"])
+
+        upload = self.client.post(
+            "/files/upload", headers=member_headers,
+            files={"file": ("notes.txt", b"team notes", "text/plain")},
+            data={"folder_id": folder["id"]},
+        )
+        self.assertEqual(200, upload.status_code, upload.text)
+        self.assertEqual(owner_id, upload.json()["file"]["owner_user_id"])
+
+        shares_list = self.client.get(f"/files/folders/{folder['id']}/shares", headers=owner_headers)
+        self.assertEqual(200, shares_list.status_code)
+        self.assertEqual(1, len(shares_list.json()["shares"]))
+        self.assertEqual("api-team", shares_list.json()["shares"][0]["group_name"])
+
+        unshare = self.client.delete(f"/files/shares/{share_id}", headers=owner_headers)
+        self.assertEqual(200, unshare.status_code)
+
+        after_unshare = self.client.get(f"/files/browse?parent_id={folder['id']}", headers=member_headers)
+        self.assertEqual(404, after_unshare.status_code)
+
+    def test_non_owner_cannot_manage_shares_via_api(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        admin_token, admin_id = admin["token"], admin["user_id"]
+        owner_id, owner_token = self._create_user_with_permissions(
+            admin_token, admin_id, "own-owner", ["files.read", "files.write", "files.share"]
+        )
+        outsider_id, outsider_token = self._create_user_with_permissions(
+            admin_token, admin_id, "own-outsider", ["files.read", "files.write", "files.share"]
+        )
+        folder = self.client.post("/files/folders", headers={"X-Jarvis-Session": owner_token}, json={"name": "Mine"}).json()["folder"]
+        group_id = self._create_group(admin_token, admin_id, "own-group")
+
+        resp = self.client.post(
+            f"/files/folders/{folder['id']}/shares", headers={"X-Jarvis-Session": outsider_token},
+            json={"group_id": group_id, "permission": "read"},
+        )
+        self.assertEqual(404, resp.status_code)
 
 
 if __name__ == "__main__":
