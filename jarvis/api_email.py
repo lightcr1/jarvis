@@ -15,11 +15,11 @@ def build_email_router(deps: dict) -> APIRouter:
         return value.get() if isinstance(value, LiveRef) else value
 
     @router.get("/email/messages")
-    def list_messages(folder: str | None = None, unread_only: bool = False, x_jarvis_session: str | None = Header(default=None)):
+    def list_messages(folder: str | None = None, unread_only: bool = False, account_id: str | None = None, x_jarvis_session: str | None = Header(default=None)):
         session = deps["require_identity_session"](x_jarvis_session)
         try:
             return current("email_service").list_messages(
-                user_id=session["user"]["id"], role=session["user"]["role"], folder=folder, unread_only=unread_only,
+                user_id=session["user"]["id"], role=session["user"]["role"], folder=folder, unread_only=unread_only, account_id=account_id,
             )
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
@@ -80,11 +80,11 @@ def build_email_router(deps: dict) -> APIRouter:
         return service.set_summary(message_id, summary, user_id=session["user"]["id"], role=session["user"]["role"])
 
     @router.get("/email/drafts")
-    def list_drafts(status: str | None = None, x_jarvis_session: str | None = Header(default=None)):
+    def list_drafts(status: str | None = None, account_id: str | None = None, x_jarvis_session: str | None = Header(default=None)):
         session = deps["require_identity_session"](x_jarvis_session)
         try:
             return current("email_service").list_drafts(
-                user_id=session["user"]["id"], role=session["user"]["role"], status=status,
+                user_id=session["user"]["id"], role=session["user"]["role"], status=status, account_id=account_id,
             )
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
@@ -167,14 +167,74 @@ def build_email_router(deps: dict) -> APIRouter:
             raise HTTPException(403, str(exc)) from exc
 
     @router.post("/email/sync")
-    def sync(x_jarvis_session: str | None = Header(default=None)):
+    def sync(account_id: str | None = None, x_jarvis_session: str | None = Header(default=None)):
         session = deps["require_identity_session"](x_jarvis_session)
         try:
             return current("email_service").sync_inbox(
-                user_id=session["user"]["id"], role=session["user"]["role"],
+                user_id=session["user"]["id"], role=session["user"]["role"], account_id=account_id,
             )
         except LookupError as exc:
             raise HTTPException(409, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.get("/email/accounts")
+    def list_accounts(x_jarvis_session: str | None = Header(default=None)):
+        session = deps["require_identity_session"](x_jarvis_session)
+        try:
+            return current("email_service").list_accounts(user_id=session["user"]["id"], role=session["user"]["role"])
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.post("/email/accounts")
+    def add_account(payload: dict[str, object], x_jarvis_session: str | None = Header(default=None)):
+        session = deps["require_identity_session"](x_jarvis_session)
+        try:
+            return current("email_service").add_account(
+                payload, str(payload.get("label") or ""), user_id=session["user"]["id"], role=session["user"]["role"],
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except SecretEncryptionUnavailable as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.put("/email/accounts/{account_id}")
+    def update_account(account_id: str, payload: dict[str, object], x_jarvis_session: str | None = Header(default=None)):
+        session = deps["require_identity_session"](x_jarvis_session)
+        try:
+            return current("email_service").update_account(
+                account_id, payload, payload.get("label"), user_id=session["user"]["id"], role=session["user"]["role"],
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except SecretEncryptionUnavailable as exc:
+            raise HTTPException(503, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.delete("/email/accounts/{account_id}")
+    def delete_account(account_id: str, x_jarvis_session: str | None = Header(default=None)):
+        session = deps["require_identity_session"](x_jarvis_session)
+        try:
+            return current("email_service").delete_account(
+                account_id, user_id=session["user"]["id"], role=session["user"]["role"],
+            )
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.post("/email/accounts/{account_id}/primary")
+    def set_primary_account(account_id: str, x_jarvis_session: str | None = Header(default=None)):
+        session = deps["require_identity_session"](x_jarvis_session)
+        try:
+            return current("email_service").set_primary_account(
+                account_id, user_id=session["user"]["id"], role=session["user"]["role"],
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
 

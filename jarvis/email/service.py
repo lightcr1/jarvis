@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import time
+import uuid
 from typing import Callable
 
 from .client import ImapSmtpClient
@@ -15,6 +16,13 @@ INTEGRATION_NAME = "email"
 
 def _emergency_stop_active() -> bool:
     return (os.getenv("JARVIS_EMERGENCY_STOP") or "0").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _validate_credential_fields(fields: dict) -> dict[str, str]:
+    missing = [f for f in REQUIRED_CREDENTIAL_FIELDS if not str(fields.get(f) or "").strip()]
+    if missing:
+        raise ValueError(f"missing required field(s): {', '.join(missing)}")
+    return {k: str(fields[k]).strip() for k in REQUIRED_CREDENTIAL_FIELDS}
 
 
 class EmailAccessError(PermissionError):
@@ -150,10 +158,7 @@ class EmailService:
 
     def set_credentials(self, fields: dict[str, str], *, user_id: str | None, role: str | None) -> dict:
         policy = self.require_access(user_id=user_id, role=role, required_permission="email.write")
-        missing = [f for f in REQUIRED_CREDENTIAL_FIELDS if not str(fields.get(f) or "").strip()]
-        if missing:
-            raise ValueError(f"missing required field(s): {', '.join(missing)}")
-        clean = {k: str(fields[k]).strip() for k in REQUIRED_CREDENTIAL_FIELDS}
+        clean = _validate_credential_fields(fields)
         record = self.credential_store.set_credentials(user_id, INTEGRATION_NAME, clean)
         self._write_audit("email_credentials_set", actor_user_id=user_id, actor_role=role)
         return {"policy": policy, "credentials": record}
@@ -168,25 +173,29 @@ class EmailService:
         self._write_audit("email_credentials_deleted", actor_user_id=user_id, actor_role=role)
         return {"policy": policy, "deleted": deleted}
 
-    def _client_for(self, user_id: str | None) -> ImapSmtpClient | None:
-        creds = self.credential_store.get_credentials(user_id or "", INTEGRATION_NAME)
+    def _client_for(self, user_id: str | None, account_id: str | None = None) -> tuple[ImapSmtpClient | None, str | None]:
+        resolved = account_id or self.credential_store.primary_account_id(user_id or "", INTEGRATION_NAME)
+        if not resolved:
+            return None, None
+        creds = self.credential_store.get_credentials(user_id or "", INTEGRATION_NAME, resolved)
         if not creds:
-            return None
-        return self.client_factory(creds)
+            return None, resolved
+        return self.client_factory(creds), resolved
 
-    def sync_inbox(self, *, user_id: str | None, role: str | None, folder: str = "INBOX", limit: int = 20) -> dict:
+    def sync_inbox(self, *, user_id: str | None, role: str | None, account_id: str | None = None, folder: str = "INBOX", limit: int = 20) -> dict:
         policy = self.require_access(user_id=user_id, role=role, required_permission="email.read")
-        client = self._client_for(user_id)
+        client, resolved_account = self._client_for(user_id, account_id)
         if client is None:
             raise LookupError("email not configured")
         fetched = client.fetch_recent_messages(folder, limit)
-        messages = self.message_store.upsert_messages(user_id or "", folder, fetched)
-        self._write_audit("email_synced", actor_user_id=user_id, actor_role=role, payload={"count": len(messages)})
-        return {"policy": policy, "synced_count": len(messages)}
+        messages = self.message_store.upsert_messages(user_id or "", folder, fetched, account_id=resolved_account)
+        self._write_audit("email_synced", actor_user_id=user_id, actor_role=role, payload={"count": len(messages), "account_id": resolved_account})
+        return {"policy": policy, "synced_count": len(messages), "account_id": resolved_account}
 
-    def list_messages(self, *, user_id: str | None, role: str | None, folder: str | None = None, unread_only: bool = False) -> dict:
+    def list_messages(self, *, user_id: str | None, role: str | None, folder: str | None = None, unread_only: bool = False, account_id: str | None = None) -> dict:
         policy = self.require_access(user_id=user_id, role=role, required_permission="email.read")
-        return {"policy": policy, "messages": self.message_store.list_messages(user_id or "", folder, unread_only)}
+        resolved = account_id or self.credential_store.primary_account_id(user_id or "", INTEGRATION_NAME)
+        return {"policy": policy, "messages": self.message_store.list_messages(user_id or "", folder, unread_only, account_id=resolved)}
 
     def get_message(self, message_id: str, *, user_id: str | None, role: str | None) -> dict:
         policy = self.require_access(user_id=user_id, role=role, required_permission="email.read")
@@ -195,7 +204,7 @@ class EmailService:
     def fetch_body(self, message_id: str, *, user_id: str | None, role: str | None) -> dict:
         policy = self.require_access(user_id=user_id, role=role, required_permission="email.read")
         message = self._owned_message(message_id, user_id=user_id, role=role)
-        client = self._client_for(message.get("user_id"))
+        client, _ = self._client_for(message.get("user_id"), message.get("account_id"))
         if client is None:
             raise LookupError("email not configured")
         body = client.fetch_message_body(message["uid"], message.get("folder", "INBOX"))
@@ -206,7 +215,7 @@ class EmailService:
     def mark_read(self, message_id: str, *, user_id: str | None, role: str | None) -> dict:
         policy = self.require_access(user_id=user_id, role=role, required_permission="email.read")
         message = self._owned_message(message_id, user_id=user_id, role=role)
-        client = self._client_for(message.get("user_id"))
+        client, _ = self._client_for(message.get("user_id"), message.get("account_id"))
         if client is not None:
             client.mark_read(message["uid"], message.get("folder", "INBOX"))
         updated = self.message_store.set_read(message_id, True)
@@ -225,9 +234,11 @@ class EmailService:
         body = str(payload.get("body") or "").strip()
         if not to or not body:
             raise ValueError("draft requires 'to' and 'body'")
+        account_id = payload.get("account_id") or self.credential_store.primary_account_id(user_id or "", INTEGRATION_NAME)
         now = int(time.time())
         draft = self.draft_store.add_draft({
             "user_id": user_id,
+            "account_id": account_id,
             "to": to,
             "subject": subject or "(no subject)",
             "body": body,
@@ -239,9 +250,10 @@ class EmailService:
         self._write_audit("email_draft_created", actor_user_id=user_id, actor_role=role, payload={"draft_id": draft["id"]})
         return {"policy": policy, "draft": draft}
 
-    def list_drafts(self, *, user_id: str | None, role: str | None, status: str | None = None) -> dict:
+    def list_drafts(self, *, user_id: str | None, role: str | None, status: str | None = None, account_id: str | None = None) -> dict:
         policy = self.require_access(user_id=user_id, role=role, required_permission="email.read")
-        return {"policy": policy, "drafts": self.draft_store.list_drafts(user_id or "", status)}
+        resolved = account_id or self.credential_store.primary_account_id(user_id or "", INTEGRATION_NAME)
+        return {"policy": policy, "drafts": self.draft_store.list_drafts(user_id or "", status, account_id=resolved)}
 
     def discard_draft(self, draft_id: str, *, user_id: str | None, role: str | None) -> dict:
         policy = self.require_access(user_id=user_id, role=role, required_permission="email.write")
@@ -261,7 +273,7 @@ class EmailService:
             raise ValueError("draft is not pending approval")
         if not confirm:
             return {"policy": policy, "draft": draft, "status": "confirmation_required"}
-        client = self._client_for(draft.get("user_id"))
+        client, _ = self._client_for(draft.get("user_id"), draft.get("account_id"))
         if client is None:
             raise LookupError("email not configured")
         sent = client.send_message(draft["to"], draft["subject"], draft["body"], in_reply_to=draft.get("in_reply_to_message_id"))
@@ -270,3 +282,46 @@ class EmailService:
         updated = self.draft_store.update_draft(draft_id, {"status": "sent", "updated_at": int(time.time()), "sent_at": int(time.time())})
         self._write_audit("email_draft_sent", actor_user_id=user_id, actor_role=role, payload={"draft_id": draft_id})
         return {"policy": policy, "draft": updated, "status": "sent"}
+
+    def list_accounts(self, *, user_id: str | None, role: str | None) -> dict:
+        policy = self.require_access(user_id=user_id, role=role, required_permission="email.read")
+        return {"policy": policy, "accounts": self.credential_store.list_accounts(user_id, INTEGRATION_NAME)}
+
+    def add_account(self, fields: dict[str, str], label: str, *, user_id: str | None, role: str | None) -> dict:
+        policy = self.require_access(user_id=user_id, role=role, required_permission="email.write")
+        clean_label = (label or "").strip()
+        if not clean_label:
+            raise ValueError("label is required")
+        clean = _validate_credential_fields(fields)
+        account_id = uuid.uuid4().hex[:12]
+        record = self.credential_store.set_credentials(user_id, INTEGRATION_NAME, clean, account_id=account_id, label=clean_label)
+        self._write_audit("email_account_added", actor_user_id=user_id, actor_role=role, payload={"account_id": account_id})
+        return {"policy": policy, "account": record}
+
+    def update_account(self, account_id: str, fields: dict[str, str], label: str | None, *, user_id: str | None, role: str | None) -> dict:
+        policy = self.require_access(user_id=user_id, role=role, required_permission="email.write")
+        if not self.credential_store.has_credentials(user_id or "", INTEGRATION_NAME, account_id):
+            raise LookupError("account not found")
+        clean = _validate_credential_fields(fields)
+        clean_label = label.strip() if label else None
+        record = self.credential_store.set_credentials(user_id, INTEGRATION_NAME, clean, account_id=account_id, label=clean_label)
+        self._write_audit("email_account_updated", actor_user_id=user_id, actor_role=role, payload={"account_id": account_id})
+        return {"policy": policy, "account": record}
+
+    def delete_account(self, account_id: str, *, user_id: str | None, role: str | None) -> dict:
+        policy = self.require_access(user_id=user_id, role=role, required_permission="email.write")
+        was_primary = self.credential_store.primary_account_id(user_id or "", INTEGRATION_NAME) == account_id
+        deleted = self.credential_store.delete_credentials(user_id or "", INTEGRATION_NAME, account_id)
+        if deleted and was_primary:
+            remaining = self.credential_store.list_accounts(user_id or "", INTEGRATION_NAME)
+            if remaining:
+                self.credential_store.set_primary_account(user_id or "", INTEGRATION_NAME, remaining[0]["account_id"])
+        self._write_audit("email_account_deleted", actor_user_id=user_id, actor_role=role, payload={"account_id": account_id})
+        return {"policy": policy, "deleted": deleted}
+
+    def set_primary_account(self, account_id: str, *, user_id: str | None, role: str | None) -> dict:
+        policy = self.require_access(user_id=user_id, role=role, required_permission="email.write")
+        if not self.credential_store.set_primary_account(user_id or "", INTEGRATION_NAME, account_id):
+            raise LookupError("account not found")
+        self._write_audit("email_account_primary_set", actor_user_id=user_id, actor_role=role, payload={"account_id": account_id})
+        return {"policy": policy, "primary_account_id": account_id}

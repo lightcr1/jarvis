@@ -138,6 +138,47 @@ def test_response_never_leaks_raw_or_encrypted_credential_value(app_client):
     )
 
 
+def test_user_with_two_email_accounts_appears_as_two_entries_with_labels(app_client):
+    client, credential_store, user_store = app_client
+    user = user_store.create_user("dana", role="standard_user")
+    credential_store.set_credentials(
+        user["id"],
+        "email",
+        {
+            "imap_host": "imap.work.example.com", "imap_port": "993", "imap_username": "dana.work",
+            "imap_password": "pw-work", "smtp_host": "smtp.work.example.com", "smtp_port": "587",
+            "smtp_username": "dana.work", "smtp_password": "pw-work",
+        },
+        account_id="default",
+        label="Work",
+    )
+    credential_store.set_credentials(
+        user["id"],
+        "email",
+        {
+            "imap_host": "imap.personal.example.com", "imap_port": "993", "imap_username": "dana.home",
+            "imap_password": "pw-home", "smtp_host": "smtp.personal.example.com", "smtp_port": "587",
+            "smtp_username": "dana.home", "smtp_password": "pw-home",
+        },
+        account_id="acct2",
+        label="Personal",
+    )
+
+    resp = client.get("/admin/integrations/status", headers=_ADMIN_HDR)
+    assert resp.status_code == 200
+    body = resp.json()
+
+    assert body["calendar"] == []
+    assert len(body["email"]) == 2
+    by_label = {e["label"]: e for e in body["email"]}
+    assert set(by_label) == {"Work", "Personal"}
+    assert by_label["Work"]["user_id"] == user["id"]
+    assert by_label["Work"]["account_id"] == "default"
+    assert by_label["Work"]["is_primary"] is True
+    assert by_label["Personal"]["account_id"] == "acct2"
+    assert by_label["Personal"]["is_primary"] is False
+
+
 def test_non_admin_caller_rejected(app_client):
     client, *_ = app_client
     resp = client.get("/admin/integrations/status")

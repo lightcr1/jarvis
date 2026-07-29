@@ -107,6 +107,33 @@ class EmailStoreTests(unittest.TestCase):
         self.assertEqual("sent", updated["status"])
         self.assertEqual(0, len(self.drafts.list_drafts("u1", status="pending_approval")))
 
+    def test_upsert_messages_scopes_dedup_by_account_id(self):
+        fetched = [{"uid": "1", "subject": "Hi", "sender": "a@x.com", "date": 100, "read": False}]
+        self.messages.upsert_messages("u1", "INBOX", fetched, account_id="acct-a")
+        self.messages.upsert_messages("u1", "INBOX", fetched, account_id="acct-b")
+        all_msgs = self.messages.list_messages("u1")
+        self.assertEqual(2, len(all_msgs))
+        scoped_a = self.messages.list_messages("u1", account_id="acct-a")
+        self.assertEqual(1, len(scoped_a))
+        self.assertEqual("acct-a", scoped_a[0]["account_id"])
+
+    def test_legacy_message_without_account_id_backfilled_on_load(self):
+        self.messages.data["messages"].append({"id": "mail-legacy", "user_id": "u1", "uid": "99", "folder": "INBOX", "subject": "Old", "sender": "x@y.com", "date": 1, "read": False, "summary": None, "synced_at": 1})
+        self.messages._save()
+        reloaded = EmailMessageStore()
+        legacy = reloaded.get_message("mail-legacy")
+        self.assertEqual("default", legacy["account_id"])
+        # A same-account upsert with the same uid/folder must update in place, not duplicate.
+        reloaded.upsert_messages("u1", "INBOX", [{"uid": "99", "subject": "Old (updated)", "sender": "x@y.com", "date": 1, "read": True}], account_id="default")
+        self.assertEqual(1, len(reloaded.list_messages("u1")))
+        self.assertEqual("Old (updated)", reloaded.list_messages("u1")[0]["subject"])
+
+    def test_list_drafts_filtered_by_account_id(self):
+        self.drafts.add_draft({"user_id": "u1", "account_id": "acct-a", "to": "x@y.com", "subject": "A", "body": "B", "status": "pending_approval", "created_at": 1})
+        self.drafts.add_draft({"user_id": "u1", "account_id": "acct-b", "to": "x@y.com", "subject": "C", "body": "D", "status": "pending_approval", "created_at": 2})
+        self.assertEqual(2, len(self.drafts.list_drafts("u1")))
+        self.assertEqual(1, len(self.drafts.list_drafts("u1", account_id="acct-a")))
+
 
 class EmailServiceTests(unittest.TestCase):
     def setUp(self):
@@ -245,6 +272,120 @@ class EmailServiceTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             self.service.send_draft(draft["id"], user_id=user["id"], role=user["role"], confirm=True)
 
+    def test_add_account_creates_non_default_account_and_lists_it(self):
+        user = self._configured_user()  # already has a "default" primary account
+        result = self.service.add_account({
+            "imap_host": "imap2.example.com", "imap_port": "993", "imap_username": "u2", "imap_password": "p2",
+            "smtp_host": "smtp2.example.com", "smtp_port": "587", "smtp_username": "u2", "smtp_password": "p2",
+        }, "Personal", user_id=user["id"], role=user["role"])
+        account_id = result["account"]["account_id"]
+        self.assertNotEqual("default", account_id)
+        accounts = self.service.list_accounts(user_id=user["id"], role=user["role"])["accounts"]
+        self.assertEqual(2, len(accounts))
+        labels = {a["account_id"]: a["label"] for a in accounts}
+        self.assertEqual("Personal", labels[account_id])
+
+    def test_second_account_not_primary_until_promoted(self):
+        user = self._configured_user()
+        result = self.service.add_account({
+            "imap_host": "h", "imap_port": "1", "imap_username": "u", "imap_password": "p",
+            "smtp_host": "h", "smtp_port": "1", "smtp_username": "u", "smtp_password": "p",
+        }, "Second", user_id=user["id"], role=user["role"])
+        account_id = result["account"]["account_id"]
+        accounts = {a["account_id"]: a for a in self.service.list_accounts(user_id=user["id"], role=user["role"])["accounts"]}
+        self.assertTrue(accounts["default"]["is_primary"])
+        self.assertFalse(accounts[account_id]["is_primary"])
+        self.service.set_primary_account(account_id, user_id=user["id"], role=user["role"])
+        accounts = {a["account_id"]: a for a in self.service.list_accounts(user_id=user["id"], role=user["role"])["accounts"]}
+        self.assertTrue(accounts[account_id]["is_primary"])
+        self.assertFalse(accounts["default"]["is_primary"])
+
+    def test_sync_inbox_with_explicit_account_id_scopes_upsert(self):
+        user = self._configured_user()
+        self.service.add_account({
+            "imap_host": "h", "imap_port": "1", "imap_username": "u", "imap_password": "p",
+            "smtp_host": "h", "smtp_port": "1", "smtp_username": "u", "smtp_password": "p",
+        }, "Second", user_id=user["id"], role=user["role"])
+        result = self.service.sync_inbox(user_id=user["id"], role=user["role"], account_id="default")
+        self.assertEqual("default", result["account_id"])
+        messages = self.message_store.list_messages(user["id"], account_id="default")
+        self.assertEqual(2, len(messages))
+
+    def test_sync_inbox_default_uses_primary_account(self):
+        user = self._configured_user()
+        result = self.service.sync_inbox(user_id=user["id"], role=user["role"])
+        self.assertEqual("default", result["account_id"])
+
+    def test_fetch_body_uses_message_own_account_not_current_primary(self):
+        user = self._configured_user()
+        second_client = FakeImapSmtpClient()
+        second_client.bodies = {"1": "SECOND ACCOUNT BODY", "2": "SECOND ACCOUNT BODY 2"}
+
+        def factory(creds):
+            return second_client if creds.get("imap_username") == "second-user" else self.fake_client
+
+        self.service.client_factory = factory
+        added = self.service.add_account({
+            "imap_host": "h2", "imap_port": "1", "imap_username": "second-user", "imap_password": "p",
+            "smtp_host": "h2", "smtp_port": "1", "smtp_username": "second-user", "smtp_password": "p",
+        }, "Second", user_id=user["id"], role=user["role"])
+        second_account_id = added["account"]["account_id"]
+
+        self.service.sync_inbox(user_id=user["id"], role=user["role"], account_id=second_account_id)
+        self.service.set_primary_account(second_account_id, user_id=user["id"], role=user["role"])
+        # Now sync the (no-longer-primary) default account's messages too, then fetch one of ITS messages.
+        self.service.sync_inbox(user_id=user["id"], role=user["role"], account_id="default")
+        default_message = self.message_store.list_messages(user["id"], account_id="default")[0]
+
+        fetched = self.service.fetch_body(default_message["id"], user_id=user["id"], role=user["role"])
+        self.assertIn(fetched["body"], self.fake_client.bodies.values())
+        self.assertNotEqual("SECOND ACCOUNT BODY", fetched["body"])
+
+    def test_delete_primary_account_auto_promotes_remaining_account(self):
+        user = self._configured_user()
+        result = self.service.add_account({
+            "imap_host": "h", "imap_port": "1", "imap_username": "u", "imap_password": "p",
+            "smtp_host": "h", "smtp_port": "1", "smtp_username": "u", "smtp_password": "p",
+        }, "Second", user_id=user["id"], role=user["role"])
+        second_id = result["account"]["account_id"]
+        self.service.delete_account("default", user_id=user["id"], role=user["role"])
+        accounts = self.service.list_accounts(user_id=user["id"], role=user["role"])["accounts"]
+        self.assertEqual(1, len(accounts))
+        self.assertEqual(second_id, accounts[0]["account_id"])
+        self.assertTrue(accounts[0]["is_primary"])
+
+    def test_delete_last_account_leaves_nothing_to_promote(self):
+        user = self._configured_user()
+        self.service.delete_account("default", user_id=user["id"], role=user["role"])
+        accounts = self.service.list_accounts(user_id=user["id"], role=user["role"])["accounts"]
+        self.assertEqual(0, len(accounts))
+
+    def test_create_draft_stores_resolved_account_id(self):
+        user = self._configured_user()
+        draft = self.service.create_draft({"to": "x@y.com", "subject": "S", "body": "B"}, user_id=user["id"], role=user["role"])["draft"]
+        self.assertEqual("default", draft["account_id"])
+
+    def test_send_draft_uses_draft_own_account_id(self):
+        user = self._configured_user()
+        second_client = FakeImapSmtpClient()
+
+        def factory(creds):
+            return second_client if creds.get("imap_username") == "second-user" else self.fake_client
+
+        self.service.client_factory = factory
+        result = self.service.add_account({
+            "imap_host": "h2", "imap_port": "1", "imap_username": "second-user", "imap_password": "p",
+            "smtp_host": "h2", "smtp_port": "1", "smtp_username": "second-user", "smtp_password": "p",
+        }, "Second", user_id=user["id"], role=user["role"])
+        second_id = result["account"]["account_id"]
+        self.service.set_primary_account(second_id, user_id=user["id"], role=user["role"])
+
+        # Draft explicitly attached to "default" even though "second" is now primary.
+        draft = self.service.create_draft({"to": "x@y.com", "subject": "S", "body": "B", "account_id": "default"}, user_id=user["id"], role=user["role"])["draft"]
+        self.service.send_draft(draft["id"], user_id=user["id"], role=user["role"], confirm=True)
+        self.assertEqual(1, len(self.fake_client.sent_messages))
+        self.assertEqual(0, len(second_client.sent_messages))
+
 
 class EmailApiTests(unittest.TestCase):
     def setUp(self):
@@ -369,6 +510,87 @@ class EmailApiTests(unittest.TestCase):
             self.assertEqual(403, response.status_code)
         finally:
             os.environ.pop("JARVIS_EMERGENCY_STOP", None)
+
+    def test_accounts_lifecycle_via_api(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        _, session_token = self._create_user_with_permissions(admin["token"], admin["user_id"], "multiuser", ["email.read", "email.write"])
+        headers = {"X-Jarvis-Session": session_token}
+
+        self.client.put("/email/credentials", headers=headers, json={
+            "imap_host": "imap.example.com", "imap_port": "993", "imap_username": "u", "imap_password": "p",
+            "smtp_host": "smtp.example.com", "smtp_port": "587", "smtp_username": "u", "smtp_password": "p",
+        })
+
+        added = self.client.post("/email/accounts", headers=headers, json={
+            "label": "Personal",
+            "imap_host": "imap2.example.com", "imap_port": "993", "imap_username": "u2", "imap_password": "p2",
+            "smtp_host": "smtp2.example.com", "smtp_port": "587", "smtp_username": "u2", "smtp_password": "p2",
+        })
+        self.assertEqual(200, added.status_code)
+        account_id = added.json()["account"]["account_id"]
+
+        listed = self.client.get("/email/accounts", headers=headers)
+        self.assertEqual(200, listed.status_code)
+        self.assertEqual(2, len(listed.json()["accounts"]))
+
+        updated = self.client.put(f"/email/accounts/{account_id}", headers=headers, json={
+            "label": "Personal (updated)",
+            "imap_host": "imap3.example.com", "imap_port": "993", "imap_username": "u3", "imap_password": "p3",
+            "smtp_host": "smtp3.example.com", "smtp_port": "587", "smtp_username": "u3", "smtp_password": "p3",
+        })
+        self.assertEqual(200, updated.status_code)
+
+        primary = self.client.post(f"/email/accounts/{account_id}/primary", headers=headers)
+        self.assertEqual(200, primary.status_code)
+        self.assertEqual(account_id, primary.json()["primary_account_id"])
+
+        deleted = self.client.delete(f"/email/accounts/{account_id}", headers=headers)
+        self.assertEqual(200, deleted.status_code)
+        self.assertTrue(deleted.json()["deleted"])
+        remaining = self.client.get("/email/accounts", headers=headers).json()["accounts"]
+        self.assertEqual(1, len(remaining))
+
+    def test_add_account_requires_label_returns_400(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        _, session_token = self._create_user_with_permissions(admin["token"], admin["user_id"], "nolabeluser", ["email.read", "email.write"])
+        headers = {"X-Jarvis-Session": session_token}
+        response = self.client.post("/email/accounts", headers=headers, json={
+            "imap_host": "h", "imap_port": "1", "imap_username": "u", "imap_password": "p",
+            "smtp_host": "h", "smtp_port": "1", "smtp_username": "u", "smtp_password": "p",
+        })
+        self.assertEqual(400, response.status_code)
+
+    def test_update_unknown_account_returns_404(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        _, session_token = self._create_user_with_permissions(admin["token"], admin["user_id"], "unknownacctuser", ["email.read", "email.write"])
+        headers = {"X-Jarvis-Session": session_token}
+        response = self.client.put("/email/accounts/does-not-exist", headers=headers, json={
+            "label": "X",
+            "imap_host": "h", "imap_port": "1", "imap_username": "u", "imap_password": "p",
+            "smtp_host": "h", "smtp_port": "1", "smtp_username": "u", "smtp_password": "p",
+        })
+        self.assertEqual(404, response.status_code)
+
+    def test_legacy_credentials_routes_still_operate_on_default_account_after_second_account_added(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        _, session_token = self._create_user_with_permissions(admin["token"], admin["user_id"], "legacyroutesuser", ["email.read", "email.write"])
+        headers = {"X-Jarvis-Session": session_token}
+        self.client.put("/email/credentials", headers=headers, json={
+            "imap_host": "imap.example.com", "imap_port": "993", "imap_username": "u", "imap_password": "p",
+            "smtp_host": "smtp.example.com", "smtp_port": "587", "smtp_username": "u", "smtp_password": "p",
+        })
+        self.client.post("/email/accounts", headers=headers, json={
+            "label": "Second",
+            "imap_host": "h2", "imap_port": "1", "imap_username": "u2", "imap_password": "p2",
+            "smtp_host": "h2", "smtp_port": "1", "smtp_username": "u2", "smtp_password": "p2",
+        })
+        status = self.client.get("/email/credentials/status", headers=headers)
+        self.assertTrue(status.json()["status"]["configured"])
+        deleted = self.client.delete("/email/credentials", headers=headers)
+        self.assertTrue(deleted.json()["deleted"])
+        remaining = self.client.get("/email/accounts", headers=headers).json()["accounts"]
+        self.assertEqual(1, len(remaining))
+        self.assertEqual("Second", remaining[0]["label"])
 
 
 if __name__ == "__main__":

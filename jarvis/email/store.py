@@ -29,16 +29,26 @@ class EmailMessageStore:
             merged = {**self._empty(), **content}
             if not isinstance(merged.get("messages"), list):
                 merged["messages"] = []
-            return merged
         except (OSError, json.JSONDecodeError):
             return self._empty()
+        changed = False
+        for m in merged["messages"]:
+            if "account_id" not in m:
+                m["account_id"] = "default"
+                changed = True
+        if changed:
+            merged["updated_at"] = int(time.time())
+            self.path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        return merged
 
     def _save(self) -> None:
         self.data["updated_at"] = int(time.time())
         self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    def list_messages(self, user_id: str, folder: str | None = None, unread_only: bool = False) -> list[dict]:
+    def list_messages(self, user_id: str, folder: str | None = None, unread_only: bool = False, account_id: str | None = None) -> list[dict]:
         items = [dict(m) for m in self.data.get("messages", []) if m.get("user_id") == user_id]
+        if account_id is not None:
+            items = [m for m in items if m.get("account_id") == account_id]
         if folder:
             items = [m for m in items if m.get("folder") == folder]
         if unread_only:
@@ -52,13 +62,13 @@ class EmailMessageStore:
                 return dict(item)
         return None
 
-    def upsert_messages(self, user_id: str, folder: str, fetched: list[dict]) -> list[dict]:
+    def upsert_messages(self, user_id: str, folder: str, fetched: list[dict], account_id: str = "default") -> list[dict]:
         messages = self.data.setdefault("messages", [])
-        by_uid = {(m.get("user_id"), m.get("folder"), m.get("uid")): i for i, m in enumerate(messages)}
+        by_uid = {(m.get("user_id"), m.get("account_id"), m.get("folder"), m.get("uid")): i for i, m in enumerate(messages)}
         now = int(time.time())
         result = []
         for raw in fetched:
-            key = (user_id, folder, raw["uid"])
+            key = (user_id, account_id, folder, raw["uid"])
             if key in by_uid:
                 idx = by_uid[key]
                 messages[idx] = {**messages[idx], "subject": raw["subject"], "sender": raw["sender"], "date": raw["date"], "read": raw["read"], "synced_at": now}
@@ -67,6 +77,7 @@ class EmailMessageStore:
                 entry = {
                     "id": f"mail-{uuid.uuid4().hex[:12]}",
                     "user_id": user_id,
+                    "account_id": account_id,
                     "uid": raw["uid"],
                     "folder": folder,
                     "subject": raw["subject"],
@@ -116,16 +127,24 @@ class EmailDraftStore:
             merged = {**self._empty(), **content}
             if not isinstance(merged.get("drafts"), list):
                 merged["drafts"] = []
-            return merged
         except (OSError, json.JSONDecodeError):
             return self._empty()
+        changed = False
+        for d in merged["drafts"]:
+            if "account_id" not in d:
+                d["account_id"] = "default"
+                changed = True
+        if changed:
+            merged["updated_at"] = int(time.time())
+            self.path.write_text(json.dumps(merged, ensure_ascii=False, indent=2), encoding="utf-8")
+        return merged
 
     def _save(self) -> None:
         self.data["updated_at"] = int(time.time())
         self.path.write_text(json.dumps(self.data, ensure_ascii=False, indent=2), encoding="utf-8")
 
     def add_draft(self, draft: dict) -> dict:
-        draft = {**draft, "id": draft.get("id") or f"draft-{uuid.uuid4().hex[:12]}"}
+        draft = {"account_id": "default", **draft, "id": draft.get("id") or f"draft-{uuid.uuid4().hex[:12]}"}
         self.data.setdefault("drafts", []).append(draft)
         self._save()
         return draft
@@ -136,8 +155,10 @@ class EmailDraftStore:
                 return dict(item)
         return None
 
-    def list_drafts(self, user_id: str, status: str | None = None) -> list[dict]:
+    def list_drafts(self, user_id: str, status: str | None = None, account_id: str | None = None) -> list[dict]:
         items = [dict(d) for d in self.data.get("drafts", []) if d.get("user_id") == user_id]
+        if account_id is not None:
+            items = [d for d in items if d.get("account_id") == account_id]
         if status:
             items = [d for d in items if d.get("status") == status]
         items.sort(key=lambda d: d.get("created_at", 0), reverse=True)
