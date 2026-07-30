@@ -177,8 +177,23 @@ export function updateAdminPermissions(scope: "users" | "groups", target: string
   });
 }
 
+export type EffectivePermissionContext = {
+  role: string;
+  user_id: string | null;
+  role_permissions: string[];
+  user_permissions: string[];
+  group_ids: string[];
+  group_permissions: Record<string, string[]>;
+  effective_permissions: string[];
+};
+
+export type EffectivePermissionsResponse = {
+  user: AdminUser;
+  permissions: EffectivePermissionContext;
+};
+
 export function fetchEffectivePermissions(userId: string) {
-  return apiRequest<Record<string, unknown>>(`/admin/permissions/effective/${encodeURIComponent(userId)}`, { includeAdmin: true });
+  return apiRequest<EffectivePermissionsResponse>(`/admin/permissions/effective/${encodeURIComponent(userId)}`, { includeAdmin: true });
 }
 
 export type AdminSession = {

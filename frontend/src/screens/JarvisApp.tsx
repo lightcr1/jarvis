@@ -14,7 +14,7 @@ import { DocsScreen } from './DocsScreen';
 import { TasksScreen } from './TasksScreen';
 import { AmbientDisplayScreen } from './AmbientDisplayScreen';
 import { AppSwitcher } from '../shared/layout/AppSwitcher';
-import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill, savePreferences } from '../shared/api/client';
+import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill, savePreferences, fetchMe, setStoredCapabilities } from '../shared/api/client';
 import { useJarvisAlerts } from '../shared/api/alerts';
 import { useJarvisLiveStatus } from '../shared/api/status';
 import { useIntegrationStatus } from '../shared/api/integrationStatus';
@@ -300,6 +300,9 @@ export function JarvisApp() {
     applyCompact(prefs.compact_mode ?? false);
     if (getSessionToken()) {
       shouldShowOnboarding().then(show => { if (show) setShowOnboarding(true); }).catch(() => {});
+      // Refresh capabilities on load — a long-lived session's cached capabilities
+      // can otherwise miss permissions granted after login (e.g. billing.manage).
+      fetchMe().then(me => { if (me.capabilities) setStoredCapabilities(me.capabilities); }).catch(() => {});
     }
   }, []);
 

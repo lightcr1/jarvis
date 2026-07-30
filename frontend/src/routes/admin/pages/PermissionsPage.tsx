@@ -3,6 +3,7 @@ import {
   AdminGroup,
   AdminPermissionMap,
   AdminUser,
+  EffectivePermissionsResponse,
   fetchAdminGroups,
   fetchAdminPermissions,
   fetchAdminUsers,
@@ -44,7 +45,7 @@ export function PermissionsPage() {
   const [target, setTarget] = useState("");
   const [search, setSearch] = useState("");
   const [selected, setSelected] = useState<string[]>([]);
-  const [effective, setEffective] = useState<Record<string, unknown> | null>(null);
+  const [effective, setEffective] = useState<EffectivePermissionsResponse | null>(null);
   const [saving, setSaving] = useState(false);
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
@@ -150,7 +151,7 @@ export function PermissionsPage() {
   const platSelected = selected.filter(p => !p.startsWith(HA_PREFIX));
   const hasFullHa = FULL_HA_PERMISSIONS.every(p => selectedSet.has(p));
 
-  const effectivePerms = (effective?.permissions as string[] | undefined) || [];
+  const effectivePerms = effective?.permissions?.effective_permissions || [];
   const effectiveHa = effectivePerms.filter(p => p.startsWith(HA_PREFIX));
   const effectivePlat = effectivePerms.filter(p => !p.startsWith(HA_PREFIX));
 
@@ -373,7 +374,7 @@ export function PermissionsPage() {
               <div style={{ ...row, justifyContent: "space-between", marginBottom: 12 }}>
                 <div style={{ fontSize: 11, color: J.textMuted, textTransform: "uppercase", letterSpacing: "0.06em" }}>Effective permissions</div>
                 <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                  {typeof effective.source === "string" && <span style={{ fontSize: 10, color: J.textMuted, background: J.bg4, border: `1px solid ${J.border}`, borderRadius: 3, padding: "2px 6px" }}>{effective.source}</span>}
+                  {effective.permissions?.role && <span style={{ fontSize: 10, color: J.textMuted, background: J.bg4, border: `1px solid ${J.border}`, borderRadius: 3, padding: "2px 6px" }}>{effective.permissions.role}</span>}
                   <span style={{ fontSize: 11, color: J.textMuted }}>{effectivePerms.length} total</span>
                   <button onClick={() => setEffective(null)} style={{ padding: "2px 8px", fontSize: 10, borderRadius: 3, cursor: "pointer", background: "transparent", color: J.textMuted, border: `1px solid ${J.border}` }}>×</button>
                 </div>

@@ -148,6 +148,10 @@ export function getStoredCapabilities(): UserCapabilities {
   }
 }
 
+export function setStoredCapabilities(capabilities: UserCapabilities): void {
+  localStorage.setItem(STORAGE_KEYS.capabilities, JSON.stringify(capabilities));
+}
+
 export function setStoredIdentity(sessionToken: string, user: UserProfile, preferences: UserPreferences, capabilities?: UserCapabilities): void {
   localStorage.setItem(STORAGE_KEYS.sessionToken, sessionToken);
   localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(user));
