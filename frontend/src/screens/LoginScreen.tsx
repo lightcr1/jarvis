@@ -53,7 +53,7 @@ export function LoginScreen({ onLogin, onGuest }: { onLogin: () => void; onGuest
     setState('loading');
     try {
       const result = await login(username, password);
-      setStoredIdentity(result.session_token, result.user, result.preferences || {});
+      setStoredIdentity(result.session_token, result.user, result.preferences || {}, result.capabilities);
       setState('success');
       setTimeout(onLogin, 500);
     } catch (err) {
@@ -90,7 +90,7 @@ export function LoginScreen({ onLogin, onGuest }: { onLogin: () => void; onGuest
     setState('loading');
     try {
       const result = await verifySignup(pendingEmail, code.trim());
-      setStoredIdentity(result.session_token, result.user, result.preferences || {});
+      setStoredIdentity(result.session_token, result.user, result.preferences || {}, result.capabilities);
       setState('success');
       setTimeout(onLogin, 500);
     } catch (err) {

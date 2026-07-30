@@ -16,6 +16,7 @@ from .rate_limiter import _rate
 from .ai_clients import build_system_prompt
 from .user_preferences_store import is_within_quiet_hours, time_of_day_bucket
 from .ai_router import AIRouter
+from .plan_service import ensure_monthly_grant
 from .secret_crypto import SecretEncryptionUnavailable
 from .api_models import (
     AdminLoginIn,
@@ -132,22 +133,17 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
             credit_store=deps.get("credit_store") and current("credit_store"),
             user_limits_store=deps.get("user_limits_store") and current("user_limits_store"),
             admin_settings_store=deps.get("admin_settings_store") and current("admin_settings_store"),
+            plan_store=deps.get("plan_store") and current("plan_store"),
             build_context_reply=build_context_reply,
             rate_limiter=_rate,
         )
 
     def auth_capabilities(user_id: str, role: str) -> dict[str, bool]:
         effective_permissions = set(resolve_effective_permissions(role, user_id, current("membership_store"), current("permission_store")))
-        first_admin_user_id = None
-        for listed_user in current("user_store").list_users():
-            if listed_user.get("role") == "admin":
-                first_admin_user_id = listed_user.get("id")
-                break
-        home_assistant_access = bool(
-            "home_assistant.access" in effective_permissions
-            or (first_admin_user_id and user_id == first_admin_user_id)
-        )
-        return {"home_assistant_access": home_assistant_access}
+        return {
+            "home_assistant_access": "home_assistant.access" in effective_permissions,
+            "alerts_manage": "alerts.manage" in effective_permissions,
+        }
 
     def _get_llm_history(session_id: str, owner_key: str, limit: int = 20) -> list[dict]:
         """Return last `limit` messages from session as OpenAI-format dicts, excluding the just-appended user message."""
@@ -394,15 +390,41 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
     @router.get("/auth/me/billing")
     def auth_me_billing(x_jarvis_session: str | None = Header(default=None)):
         session = require_identity_session(x_jarvis_session)
-        user_id = session["user"]["id"]
+        user = session["user"]
+        user_id = user["id"]
+        ensure_monthly_grant(
+            user_id,
+            plan_store=current("plan_store"),
+            user_limits_store=current("user_limits_store"),
+            credit_store=current("credit_store"),
+        )
         balance_chf = current("credit_store").get_balance(user_id)
         limits = current("user_limits_store").get(user_id)
         recent_usage = current("usage_log_store").recent(user_id=user_id, limit=10)
+
+        plan = current("plan_store").get_plan(limits.get("plan_id") or "")
+        try:
+            quota = current("file_service").quota_status(user_id=user_id, role=user.get("role"))
+        except Exception:
+            quota = {"used_bytes": 0, "quota_bytes": 0}
+        overage_rate = float((current("admin_settings_store").get().get("files") or {}).get("overage_price_chf_per_gb_month") or 0)
+        used_gb = quota["used_bytes"] / (1024 ** 3)
+        quota_gb = quota["quota_bytes"] / (1024 ** 3)
+        storage_overage_chf = round(max(0.0, used_gb - quota_gb) * overage_rate, 2)
+
         return {
             "user_id": user_id,
             "balance_chf": balance_chf,
             "limits": limits,
             "recent_usage": recent_usage,
+            "plan": plan,
+            "plans": current("plan_store").list_plans(),
+            "storage": {
+                "used_bytes": quota["used_bytes"],
+                "quota_bytes": quota["quota_bytes"],
+                "overage_price_chf_per_gb_month": overage_rate,
+                "estimated_overage_chf": storage_overage_chf,
+            },
         }
 
     @router.post("/admin/session")

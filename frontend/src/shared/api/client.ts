@@ -7,6 +7,7 @@ export type UserProfile = {
 
 export type UserCapabilities = {
   home_assistant_access?: boolean;
+  alerts_manage?: boolean;
 };
 
 export type UserPreferences = {
@@ -51,6 +52,7 @@ const STORAGE_KEYS = {
   sessionToken: "jarvis_user_session",
   user: "jarvis_user_profile",
   prefs: "jarvis_user_prefs",
+  capabilities: "jarvis_user_capabilities",
   guestKey: "jarvis_guest_key",
   guestMode: "jarvis_guest_mode",
   adminToken: "jarvis_admin_token",
@@ -135,16 +137,28 @@ export function setStoredPreferences(preferences: UserPreferences): void {
   }));
 }
 
-export function setStoredIdentity(sessionToken: string, user: UserProfile, preferences: UserPreferences): void {
+export function getStoredCapabilities(): UserCapabilities {
+  const raw = localStorage.getItem(STORAGE_KEYS.capabilities);
+  if (!raw) return {};
+  try {
+    return JSON.parse(raw) as UserCapabilities;
+  } catch {
+    return {};
+  }
+}
+
+export function setStoredIdentity(sessionToken: string, user: UserProfile, preferences: UserPreferences, capabilities?: UserCapabilities): void {
   localStorage.setItem(STORAGE_KEYS.sessionToken, sessionToken);
   localStorage.setItem(STORAGE_KEYS.user, JSON.stringify(user));
   setStoredPreferences(preferences || {});
+  if (capabilities) localStorage.setItem(STORAGE_KEYS.capabilities, JSON.stringify(capabilities));
 }
 
 export function clearStoredIdentity(): void {
   localStorage.removeItem(STORAGE_KEYS.sessionToken);
   localStorage.removeItem(STORAGE_KEYS.user);
   localStorage.removeItem(STORAGE_KEYS.prefs);
+  localStorage.removeItem(STORAGE_KEYS.capabilities);
   clearAdminToken();
   clearGuestMode();
 }

@@ -15,6 +15,10 @@ import { getStoredPreferences, setStoredPreferences, savePreferences, getStoredU
 import { markBriefingSeen } from '../shared/api/alerts';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
+function lastSessionKey(): string {
+  return `jarvis_last_session_${getStoredUser()?.id ?? 'guest'}`;
+}
+
 export function serializeChatToMarkdown(title: string, messages: Array<{ role: string; content: string; time: string }>): string {
   const date = new Date().toLocaleDateString('en-CA');
   const header = `# JARVIS Chat — ${title}\n*Exported ${date}*\n\n---\n\n`;
@@ -364,8 +368,27 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
 
   useEffect(() => {
     if (!isGuestMode()) {
+      const lastId = localStorage.getItem(lastSessionKey());
       listChatSessions()
-        .then(data => setGroups(groupSessions(data.sessions)))
+        .then(data => {
+          setGroups(groupSessions(data.sessions));
+          if (!lastId) return;
+          const item = data.sessions.find(s => s.id === lastId);
+          if (!item) { localStorage.removeItem(lastSessionKey()); return; }
+          getChatSession(lastId)
+            .then(session => {
+              setSessionId(lastId);
+              setActive(item.title);
+              const loaded: Msg[] = session.session.messages.map((m, i) => ({
+                id: m.ts * 1000 + i,
+                role: m.role === 'user' ? 'user' : 'jarvis',
+                content: m.text,
+                time: new Date(m.ts * 1000).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' }),
+              }));
+              setMsgs(prev => [...prev, ...loaded]);
+            })
+            .catch(() => localStorage.removeItem(lastSessionKey()));
+        })
         .catch(() => {});
 
       const today = new Date().toISOString().slice(0, 10);
@@ -386,6 +409,12 @@ export function ChatScreen({ onNavigate }: { onNavigate: (screen: string) => voi
     const prefill = consumePendingChatPrefill();
     if (prefill) { pendingPrefillRef.current = prefill; }
   }, []);
+
+  useEffect(() => {
+    if (isGuestMode()) return;
+    if (sessionId) localStorage.setItem(lastSessionKey(), sessionId);
+    else localStorage.removeItem(lastSessionKey());
+  }, [sessionId]);
 
   useEffect(() => {
     if (endRef.current) {

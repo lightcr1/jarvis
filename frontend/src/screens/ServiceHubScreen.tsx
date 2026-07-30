@@ -12,7 +12,6 @@ const SERVICES = [
   { id: 'ha',      name: 'Home Assistant', desc: 'Smart home device control & automations',  status: 'configured', cat: 'Integrations',   screen: 'home',    note: 'Needs JARVIS_HA_BASE_URL' },
   { id: 'proxmox', name: 'Proxmox',        desc: 'VM and LXC container management',          status: 'configured', cat: 'Integrations',   screen: 'proxmox', note: 'Needs Proxmox hosts configured' },
   { id: 'github',  name: 'GitHub RAG',     desc: 'Repository knowledge indexing',            status: 'configured', cat: 'Knowledge',                         note: 'Needs JARVIS_GITHUB_TOKEN' },
-  { id: 'wikijs',  name: 'WikiJS RAG',     desc: 'Wiki page knowledge indexing',             status: 'configured', cat: 'Knowledge',                         note: 'Needs JARVIS_WIKIJS_URL' },
 ] as const;
 
 const CATS = ['All', 'Core', 'Integrations', 'Knowledge'];
@@ -171,7 +170,7 @@ export function ServiceHubScreen({ onNavigate }: { onNavigate: (screen: string) 
   const [cat, setCat]             = useState('All');
   const [showAdd, setShowAdd]     = useState(false);
   const integrationStatus = useIntegrationStatus();
-  const [liveStatus, setLiveStatus] = useState<LiveStatusMap>({ github: 'checking', wikijs: 'checking' });
+  const [liveStatus, setLiveStatus] = useState<LiveStatusMap>({ github: 'checking' });
   const [healthInfo, setHealthInfo] = useState<HealthInfo>({});
 
   useEffect(() => {
@@ -181,7 +180,6 @@ export function ServiceHubScreen({ onNavigate }: { onNavigate: (screen: string) 
     ]).then(([rag, health]) => {
       setLiveStatus({
         github: rag.status === 'fulfilled' ? 'online' : 'offline',
-        wikijs: rag.status === 'fulfilled' ? 'online' : 'offline',
       });
       if (health.status === 'fulfilled') setHealthInfo(health.value);
     });

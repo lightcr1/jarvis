@@ -24,12 +24,12 @@ export type HomeAssistantOverview = {
     configured: boolean;
     base_url: string;
     mode: string;
-    healthy: boolean;
     calendar_provider?: string;
     calendar_write_enabled?: boolean;
     inbox_provider?: string;
     inbox_write_enabled?: boolean;
   };
+  reachable: boolean | null;
   security?: {
     confirmation_ttl_sec: number;
     remote_control_requires_capability: boolean;
@@ -140,6 +140,7 @@ export type HomeAssistantControlRequest = {
 export type HomeAssistantHealth = {
   policy: HomeAssistantOverview["policy"];
   integration: HomeAssistantOverview["integration"];
+  reachable: boolean | null;
   health: {
     managed_entities: number;
     unavailable_entities: number;

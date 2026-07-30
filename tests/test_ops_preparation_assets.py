@@ -15,7 +15,6 @@ class OpsPreparationAssetsTests(unittest.TestCase):
         self.assertIn("/var/lib/jarvis-dev/", dev)
         self.assertIn("/var/lib/jarvis-test/", test)
         self.assertIn("/var/lib/jarvis/", prod)
-        self.assertIn("JARVIS_WIKIJS_ENABLED=0", prod)
 
     def test_benchmark_script_writes_report(self):
         with tempfile.TemporaryDirectory() as td:
@@ -52,7 +51,7 @@ class OpsPreparationAssetsTests(unittest.TestCase):
         self.assertIn("One-Command Deploy Validation", content)
         self.assertIn("Lower-End Hardware Performance Check", content)
         self.assertIn("Failure Recovery Execution", content)
-        self.assertIn("WikiJS V1 Scope Confirmation", content)
+        self.assertIn("WikiJS Removal Confirmation", content)
 
 
 if __name__ == "__main__":

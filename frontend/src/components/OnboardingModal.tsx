@@ -22,7 +22,7 @@ export async function shouldShowOnboarding(): Promise<boolean> {
   try {
     const [serverRes, haRes] = await Promise.allSettled([
       fetch('/health').then(r => { if (!r.ok) throw new Error(); }),
-      fetchHomeAssistantHealth().then(h => { if (!h.integration.healthy) throw new Error(); }),
+      fetchHomeAssistantHealth().then(h => { if (!h.reachable) throw new Error(); }),
     ]);
     const prefs = getStoredPreferences();
     const allOk = serverRes.status === 'fulfilled' && haRes.status === 'fulfilled' && !!prefs.tts_voice;
@@ -253,7 +253,7 @@ function HaStep() {
     setStatus('checking');
     fetchHomeAssistantHealth()
       .then(h => {
-        if (h.integration.healthy) {
+        if (h.reachable) {
           setInfo({ entities: h.health.managed_entities });
           setStatus('ok');
         } else if (h.integration.configured) {

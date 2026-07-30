@@ -2,21 +2,19 @@
 
 This file lists the remaining non-human roadmap tasks that must be executed by a user on real infrastructure or target hardware. The repo now contains the scripts, templates, and local automation needed to perform them.
 
-## 1. WikiJS V1 Scope Confirmation
+## 1. WikiJS Removal Confirmation
 
 What to decide:
-- Confirm that WikiJS is not part of the V1 critical path.
-- If keeping that scope, leave `JARVIS_WIKIJS_ENABLED=0` in the active environment file.
+- WikiJS RAG has been fully removed from the codebase (no `WIKIJS_*` env vars, no wiki-page chat intents, no RAG source) — GitHub grounding is now the only RAG source.
 
 How to do it:
 1. Open [ROADMAP_V1.md](/home/jarvis/jarvis/docs/v1/planning/ROADMAP_V1.md).
 2. Confirm the product decision that GitHub grounding is sufficient for V1 launch.
-3. In the active environment config, keep `JARVIS_WIKIJS_ENABLED=0`.
-4. Mark `WikiJS removed from V1 critical path` complete in [EXECUTION_CHECKLIST_V1.md](/home/jarvis/jarvis/docs/v1/planning/EXECUTION_CHECKLIST_V1.md).
+3. Mark `WikiJS removed from V1 critical path` complete in [EXECUTION_CHECKLIST_V1.md](/home/jarvis/jarvis/docs/v1/planning/EXECUTION_CHECKLIST_V1.md).
 
 Evidence to keep:
-- The final deployed `config.env`.
-- A dated note or commit confirming the scope decision.
+- The final deployed `config.env` (no `WIKIJS_*` variables present).
+- A dated note or commit confirming the removal.
 
 ## 2. One-Command Deploy Validation
 

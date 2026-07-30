@@ -180,8 +180,8 @@ export function AmbientDisplayScreen({ onExit }: { onExit: () => void }) {
             {overview ? (
               <div style={{ fontSize: 13, color: J.textSec, display: 'flex', flexDirection: 'column', gap: 3 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ color: overview.integration.healthy ? J.success : J.textMuted, display: 'flex' }}><IconActivity size={12} /></span>
-                  Home Assistant {overview.integration.healthy ? 'online' : 'offline'}
+                  <span style={{ color: overview.reachable ? J.success : J.textMuted, display: 'flex' }}><IconActivity size={12} /></span>
+                  Home Assistant {overview.reachable ? 'online' : 'offline'}
                 </div>
                 <div>{overview.counts.managed_entities} devices · {overview.counts.control_requests} pending</div>
               </div>

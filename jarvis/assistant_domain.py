@@ -3025,20 +3025,12 @@ def rag_query_from_prompt(text: str) -> dict | None:
     raw = (text or "").strip()
     lowered = raw.lower()
 
-    wiki_match = re.search(r"(?:wiki\s*seite|wiki\s*page)\s+([a-zA-Z0-9_\-./ ]+)", lowered)
-    if wiki_match:
-        title = wiki_match.group(1).strip(" .,!?:;\"'“”„").strip()
-        return {"query": title or raw, "source": "wikijs", "title": title, "mode": "page"}
-
-    if any(tok in lowered for tok in ["taskliste", "tasks", "aufgaben", "to do", "todo", "budgetplan", "budget"]):
-        return {"query": "tasks", "source": "wikijs", "title": "", "mode": "tasks"}
-
     gh_match = re.search(r"(?:github|repo|repository)\s+([a-zA-Z0-9_\-./ ]+)", lowered)
     if gh_match:
         topic = gh_match.group(1).strip(" .,!?:;\"'“”„").strip()
         return {"query": topic or raw, "source": "github", "title": "", "mode": "repo"}
 
-    if any(tok in lowered for tok in ["wiki", "wikijs", "github", "repository", "repo", "rag"]):
+    if any(tok in lowered for tok in ["github", "repository", "repo", "rag"]):
         return {"query": raw, "source": "", "title": "", "mode": "generic"}
 
     return None
@@ -3062,18 +3054,8 @@ def select_rag_hits(intent: dict, *, rag_store, limit: int = 3) -> list[dict]:
 
 
 def format_rag_reply(intent: dict, hits: list[dict]) -> str:
-    mode = intent.get("mode") or "generic"
     if not hits:
         return "Understood. I found no matching RAG entries."
-
-    if mode == "tasks":
-        lines = []
-        for index, hit in enumerate(hits[:5], start=1):
-            title = hit.get("title") or "task"
-            text = (hit.get("text") or "").strip()
-            snippet = text[:110] + ("…" if len(text) > 110 else "")
-            lines.append(f"{index}. {title} — {snippet}" if snippet else f"{index}. {title}")
-        return "Understood. Current tasks from wiki:\n" + "\n".join(lines)
 
     top = hits[0]
     snippet = (top.get("text") or "").strip()

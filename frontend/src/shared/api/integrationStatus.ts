@@ -9,7 +9,7 @@ export type IntegrationStatusMap = {
 };
 
 type ProxmoxHealth = { configured: boolean; hosts: Array<{ healthy: boolean }> };
-type HomeAssistantHealth = { integration: { configured: boolean } };
+type HomeAssistantHealth = { integration: { configured: boolean }; reachable: boolean | null };
 
 export function useIntegrationStatus(): IntegrationStatusMap {
   const [status, setStatus] = useState<IntegrationStatusMap>({ proxmox: "checking", ha: "checking" });
@@ -31,7 +31,8 @@ export function useIntegrationStatus(): IntegrationStatusMap {
 
       let haStatus: IntegrationStatus = "offline";
       if (ha.status === "fulfilled") {
-        haStatus = ha.value.integration?.configured ? "connected" : "not_configured";
+        const data = ha.value;
+        haStatus = !data.integration?.configured ? "not_configured" : data.reachable ? "connected" : "offline";
       }
 
       setStatus({ proxmox, ha: haStatus });

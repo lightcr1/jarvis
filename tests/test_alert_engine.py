@@ -568,6 +568,178 @@ class TestAlertsRestEndpoints(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# Self-service /alerts/rules tests (alerts.manage permission, own-rule scoping)
+# ---------------------------------------------------------------------------
+
+_OWN_SESSIONS = {
+    "admin-session": {"user": {"id": "usr-admin", "role": "admin"}},
+    "user-a-session": {"user": {"id": "usr-a", "role": "standard_user"}},
+    "user-b-session": {"user": {"id": "usr-b", "role": "standard_user"}},
+    "user-noperm-session": {"user": {"id": "usr-noperm", "role": "standard_user"}},
+}
+_OWN_PERMISSIONS = {
+    "usr-admin": {"alerts.manage"},
+    "usr-a": {"alerts.manage"},
+    "usr-b": {"alerts.manage"},
+    "usr-noperm": set(),
+}
+
+
+def _make_own_deps(store: AlertRulesStore, engine: AlertEngine, audit: _FakeAudit):
+    def require_identity_session(token):
+        if token in _OWN_SESSIONS:
+            return _OWN_SESSIONS[token]
+        raise Exception("unauthorized")
+
+    def resolve_effective_permissions(role, user_id, membership_store, permission_store):
+        return set(_OWN_PERMISSIONS.get(user_id, set()))
+
+    return {
+        "require_admin_access": lambda *a, **kw: ("usr-admin", "admin"),
+        "require_identity_session": require_identity_session,
+        "resolve_effective_permissions": resolve_effective_permissions,
+        "membership_store": None,
+        "permission_store": None,
+        "home_assistant_service": _FakeHAService(),
+        "alert_rules_store": store,
+        "alert_engine": engine,
+        "audit_admin_event": audit,
+    }
+
+
+class TestOwnAlertRulesRestEndpoints(unittest.TestCase):
+    def setUp(self):
+        import os, tempfile
+        self._tmp = tempfile.mktemp(suffix=".json")
+        os.environ["JARVIS_ALERT_RULES_PATH"] = self._tmp
+        self._store = AlertRulesStore()
+        self._audit = _FakeAudit()
+        self._engine = AlertEngine(rules_store=self._store, audit_admin_event=self._audit)
+        app = FastAPI()
+        app.include_router(build_alerts_router(_make_own_deps(self._store, self._engine, self._audit)))
+        self._client = TestClient(app, raise_server_exceptions=False)
+
+    def tearDown(self):
+        import os
+        os.environ.pop("JARVIS_ALERT_RULES_PATH", None)
+        try:
+            os.unlink(self._tmp)
+        except OSError:
+            pass
+
+    def _rule_payload(self, name="My rule"):
+        return {
+            "name": name,
+            "metric": "cpu",
+            "condition": "above",
+            "threshold": 80.0,
+            "duration_seconds": 0,
+            "severity": "warning",
+            "cooldown_seconds": 300,
+        }
+
+    def test_list_requires_session(self):
+        resp = self._client.get("/alerts/rules")
+        assert resp.status_code in (401, 403, 500)
+
+    def test_denied_without_alerts_manage_permission(self):
+        resp = self._client.get("/alerts/rules", headers={"X-Jarvis-Session": "user-noperm-session"})
+        assert resp.status_code == 403
+
+    def test_create_and_list_own_rule(self):
+        created = self._client.post(
+            "/alerts/rules", json=self._rule_payload(), headers={"X-Jarvis-Session": "user-a-session"}
+        )
+        assert created.status_code == 201
+        rule = created.json()["rule"]
+        assert rule["owner_user_id"] == "usr-a"
+
+        listed = self._client.get("/alerts/rules", headers={"X-Jarvis-Session": "user-a-session"})
+        assert listed.status_code == 200
+        ids = [r["id"] for r in listed.json()["rules"]]
+        assert rule["id"] in ids
+        # Default system rules (owner_user_id=None) must not leak into a user's own list.
+        assert "default-cpu-warning" not in ids
+
+    def test_user_cannot_see_or_modify_another_users_rule(self):
+        created = self._client.post(
+            "/alerts/rules", json=self._rule_payload(), headers={"X-Jarvis-Session": "user-a-session"}
+        ).json()["rule"]
+
+        other_list = self._client.get("/alerts/rules", headers={"X-Jarvis-Session": "user-b-session"})
+        assert created["id"] not in [r["id"] for r in other_list.json()["rules"]]
+
+        denied_update = self._client.patch(
+            f"/alerts/rules/{created['id']}", json={"threshold": 50.0}, headers={"X-Jarvis-Session": "user-b-session"}
+        )
+        assert denied_update.status_code == 404
+
+        denied_delete = self._client.delete(
+            f"/alerts/rules/{created['id']}", headers={"X-Jarvis-Session": "user-b-session"}
+        )
+        assert denied_delete.status_code == 404
+
+        denied_test = self._client.post(
+            f"/alerts/rules/{created['id']}/test", headers={"X-Jarvis-Session": "user-b-session"}
+        )
+        assert denied_test.status_code == 404
+
+    def test_owner_can_update_and_delete_own_rule(self):
+        created = self._client.post(
+            "/alerts/rules", json=self._rule_payload(), headers={"X-Jarvis-Session": "user-a-session"}
+        ).json()["rule"]
+
+        updated = self._client.patch(
+            f"/alerts/rules/{created['id']}", json={"threshold": 55.0}, headers={"X-Jarvis-Session": "user-a-session"}
+        )
+        assert updated.status_code == 200
+        assert updated.json()["rule"]["threshold"] == 55.0
+
+        tested = self._client.post(
+            f"/alerts/rules/{created['id']}/test", headers={"X-Jarvis-Session": "user-a-session"}
+        )
+        assert tested.status_code == 200
+
+        deleted = self._client.delete(
+            f"/alerts/rules/{created['id']}", headers={"X-Jarvis-Session": "user-a-session"}
+        )
+        assert deleted.status_code == 200
+
+    def test_admin_own_rule_does_not_leak_into_other_users_list(self):
+        admin_rule = self._client.post(
+            "/alerts/rules", json=self._rule_payload("Admin personal rule"), headers={"X-Jarvis-Session": "admin-session"}
+        ).json()["rule"]
+        assert admin_rule["owner_user_id"] == "usr-admin"
+
+        user_list = self._client.get("/alerts/rules", headers={"X-Jarvis-Session": "user-a-session"})
+        assert admin_rule["id"] not in [r["id"] for r in user_list.json()["rules"]]
+
+    def test_admin_dashboard_listing_still_sees_all_rules_including_user_owned(self):
+        own_rule = self._client.post(
+            "/alerts/rules", json=self._rule_payload(), headers={"X-Jarvis-Session": "user-a-session"}
+        ).json()["rule"]
+
+        admin_list = self._client.get("/admin/alerts/rules", headers=_ADMIN_HDR)
+        assert admin_list.status_code == 200
+        ids = [r["id"] for r in admin_list.json()["rules"]]
+        assert own_rule["id"] in ids
+        assert "default-cpu-warning" in ids
+
+    def test_own_history_scoped_to_owner(self):
+        own_rule = self._client.post(
+            "/alerts/rules", json=self._rule_payload(), headers={"X-Jarvis-Session": "user-a-session"}
+        ).json()["rule"]
+        self._client.post(f"/alerts/rules/{own_rule['id']}/test", headers={"X-Jarvis-Session": "user-a-session"})
+        self._client.post("/admin/alerts/rules/default-cpu-warning/test", headers=_ADMIN_HDR)
+
+        own_history = self._client.get("/alerts/history", headers={"X-Jarvis-Session": "user-a-session"})
+        assert own_history.status_code == 200
+        rule_ids = [a["rule_id"] for a in own_history.json()["alerts"]]
+        assert own_rule["id"] in rule_ids
+        assert "default-cpu-warning" not in rule_ids
+
+
+# ---------------------------------------------------------------------------
 # Pluggable signal source tests (Phase 0 refactor)
 # ---------------------------------------------------------------------------
 

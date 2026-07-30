@@ -5,6 +5,9 @@ import os
 from pathlib import Path
 from urllib import error, request
 
+HA_CREDENTIAL_OWNER = "system"
+HA_CREDENTIAL_INTEGRATION = "home_assistant"
+
 
 class HomeAssistantClient:
     def __init__(self) -> None:
@@ -23,18 +26,32 @@ class HomeAssistantClient:
         self.inbox_file = (os.getenv("JARVIS_HOME_ASSISTANT_INBOX_FILE") or "").strip()
         self.inbox_seed = (os.getenv("JARVIS_HOME_ASSISTANT_INBOX_SEED") or "").strip()
 
+    def apply_credentials(self, base_url: str, api_token: str) -> None:
+        self.base_url = (base_url or "").strip()
+        self.api_token = (api_token or "").strip()
+
     def config_summary(self) -> dict[str, object]:
         configured = bool(self.base_url and self.api_token)
         return {
             "configured": configured,
             "base_url": self.base_url,
             "mode": "external_home_assistant",
-            "healthy": configured,
             "calendar_provider": "http" if self.calendar_url else ("file" if self.calendar_file else ("seed" if self.calendar_seed else "scaffold")),
             "calendar_write_enabled": bool(self.calendar_write_url),
             "inbox_provider": "http" if self.inbox_url else ("file" if self.inbox_file else ("seed" if self.inbox_seed else "scaffold")),
             "inbox_write_enabled": bool(self.inbox_write_url),
         }
+
+    def check_connection(self) -> bool:
+        if not (self.base_url and self.api_token):
+            return False
+        url = f"{self.base_url.rstrip('/')}/api/"
+        req = request.Request(url, headers={"Authorization": f"Bearer {self.api_token}"}, method="GET")
+        try:
+            with request.urlopen(req, timeout=3) as response:
+                return 200 <= response.status < 300
+        except (error.URLError, TimeoutError, ValueError, OSError):
+            return False
 
     def _load_seed_list(self, raw: str) -> list[dict[str, object]]:
         if not raw:

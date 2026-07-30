@@ -158,6 +158,18 @@ class HomeAssistantService:
             for item in (os.getenv("JARVIS_HOME_ASSISTANT_REMOTE_ALLOWED_CIDRS") or "").split(",")
             if item.strip()
         )
+        self._connection_cache: tuple[float, bool] | None = None
+        self._connection_cache_ttl_sec = 30
+
+    def _connection_healthy(self) -> bool:
+        if not self.client.config_summary().get("configured"):
+            return False
+        now = time.time()
+        if self._connection_cache and now - self._connection_cache[0] < self._connection_cache_ttl_sec:
+            return self._connection_cache[1]
+        healthy = self.client.check_connection()
+        self._connection_cache = (now, healthy)
+        return healthy
 
     def _write_audit(self, event: str, *, actor_user_id: str | None, actor_role: str | None, payload: dict | None = None) -> None:
         if not self.audit_log:
@@ -181,19 +193,18 @@ class HomeAssistantService:
     def policy_snapshot(self, *, user_id: str | None, role: str | None) -> dict[str, object]:
         normalized_role = self.normalize_role(role)
         effective = sorted(self.resolve_effective_permissions(normalized_role, user_id, self.membership_store, self.permission_store))
-        first_admin_user_id = self.first_admin_user_id()
 
         access_granted = False
         access_reason = "missing_explicit_capability"
-        if user_id and first_admin_user_id and user_id == first_admin_user_id:
+        if normalized_role == "admin":
             access_granted = True
-            access_reason = "first_global_admin"
+            access_reason = "admin_role"
         elif "home_assistant.access" in set(effective):
             access_granted = True
             access_reason = "explicit_permission"
 
         return {
-            "first_admin_user_id": first_admin_user_id,
+            "first_admin_user_id": self.first_admin_user_id(),
             "role": normalized_role,
             "effective_permissions": effective,
             "access_granted": access_granted,
@@ -215,7 +226,7 @@ class HomeAssistantService:
         effective = set(policy["effective_permissions"])
         if not policy["access_granted"]:
             raise HomeAssistantAccessError("home assistant access requires explicit permission")
-        if required_permission and required_permission not in effective and policy["access_reason"] != "first_global_admin":
+        if required_permission and required_permission not in effective:
             raise HomeAssistantAccessError(f"missing permission: {required_permission}")
         return policy
 
@@ -445,8 +456,8 @@ class HomeAssistantService:
             }
         )
         alerts = []
-        if not self.client.config_summary().get("configured"):
-            alerts.append({"level": "warning", "code": "ha_not_configured", "message": "Home Assistant backend is not configured yet."})
+        if self.client.config_summary().get("configured") and not self._connection_healthy():
+            alerts.append({"level": "warning", "code": "ha_unreachable", "message": "Home Assistant is configured but currently unreachable."})
         unavailable = [item for item in entities if item.get("available") is False]
         if unavailable:
             alerts.append({"level": "warning", "code": "entities_unavailable", "message": f"{len(unavailable)} managed entit(y/ies) currently unavailable."})
@@ -462,9 +473,11 @@ class HomeAssistantService:
                     "message": f"{provider_write_counts['deferred']} provider write(s) are deferred and can be retried from recovery playbooks.",
                 }
             )
+        integration_configured = self.client.config_summary().get("configured", False)
         return {
             "policy": policy,
             "integration": self.client.config_summary(),
+            "reachable": self._connection_healthy() if integration_configured else None,
             "security": self.security_posture(user_id=user_id, role=role)["security"],
             "store": self.store.get_config(),
             "counts": {
@@ -632,16 +645,18 @@ class HomeAssistantService:
         unavailable = [item for item in entities if item.get("available") is False]
         pending = [item for item in requests if item.get("status") == "pending_confirmation"]
         provider_write_counts = self._provider_write_status_counts()
+        configured = self.client.config_summary().get("configured", False)
         return {
             "policy": policy,
             "integration": self.client.config_summary(),
+            "reachable": self._connection_healthy() if configured else None,
             "health": {
                 "managed_entities": len(entities),
                 "unavailable_entities": len(unavailable),
                 "pending_confirmations": len(pending),
                 "automation_rules": len(automations),
                 "deferred_provider_writes": provider_write_counts["deferred"],
-                "configured": self.client.config_summary().get("configured", False),
+                "configured": configured,
             },
             "alerts": {
                 "unavailable_entities": unavailable,
@@ -652,10 +667,7 @@ class HomeAssistantService:
     def list_recovery_playbooks(self, *, user_id: str | None, role: str | None) -> dict[str, object]:
         policy = self.require_access(user_id=user_id, role=role)
         effective = set(policy["effective_permissions"])
-        if policy["access_reason"] == "first_global_admin":
-            items = list(RECOVERY_PLAYBOOKS)
-        else:
-            items = [item for item in RECOVERY_PLAYBOOKS if item["required_permission"] in effective]
+        items = [item for item in RECOVERY_PLAYBOOKS if item["required_permission"] in effective]
         return {"policy": policy, "playbooks": items}
 
     def execute_recovery_playbook(self, playbook_id: str, *, user_id: str | None, role: str | None) -> dict[str, object]:

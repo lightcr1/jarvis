@@ -12,6 +12,14 @@ from dataclasses import dataclass
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
+from .router_dependencies import LiveRef
+
+
+PROXMOX_PERMISSIONS: tuple[str, ...] = (
+    "proxmox.access",
+    "proxmox.manage",
+)
+
 
 @dataclass(frozen=True)
 class ProxmoxHost:
@@ -235,16 +243,29 @@ def _as_out(host: ProxmoxHost) -> ProxmoxHostOut:
     )
 
 
-def build_router(require_token):
+def build_router(deps: dict) -> APIRouter:
     router = APIRouter(prefix="/proxmox", tags=["proxmox"])
 
+    def current(name: str):
+        value = deps[name]
+        return value.get() if isinstance(value, LiveRef) else value
+
+    def require_permission(x_jarvis_session: str | None, permission: str) -> dict:
+        session = current("require_identity_session")(x_jarvis_session)
+        user = session["user"]
+        effective = current("resolve_effective_permissions")(user["role"], user["id"], current("membership_store"), current("permission_store"))
+        if permission not in effective:
+            raise HTTPException(403, f"missing permission: {permission}")
+        return session
+
     @router.get("/hosts", response_model=list[ProxmoxHostOut])
-    def list_hosts():
+    def list_hosts(x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.access")
         return [_as_out(h) for h in _read_hosts()]
 
     @router.post("/hosts", response_model=ProxmoxHostOut)
-    def add_host(payload: ProxmoxHostIn, authorization: str | None = Header(default=None)):
-        require_token(authorization)
+    def add_host(payload: ProxmoxHostIn, x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.manage")
         hosts = _read_hosts()
         host = ProxmoxHost(
             id=uuid.uuid4().hex,
@@ -262,47 +283,55 @@ def build_router(require_token):
         return _as_out(host)
 
     @router.delete("/hosts/{host_id}")
-    def delete_host(host_id: str, authorization: str | None = Header(default=None)):
-        require_token(authorization)
+    def delete_host(host_id: str, x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.manage")
         hosts = [h for h in _read_hosts() if h.id != host_id]
         _write_hosts(hosts)
         return {"ok": True}
 
     @router.get("/hosts/{host_id}/version")
-    def proxmox_version(host_id: str):
+    def proxmox_version(host_id: str, x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.access")
         host = _get_host(host_id)
         return _request_json(host, "/api2/json/version")
 
     @router.get("/hosts/{host_id}/nodes")
-    def proxmox_nodes(host_id: str):
+    def proxmox_nodes(host_id: str, x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.access")
         host = _get_host(host_id)
         return _request_json(host, "/api2/json/nodes")
 
     @router.get("/hosts/{host_id}/nodes/{node}/vms")
-    def proxmox_vms(host_id: str, node: str):
+    def proxmox_vms(host_id: str, node: str, x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.access")
         host = _get_host(host_id)
         return _request_json(host, f"/api2/json/nodes/{node}/qemu")
 
     @router.get("/hosts/{host_id}/nodes/{node}/containers")
-    def proxmox_containers(host_id: str, node: str):
+    def proxmox_containers(host_id: str, node: str, x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.access")
         host = _get_host(host_id)
         return _request_json(host, f"/api2/json/nodes/{node}/lxc")
 
     @router.get("/hosts/{host_id}/nodes/{node}/storage")
-    def proxmox_storage(host_id: str, node: str):
+    def proxmox_storage(host_id: str, node: str, x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.access")
         host = _get_host(host_id)
         return _request_json(host, f"/api2/json/nodes/{node}/storage")
 
     @router.get("/hosts/{host_id}/nodes/{node}/vms/{vmid}/status")
-    def proxmox_vm_status_endpoint(host_id: str, node: str, vmid: str):
+    def proxmox_vm_status_endpoint(host_id: str, node: str, vmid: str, x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.access")
         return proxmox_vm_status(host_id, node, vmid)
 
     @router.get("/hosts/{host_id}/nodes/{node}/containers/{vmid}/status")
-    def proxmox_lxc_status_endpoint(host_id: str, node: str, vmid: str):
+    def proxmox_lxc_status_endpoint(host_id: str, node: str, vmid: str, x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.access")
         return proxmox_lxc_status(host_id, node, vmid)
 
     @router.get("/health")
-    def proxmox_health_endpoint():
+    def proxmox_health_endpoint(x_jarvis_session: str | None = Header(default=None)):
+        require_permission(x_jarvis_session, "proxmox.access")
         return proxmox_health()
 
     return router

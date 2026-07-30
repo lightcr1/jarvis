@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Iterator
 
 from .model_router import Tier, classify_complexity, select_model, max_tokens_for
+from .plan_service import ensure_monthly_grant
 
 _ENV_KEYS: dict[str, str] = {
     "openrouter": "OPENROUTER_API_KEY",
@@ -79,6 +80,7 @@ class AIRouter:
         credit_store=None,
         user_limits_store=None,
         admin_settings_store=None,
+        plan_store=None,
         build_context_reply=None,
         provider_factory=None,    # dict[str, AIProvider] or callable(name, api_key) → AIProvider
         rate_limiter=None,        # jarvis.rate_limiter.RateLimiter instance
@@ -88,6 +90,7 @@ class AIRouter:
         self._credits = credit_store
         self._limits = user_limits_store
         self._settings = admin_settings_store
+        self._plans = plan_store
         self._fallback = build_context_reply or (lambda t: "Standing by.")
         self._provider_factory = provider_factory
         self._rate = rate_limiter
@@ -169,6 +172,12 @@ class AIRouter:
         threshold = float(ps.get("expensive_threshold_chf") or 0.10)
         if ps.get("disable_expensive_models") and decision.estimated_cost_chf > threshold:
             return _block("expensive_models_disabled")
+
+        if user_id and self._plans and self._limits and self._credits:
+            try:
+                ensure_monthly_grant(user_id, plan_store=self._plans, user_limits_store=self._limits, credit_store=self._credits)
+            except Exception:
+                pass
 
         now = int(time.time())
         limits = self._limits.get(user_id) if (user_id and self._limits) else {}

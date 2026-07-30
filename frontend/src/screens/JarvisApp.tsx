@@ -271,6 +271,14 @@ export function JarvisApp() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const prevAlertCount = useRef(0);
 
+  const setScreenAndUrl = (s: Screen) => {
+    setScreen(s);
+    const url = new URL(window.location.href);
+    if (s === 'login') url.searchParams.delete('screen');
+    else url.searchParams.set('screen', s);
+    window.history.replaceState(null, '', url.toString());
+  };
+
   const nav = guest ? NAV_GUEST : NAV_ALL.filter(item => {
     if (item.id === 'home') return integrationStatus.ha === 'connected';
     if (item.id === 'proxmox') return integrationStatus.proxmox === 'online' || integrationStatus.proxmox === 'offline';
@@ -309,7 +317,7 @@ export function JarvisApp() {
   useEffect(() => {
     const handleSessionExpired = () => {
       clearGuestMode();
-      setScreen('login');
+      setScreenAndUrl('login');
     };
     window.addEventListener('jarvis:session-expired', handleSessionExpired);
     return () => window.removeEventListener('jarvis:session-expired', handleSessionExpired);
@@ -340,7 +348,7 @@ export function JarvisApp() {
     if (prefs.theme) applyTheme(prefs.theme);
     if (prefs.accent_color) applyAccent(prefs.accent_color);
     applyCompact(prefs.compact_mode ?? false);
-    setScreen('chat');
+    setScreenAndUrl('chat');
     localStorage.setItem(GREETING_KEY, String(Date.now()));
     setShowGreeting(true);
     shouldShowOnboarding().then(show => { if (show) setShowOnboarding(true); }).catch(() => {});
@@ -348,7 +356,7 @@ export function JarvisApp() {
 
   const handleGuestLogin = () => {
     setGuestMode();
-    setScreen('chat');
+    setScreenAndUrl('chat');
     localStorage.setItem(GREETING_KEY, String(Date.now()));
     setShowGreeting(true);
   };
@@ -356,7 +364,7 @@ export function JarvisApp() {
   const handleLogout = () => {
     clearStoredIdentity();
     clearGuestMode();
-    setScreen('login');
+    setScreenAndUrl('login');
   };
 
   const navigate = (s: string) => {
@@ -364,7 +372,7 @@ export function JarvisApp() {
     if (!valid.includes(s as Screen)) return;
     const guestAllowed: Screen[] = ['chat', 'docs', 'settings', 'login'];
     if (guest && !guestAllowed.includes(s as Screen)) return;
-    setScreen(s as Screen);
+    setScreenAndUrl(s as Screen);
     setUnreadCount(0);
   };
 
@@ -386,7 +394,7 @@ export function JarvisApp() {
   }, [alerts, dismissAlert, notificationsEnabled]);
 
   if (screen === 'login') return <LoginScreen onLogin={handleLogin} onGuest={handleGuestLogin} />;
-  if (screen === 'ambient') return <AmbientDisplayScreen onExit={() => setScreen('chat')} />;
+  if (screen === 'ambient') return <AmbientDisplayScreen onExit={() => setScreenAndUrl('chat')} />;
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -397,7 +405,7 @@ export function JarvisApp() {
       <ToastContainer />
       <NavRail current={screen} onNav={navigate as (s: Screen) => void} onLogout={handleLogout} nav={nav} isGuest={guest} unreadCount={notificationsEnabled ? unreadCount : 0} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', paddingBottom: mobilePad ? 60 : 0, position: 'relative' }}>
-        {screen !== 'chat' && screen !== 'orb' && (
+        {!['chat', 'orb', 'home', 'proxmox', 'services', 'tasks'].includes(screen) && (
           <div style={{ position: 'absolute', top: 10, right: 14, zIndex: 30, display: 'flex', alignItems: 'center', gap: 7, background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 999, padding: '6px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
             <StatusBadge status={liveStatus.state === 'idle' ? 'local' : liveStatus.state === 'processing' ? 'running' : liveStatus.state === 'recording' ? 'active' : 'online'} size="xs" />
             <span style={{ fontSize: 11, color: J.textSec, textTransform: 'capitalize' }}>{liveStatus.state}</span>

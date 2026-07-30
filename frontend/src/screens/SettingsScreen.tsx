@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey, IconBell, IconBook, Toggle, Row, Sel } from './jarvis-shared';
-import { getStoredPreferences, setStoredPreferences, getSessionToken, getStoredUser, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
+import { getStoredPreferences, setStoredPreferences, getSessionToken, getStoredUser, getStoredCapabilities, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
 import { synthesizeSpeech } from '../shared/api/chat';
 import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
 import { fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, type BillingInfo, type ByokKey } from '../shared/api/billing';
@@ -8,6 +8,7 @@ import { OverlayDialog } from '../shared/ui/OverlayDialog';
 import { getPushSubscriptionStatus, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../shared/api/push';
 import { useIntegrationStatus } from '../shared/api/integrationStatus';
 import { AppearancePanel } from '../shared/ui/AppearancePanel';
+import { fetchOwnAlertRules, createOwnAlertRule, updateOwnAlertRule, deleteOwnAlertRule, testOwnAlertRule, type AlertRule } from '../shared/api/alerts';
 
 type IntegrationState = 'checking' | 'online' | 'offline' | 'unconfigured';
 
@@ -17,6 +18,7 @@ const CATS = [
   { id: 'appearance',   label: 'Appearance',   icon: <IconActivity size={13} /> },
   { id: 'chat',         label: 'Chat',         icon: <IconChat size={13} /> },
   { id: 'notifications',label: 'Notifications',icon: <IconBell size={13} /> },
+  { id: 'alerts',       label: 'Alerts',       icon: <IconBell size={13} /> },
   { id: 'briefing',     label: 'Briefing',     icon: <IconBook size={13} /> },
   { id: 'voice',        label: 'Voice',        icon: <IconMic size={13} /> },
   { id: 'memory',       label: 'Memory',       icon: <IconMemory size={13} /> },
@@ -264,6 +266,193 @@ function MemoryPanel() {
   );
 }
 
+const ALERT_METRICS = [
+  { v: 'cpu', l: 'CPU usage' },
+  { v: 'ram', l: 'RAM usage' },
+  { v: 'disk', l: 'Disk usage' },
+  { v: 'ha_health', l: 'Home Assistant health' },
+  { v: 'ha_entity', l: 'Home Assistant entity' },
+];
+const ALERT_CONDITIONS = [
+  { v: 'above', l: 'is above' },
+  { v: 'below', l: 'is below' },
+  { v: 'equals', l: 'equals' },
+  { v: 'contains', l: 'contains' },
+];
+const ALERT_SEVERITIES = [
+  { v: 'info', l: 'Info' },
+  { v: 'warning', l: 'Warning' },
+  { v: 'critical', l: 'Critical' },
+];
+
+function AlertsPanel() {
+  const [rules, setRules] = useState<AlertRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<string>('');
+  const [form, setForm] = useState({ name: '', metric: 'cpu', condition: 'above', threshold: '80', severity: 'warning', ha_entity_id: '' });
+  const isLoggedIn = !!getSessionToken();
+
+  const reload = () => {
+    if (!isLoggedIn) { setLoading(false); return; }
+    setLoading(true);
+    fetchOwnAlertRules()
+      .then(res => setRules(res.rules))
+      .catch(() => setError('Failed to load alert rules.'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { reload(); }, []);
+
+  const handleCreate = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      const created = await createOwnAlertRule({
+        name: form.name.trim(),
+        enabled: true,
+        metric: form.metric as AlertRule['metric'],
+        condition: form.condition as AlertRule['condition'],
+        threshold: Number.isNaN(Number(form.threshold)) ? form.threshold : Number(form.threshold),
+        duration_seconds: 0,
+        severity: form.severity as AlertRule['severity'],
+        cooldown_seconds: 300,
+        ha_entity_id: form.metric === 'ha_entity' ? (form.ha_entity_id.trim() || null) : null,
+        ha_attribute: null,
+        message_template: 'Alert: {metric} is {value} (threshold: {threshold})',
+      });
+      setRules(prev => [...prev, created.rule]);
+      setForm({ name: '', metric: 'cpu', condition: 'above', threshold: '80', severity: 'warning', ha_entity_id: '' });
+      setShowCreate(false);
+    } catch {
+      setError('Failed to create rule.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggle = async (rule: AlertRule) => {
+    try {
+      const updated = await updateOwnAlertRule(rule.id, { enabled: !rule.enabled });
+      setRules(prev => prev.map(r => r.id === rule.id ? updated.rule : r));
+    } catch {
+      setError('Failed to update rule.');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteOwnAlertRule(id);
+      setRules(prev => prev.filter(r => r.id !== id));
+    } catch {
+      setError('Failed to delete rule.');
+    }
+  };
+
+  const handleTest = async (id: string) => {
+    setTestingId(id);
+    setTestResult('');
+    try {
+      const res = await testOwnAlertRule(id);
+      setTestResult(res.event.message);
+    } catch {
+      setError('Failed to test rule.');
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  if (!isLoggedIn) {
+    return <div style={{ padding: '16px 0', fontSize: 13, color: J.textMuted }}>Alerts require a logged-in account.</div>;
+  }
+
+  return (
+    <>
+      {error && (
+        <div style={{ background: J.errorDim, border: `1px solid ${J.error}`, borderRadius: 7, padding: '8px 12px', fontSize: 12, color: J.error, marginBottom: 12 }}
+          onClick={() => setError('')}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ padding: '4px 0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 12, color: J.textMuted }}>
+          {loading ? 'Loading…' : `${rules.length} personal rule${rules.length !== 1 ? 's' : ''}`}
+        </span>
+        <button onClick={() => setShowCreate(v => !v)}
+          style={{ background: J.amberDim, border: `1px solid ${J.borderAccent}`, color: J.amber, borderRadius: 6, padding: '5px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
+          {showCreate ? 'Cancel' : '+ New rule'}
+        </button>
+      </div>
+
+      {showCreate && (
+        <div style={{ padding: '13px', marginBottom: 14, background: J.bg3, border: `1px solid ${J.border}`, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <input className="j-input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+            placeholder="Rule name, e.g. Front door left open"
+            style={{ borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Sel value={form.metric} onChange={v => setForm({ ...form, metric: v })} options={ALERT_METRICS} />
+            <Sel value={form.condition} onChange={v => setForm({ ...form, condition: v })} options={ALERT_CONDITIONS} />
+            <input className="j-input" value={form.threshold} onChange={e => setForm({ ...form, threshold: e.target.value })}
+              placeholder="Threshold" style={{ width: 100, borderRadius: 7, padding: '6px 10px', fontSize: 13 }} />
+            <Sel value={form.severity} onChange={v => setForm({ ...form, severity: v })} options={ALERT_SEVERITIES} />
+          </div>
+          {form.metric === 'ha_entity' && (
+            <input className="j-input" value={form.ha_entity_id} onChange={e => setForm({ ...form, ha_entity_id: e.target.value })}
+              placeholder="Entity ID, e.g. binary_sensor.front_door"
+              style={{ borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+          )}
+          <button onClick={() => void handleCreate()} disabled={saving || !form.name.trim()}
+            style={{ alignSelf: 'flex-start', background: J.amber, color: J.bg0, border: 'none', borderRadius: 7, padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: saving || !form.name.trim() ? 'not-allowed' : 'pointer', opacity: saving || !form.name.trim() ? 0.6 : 1 }}>
+            {saving ? 'Saving…' : 'Save rule'}
+          </button>
+        </div>
+      )}
+
+      {testResult && (
+        <div style={{ background: J.bg3, border: `1px solid ${J.border}`, borderRadius: 7, padding: '8px 12px', fontSize: 12, color: J.textSec, marginBottom: 12 }}>
+          Test fired: {testResult}
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ fontSize: 12, color: J.textMuted }}>Loading…</div>
+      ) : rules.length === 0 ? (
+        <div style={{ fontSize: 12, color: J.textMuted }}>No personal alert rules yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {rules.map(rule => (
+            <div key={rule.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: J.bg3, borderRadius: 8, padding: '9px 12px', border: `1px solid ${J.border}` }}>
+              <Toggle on={rule.enabled} onChange={() => void handleToggle(rule)} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: J.text, fontWeight: 500 }}>{rule.name}</div>
+                <div style={{ fontSize: 11, color: J.textMuted }}>
+                  {rule.metric} {rule.condition} {rule.threshold}
+                  {rule.ha_entity_id ? ` (${rule.ha_entity_id})` : ''} · {rule.severity}
+                </div>
+              </div>
+              <button onClick={() => void handleTest(rule.id)} disabled={testingId === rule.id}
+                style={{ background: 'none', border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>
+                {testingId === rule.id ? '…' : 'Test'}
+              </button>
+              <button onClick={() => void handleDelete(rule.id)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: J.textMuted, fontSize: 16, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}
+                onMouseEnter={e => { e.currentTarget.style.color = J.error; }}
+                onMouseLeave={e => { e.currentTarget.style.color = J.textMuted; }}>
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function SecurityPanel() {
   const [cur, setCur] = useState('');
   const [next, setNext] = useState('');
@@ -393,6 +582,40 @@ function AIBillingPanel() {
         </div>
       )}
 
+      {/* Plan */}
+      <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
+        <div style={{ fontSize: 14, color: J.text, marginBottom: 4 }}>Plan</div>
+        {billing?.plan ? (
+          <div style={{ fontSize: 13, color: J.textSec }}>
+            <span style={{ color: J.text, fontWeight: 600 }}>{billing.plan.name}</span>
+            {' — CHF '}{billing.plan.price_chf_per_month.toFixed(2)}/month
+            {' · '}CHF {billing.plan.ai_credit_chf_monthly.toFixed(2)} AI credit/month
+            {' · '}{billing.plan.storage_gb_included} GB storage
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: J.textMuted }}>No plan assigned. Contact your admin to subscribe.</div>
+        )}
+        {billing && (
+          <div style={{ marginTop: 8, fontSize: 12, color: J.textMuted }}>
+            Storage: {(billing.storage.used_bytes / (1024 ** 3)).toFixed(2)} GB / {(billing.storage.quota_bytes / (1024 ** 3)).toFixed(0)} GB
+            {billing.storage.estimated_overage_chf > 0 && (
+              <span style={{ color: J.warn }}> · est. CHF {billing.storage.estimated_overage_chf.toFixed(2)}/month overage</span>
+            )}
+          </div>
+        )}
+        {billing && billing.plans.length > 0 && (
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 11, color: J.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Available plans</div>
+            {billing.plans.map(p => (
+              <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', background: p.id === billing.plan?.id ? J.amberDim : J.bg3, border: `1px solid ${p.id === billing.plan?.id ? J.borderAccent : J.border}`, borderRadius: 7, fontSize: 12 }}>
+                <span style={{ color: J.text, fontWeight: 500 }}>{p.name}</span>
+                <span style={{ color: J.textMuted }}>CHF {p.price_chf_per_month.toFixed(2)}/mo · {p.ai_credit_chf_monthly.toFixed(2)} CHF AI · {p.storage_gb_included} GB</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {/* Balance */}
       <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
         <div style={{ fontSize: 14, color: J.text, marginBottom: 4 }}>Balance</div>
@@ -498,7 +721,10 @@ function AIBillingPanel() {
 export function SettingsScreen() {
   useJ();
   const isGuest = isGuestMode();
-  const availableCats = isGuest ? CATS.filter(c => c.id === 'appearance') : CATS;
+  const hasAlertsManage = Boolean(getStoredCapabilities().alerts_manage);
+  const availableCats = isGuest
+    ? CATS.filter(c => c.id === 'appearance')
+    : CATS.filter(c => c.id !== 'alerts' || hasAlertsManage);
   const [cat, setCat] = useState('appearance');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -801,17 +1027,18 @@ export function SettingsScreen() {
 
     memory: (<MemoryPanel />),
 
+    alerts: (<AlertsPanel />),
+
     billing: (<AIBillingPanel />),
 
     integrations: (<>
-      <Integration name="Proxmox" status={integrationStatus.proxmox === 'not_configured' ? 'not configured' : integrationStatus.proxmox} note="Via JARVIS_PROXMOX_HOST env var" icon={<IconSettings size={14} />} />
-      <Integration name="Home Assistant" status={integrationStatus.ha === 'not_configured' ? 'not configured' : integrationStatus.ha} note="Via JARVIS_HA_BASE_URL env var" icon={<IconSettings size={14} />} />
-      <Integration name="RAG / Knowledge" status={intStatus.rag === 'checking' ? 'checking' : intStatus.rag === 'online' ? 'active' : 'offline'} note="GitHub repos + WikiJS indexing" icon={<IconCode size={14} />} />
+      <Integration name="Proxmox" status={integrationStatus.proxmox === 'not_configured' ? 'not configured' : integrationStatus.proxmox} note="Manage hosts in the Proxmox screen" icon={<IconSettings size={14} />} />
+      <Integration name="Home Assistant" status={integrationStatus.ha === 'not_configured' ? 'not configured' : integrationStatus.ha} note="Configurable by an admin under Dashboard → Integrations" icon={<IconSettings size={14} />} />
+      <Integration name="RAG / Knowledge" status={intStatus.rag === 'checking' ? 'checking' : intStatus.rag === 'online' ? 'active' : 'offline'} note="GitHub repo indexing" icon={<IconCode size={14} />} />
       {isAdmin && (
         <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
-          Integrations are configured via environment variables on the server. Use the{' '}
-          <a href="/dashboard/settings" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>{' '}
-          to view current configuration.
+          Proxmox hosts are configured directly in the Proxmox screen. Home Assistant credentials and other server-level settings live in the{' '}
+          <a href="/dashboard/integrations" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>.
         </div>
       )}
     </>),

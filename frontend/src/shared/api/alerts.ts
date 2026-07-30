@@ -12,6 +12,7 @@ export type JarvisAlert = {
 
 export type AlertRule = {
   id: string;
+  owner_user_id?: string | null;
   name: string;
   enabled: boolean;
   metric: "cpu" | "ram" | "disk" | "ha_health" | "ha_entity";
@@ -25,7 +26,7 @@ export type AlertRule = {
   message_template: string;
 };
 
-export type AlertRuleCreate = Omit<AlertRule, "id">;
+export type AlertRuleCreate = Omit<AlertRule, "id" | "owner_user_id">;
 export type AlertRuleUpdate = Partial<AlertRuleCreate>;
 
 export type AlertEvent = {
@@ -202,5 +203,39 @@ export function testAlertRule(ruleId: string) {
 export function fetchAlertHistory(limit = 100) {
   return apiRequest<{ alerts: AlertEvent[] }>(`/admin/alerts/history?limit=${limit}`, {
     includeAdmin: true,
+  });
+}
+
+export function fetchOwnAlertRules() {
+  return apiRequest<{ rules: AlertRule[] }>("/alerts/rules", { includeUser: true });
+}
+
+export function createOwnAlertRule(body: AlertRuleCreate) {
+  return apiRequest<{ rule: AlertRule }>("/alerts/rules", {
+    method: "POST",
+    includeUser: true,
+    body,
+  });
+}
+
+export function updateOwnAlertRule(ruleId: string, body: AlertRuleUpdate) {
+  return apiRequest<{ rule: AlertRule }>(`/alerts/rules/${encodeURIComponent(ruleId)}`, {
+    method: "PATCH",
+    includeUser: true,
+    body,
+  });
+}
+
+export function deleteOwnAlertRule(ruleId: string) {
+  return apiRequest<{ ok: boolean; id: string }>(`/alerts/rules/${encodeURIComponent(ruleId)}`, {
+    method: "DELETE",
+    includeUser: true,
+  });
+}
+
+export function testOwnAlertRule(ruleId: string) {
+  return apiRequest<{ ok: boolean; event: AlertEvent }>(`/alerts/rules/${encodeURIComponent(ruleId)}/test`, {
+    method: "POST",
+    includeUser: true,
   });
 }

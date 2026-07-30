@@ -1,10 +1,30 @@
 import { apiRequest } from "./client";
 
+export type Plan = {
+  id: string;
+  name: string;
+  price_chf_per_month: number;
+  ai_credit_chf_monthly: number;
+  storage_gb_included: number;
+  sort_order: number;
+};
+
+export type PlanCreate = Omit<Plan, "id">;
+export type PlanUpdate = Partial<PlanCreate>;
+
 export type BillingInfo = {
   user_id: string;
   balance_chf: number;
   limits: Record<string, unknown>;
   recent_usage: unknown[];
+  plan: Plan | null;
+  plans: Plan[];
+  storage: {
+    used_bytes: number;
+    quota_bytes: number;
+    overage_price_chf_per_gb_month: number;
+    estimated_overage_chf: number;
+  };
 };
 
 export type ByokKey = {
@@ -83,6 +103,37 @@ export function updateUserLimits(
     method: "PUT",
     includeAdmin: true,
     body: limits,
+  });
+}
+
+export function fetchAdminPlans(): Promise<{ plans: Plan[] }> {
+  return apiRequest<{ plans: Plan[] }>("/admin/plans", { includeAdmin: true });
+}
+
+export function createAdminPlan(body: PlanCreate): Promise<{ plan: Plan }> {
+  return apiRequest<{ plan: Plan }>("/admin/plans", { method: "POST", includeAdmin: true, body });
+}
+
+export function updateAdminPlan(planId: string, body: PlanUpdate): Promise<{ plan: Plan }> {
+  return apiRequest<{ plan: Plan }>(`/admin/plans/${encodeURIComponent(planId)}`, {
+    method: "PATCH",
+    includeAdmin: true,
+    body,
+  });
+}
+
+export function deleteAdminPlan(planId: string): Promise<{ ok: boolean; id: string }> {
+  return apiRequest<{ ok: boolean; id: string }>(`/admin/plans/${encodeURIComponent(planId)}`, {
+    method: "DELETE",
+    includeAdmin: true,
+  });
+}
+
+export function assignUserPlan(userId: string, planId: string): Promise<Record<string, unknown>> {
+  return apiRequest<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/plan`, {
+    method: "PUT",
+    includeAdmin: true,
+    body: { plan_id: planId },
   });
 }
 
