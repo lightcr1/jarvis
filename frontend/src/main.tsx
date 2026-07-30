@@ -25,6 +25,7 @@ import { PermissionsPage } from "./routes/admin/pages/PermissionsPage";
 import { PoliciesPage } from "./routes/admin/pages/PoliciesPage";
 import { StatusPage } from "./routes/admin/pages/StatusPage";
 import { ProviderSettingsPage } from "./routes/admin/pages/ProviderSettingsPage";
+import { BillingPage } from "./routes/admin/pages/BillingPage";
 import { UsagePage } from "./routes/admin/pages/UsagePage";
 import { AdminDocsPage } from "./routes/admin/pages/AdminDocsPage";
 import { IntegrationsPage } from "./routes/admin/pages/IntegrationsPage";
@@ -49,6 +50,7 @@ const router = createBrowserRouter([
       { path: "logs",             element: <LogsPage /> },
       { path: "settings",         element: <SettingsPage /> },
       { path: "provider",         element: <ProviderSettingsPage /> },
+      { path: "billing",          element: <BillingPage /> },
       { path: "usage",            element: <UsagePage /> },
       { path: "docs",             element: <AdminDocsPage /> },
       { path: "integrations",     element: <IntegrationsPage /> },

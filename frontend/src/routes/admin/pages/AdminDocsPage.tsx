@@ -142,6 +142,7 @@ export function AdminDocsPage() {
                 rows={[
                   ["Overview",        "/dashboard",           "Summary stats — users, sessions, recent events"],
                   ["AI Provider",     "/dashboard/provider",  "Provider config, model prices, kill switch, budgets"],
+                  ["Billing",         "/dashboard/billing",   "Subscription plans, Stripe price IDs, storage overage pricing"],
                   ["Usage",           "/dashboard/usage",     "Token/cost charts, per-user breakdown, credit top-up"],
                   ["Users",           "/dashboard/users",     "Create/edit users, set roles, assign limits"],
                   ["Groups",          "/dashboard/groups",    "Group membership — permissions inherit from groups"],
