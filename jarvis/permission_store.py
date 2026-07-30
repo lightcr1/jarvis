@@ -11,6 +11,7 @@ from .email.permissions import EMAIL_PERMISSIONS
 from .workspace.permissions import WORKSPACE_PERMISSIONS
 from .files.permissions import FILES_PERMISSIONS
 from .proxmox_module import PROXMOX_PERMISSIONS
+from .billing.permissions import BILLING_PERMISSIONS
 
 
 KNOWN_PERMISSIONS = {
@@ -39,6 +40,7 @@ KNOWN_PERMISSIONS.update(EMAIL_PERMISSIONS)
 KNOWN_PERMISSIONS.update(WORKSPACE_PERMISSIONS)
 KNOWN_PERMISSIONS.update(FILES_PERMISSIONS)
 KNOWN_PERMISSIONS.update(PROXMOX_PERMISSIONS)
+KNOWN_PERMISSIONS.update(BILLING_PERMISSIONS)
 
 
 class PermissionStore:

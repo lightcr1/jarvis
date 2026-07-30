@@ -210,6 +210,7 @@ class PlanCreate(BaseModel):
     ai_credit_chf_monthly: float = Field(default=0.0, ge=0)
     storage_gb_included: float = Field(default=0.0, ge=0)
     sort_order: int = 0
+    stripe_price_id: str = ""
 
 
 class PlanUpdate(BaseModel):
@@ -218,6 +219,7 @@ class PlanUpdate(BaseModel):
     ai_credit_chf_monthly: float | None = Field(default=None, ge=0)
     storage_gb_included: float | None = Field(default=None, ge=0)
     sort_order: int | None = None
+    stripe_price_id: str | None = None
 
 
 class UserPlanAssign(BaseModel):

@@ -8,6 +8,7 @@ export type UserProfile = {
 export type UserCapabilities = {
   home_assistant_access?: boolean;
   alerts_manage?: boolean;
+  billing_manage?: boolean;
 };
 
 export type UserPreferences = {

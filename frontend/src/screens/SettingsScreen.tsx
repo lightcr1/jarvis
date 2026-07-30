@@ -3,7 +3,11 @@ import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettin
 import { getStoredPreferences, setStoredPreferences, getSessionToken, getStoredUser, getStoredCapabilities, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
 import { synthesizeSpeech } from '../shared/api/chat';
 import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
-import { fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, type BillingInfo, type ByokKey } from '../shared/api/billing';
+import {
+  fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, createCheckoutSession,
+  fetchStripeStatus, setStripeCredentials, clearStripeCredentials, testStripeConnection,
+  type BillingInfo, type ByokKey, type StripeStatus,
+} from '../shared/api/billing';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 import { getPushSubscriptionStatus, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../shared/api/push';
 import { useIntegrationStatus } from '../shared/api/integrationStatus';
@@ -23,6 +27,7 @@ const CATS = [
   { id: 'voice',        label: 'Voice',        icon: <IconMic size={13} /> },
   { id: 'memory',       label: 'Memory',       icon: <IconMemory size={13} /> },
   { id: 'billing',      label: 'AI & Billing', icon: <IconKey size={13} /> },
+  { id: 'payments',     label: 'Payments',     icon: <IconCheck size={13} /> },
   { id: 'integrations', label: 'Integrations', icon: <IconGrid size={13} /> },
   { id: 'security',     label: 'Security',     icon: <IconShield size={13} /> },
   { id: 'developer',    label: 'Developer',    icon: <IconCode size={13} /> },
@@ -553,6 +558,20 @@ function AIBillingPanel() {
     }
   };
 
+  const [subscribing, setSubscribing] = useState<string | null>(null);
+  const handleSubscribe = async (planId: string) => {
+    setSubscribing(planId);
+    try {
+      const res = await createCheckoutSession(planId);
+      if (res.checkout_url) window.location.href = res.checkout_url;
+      else setError('Checkout is not available for this plan.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start checkout.');
+    } finally {
+      setSubscribing(null);
+    }
+  };
+
   const handleDeleteKey = async (provider: string) => {
     setSaving(p => ({ ...p, [provider]: true }));
     try {
@@ -606,12 +625,23 @@ function AIBillingPanel() {
         {billing && billing.plans.length > 0 && (
           <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
             <div style={{ fontSize: 11, color: J.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Available plans</div>
-            {billing.plans.map(p => (
-              <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', background: p.id === billing.plan?.id ? J.amberDim : J.bg3, border: `1px solid ${p.id === billing.plan?.id ? J.borderAccent : J.border}`, borderRadius: 7, fontSize: 12 }}>
-                <span style={{ color: J.text, fontWeight: 500 }}>{p.name}</span>
-                <span style={{ color: J.textMuted }}>CHF {p.price_chf_per_month.toFixed(2)}/mo · {p.ai_credit_chf_monthly.toFixed(2)} CHF AI · {p.storage_gb_included} GB</span>
-              </div>
-            ))}
+            {billing.plans.map(p => {
+              const isCurrent = p.id === billing.plan?.id;
+              return (
+                <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', background: isCurrent ? J.amberDim : J.bg3, border: `1px solid ${isCurrent ? J.borderAccent : J.border}`, borderRadius: 7, fontSize: 12, gap: 10 }}>
+                  <div>
+                    <span style={{ color: J.text, fontWeight: 500 }}>{p.name}</span>
+                    <span style={{ color: J.textMuted }}> — CHF {p.price_chf_per_month.toFixed(2)}/mo · {p.ai_credit_chf_monthly.toFixed(2)} CHF AI · {p.storage_gb_included} GB</span>
+                  </div>
+                  {!isCurrent && p.stripe_price_id && (
+                    <button onClick={() => void handleSubscribe(p.id)} disabled={subscribing === p.id}
+                      style={{ flexShrink: 0, padding: '4px 12px', fontSize: 11, fontWeight: 600, borderRadius: 5, cursor: 'pointer', background: J.amber, color: J.bg0, border: 'none' }}>
+                      {subscribing === p.id ? '…' : 'Subscribe'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
           </div>
         )}
       </div>
@@ -718,13 +748,125 @@ function AIBillingPanel() {
   );
 }
 
+function PaymentsPanel() {
+  const J = useJ();
+  const [status, setStatus] = useState<StripeStatus | null>(null);
+  const [secretKey, setSecretKey] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [showGuide, setShowGuide] = useState(false);
+
+  const load = () => { fetchStripeStatus().then(setStatus).catch(() => setMsg('Failed to load Stripe status.')); };
+  useEffect(load, []);
+
+  const save = async () => {
+    if (!secretKey.trim() || !webhookSecret.trim()) return;
+    setBusy(true);
+    setMsg('');
+    try {
+      await setStripeCredentials(secretKey.trim(), webhookSecret.trim());
+      setSecretKey('');
+      setWebhookSecret('');
+      load();
+      setMsg('Stripe credentials saved.');
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Failed to save Stripe credentials.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    setBusy(true);
+    try {
+      await clearStripeCredentials();
+      load();
+      setMsg('Stripe credentials cleared.');
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Failed to clear Stripe credentials.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    setTesting(true);
+    setMsg('');
+    try {
+      const res = await testStripeConnection();
+      setMsg(res.ok ? 'Connection OK — the key works.' : 'Connection failed — check the secret key.');
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Connection test failed.');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <>
+      <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
+        <div style={{ fontSize: 14, color: J.text, marginBottom: 4 }}>Stripe connection</div>
+        <div style={{ fontSize: 12, color: status?.configured ? J.success : J.textMuted, marginBottom: 10 }}>
+          {status?.configured ? `Configured — key ${status.secret_key_hint}${status.has_webhook_secret ? ', webhook secret set' : ', webhook secret missing'}` : 'Not configured — subscriptions are unavailable until this is set up.'}
+        </div>
+        {msg && <div style={{ fontSize: 12, color: J.textSec, marginBottom: 10 }}>{msg}</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 420 }}>
+          <input className="j-input" type="password" placeholder="Secret key (sk_live_... or sk_test_...)" value={secretKey}
+            onChange={e => setSecretKey(e.target.value)} style={{ borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+          <input className="j-input" type="password" placeholder="Webhook signing secret (whsec_...)" value={webhookSecret}
+            onChange={e => setWebhookSecret(e.target.value)} style={{ borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <button onClick={() => void save()} disabled={busy || !secretKey.trim() || !webhookSecret.trim()} className="j-btn"
+            style={{ background: J.amber, color: J.bg0, borderRadius: 7, padding: '7px 16px', fontSize: 13, fontWeight: 600 }}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button onClick={() => void test()} disabled={testing || !status?.configured} className="j-btn"
+            style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 7, padding: '7px 16px', fontSize: 13 }}>
+            {testing ? 'Testing…' : 'Test connection'}
+          </button>
+          {status?.configured && (
+            <button onClick={() => void clear()} disabled={busy} className="j-btn"
+              style={{ background: 'none', border: `1px solid ${J.error}`, color: J.error, borderRadius: 7, padding: '7px 16px', fontSize: 13 }}>
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ padding: '13px 0' }}>
+        <button onClick={() => setShowGuide(v => !v)}
+          style={{ background: 'none', border: 'none', color: J.amber, cursor: 'pointer', fontSize: 13, padding: 0, textDecoration: 'underline' }}>
+          {showGuide ? 'Hide setup guide' : 'How do I set this up?'}
+        </button>
+        {showGuide && (
+          <ol style={{ marginTop: 10, paddingLeft: 20, fontSize: 13, color: J.textSec, lineHeight: 1.7 }}>
+            <li>Create a <strong>Stripe</strong> account at stripe.com if you don't have one, and switch to Live mode when you're ready to accept real payments (Test mode works for trying this out first).</li>
+            <li>In the Stripe Dashboard, go to <strong>Product catalog</strong> and create one Product + recurring monthly Price per plan you want to sell (e.g. "Standard — CHF 8.00/month"). Copy each Price's ID (starts with <code>price_</code>).</li>
+            <li>Paste each Price ID into the matching plan's <strong>Stripe Price ID</strong> field under Dashboard → Provider Settings → Plans. A plan with no Price ID has no "Subscribe" button and stays manual-only.</li>
+            <li>In Stripe, go to <strong>Developers → API keys</strong> and copy the <strong>Secret key</strong> (starts with <code>sk_</code>). Paste it above.</li>
+            <li>In Stripe, go to <strong>Developers → Webhooks</strong>, add an endpoint pointing at <code>{`${window.location.origin}/webhooks/stripe`}</code>, and subscribe it to the <code>checkout.session.completed</code> and <code>customer.subscription.deleted</code> events. Copy the endpoint's <strong>Signing secret</strong> (starts with <code>whsec_</code>) and paste it above.</li>
+            <li>Click <strong>Test connection</strong> to confirm the secret key works. Users can now click "Subscribe" on the AI & Billing tab — Stripe handles checkout and recurring charges; JARVIS assigns the plan automatically when checkout completes, and removes it if the subscription is cancelled.</li>
+          </ol>
+        )}
+        <div style={{ marginTop: 12, fontSize: 12, color: J.textMuted }}>
+          Note: JARVIS grants a plan's monthly AI credit once assigned and keeps granting it every calendar month as long as the plan stays assigned — it does not currently re-verify each Stripe renewal payment individually. If a renewal payment fails, Stripe will eventually cancel the subscription and JARVIS will unassign the plan at that point, not immediately on the failed charge.
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function SettingsScreen() {
   useJ();
   const isGuest = isGuestMode();
   const hasAlertsManage = Boolean(getStoredCapabilities().alerts_manage);
+  const hasBillingManage = Boolean(getStoredCapabilities().billing_manage);
   const availableCats = isGuest
     ? CATS.filter(c => c.id === 'appearance')
-    : CATS.filter(c => c.id !== 'alerts' || hasAlertsManage);
+    : CATS.filter(c => (c.id !== 'alerts' || hasAlertsManage) && (c.id !== 'payments' || hasBillingManage));
   const [cat, setCat] = useState('appearance');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1030,6 +1172,8 @@ export function SettingsScreen() {
     alerts: (<AlertsPanel />),
 
     billing: (<AIBillingPanel />),
+
+    payments: (<PaymentsPanel />),
 
     integrations: (<>
       <Integration name="Proxmox" status={integrationStatus.proxmox === 'not_configured' ? 'not configured' : integrationStatus.proxmox} note="Manage hosts in the Proxmox screen" icon={<IconSettings size={14} />} />

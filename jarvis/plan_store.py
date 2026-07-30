@@ -48,6 +48,7 @@ def _normalize_plan(payload: dict) -> dict:
         "ai_credit_chf_monthly": _f("ai_credit_chf_monthly"),
         "storage_gb_included": _f("storage_gb_included"),
         "sort_order": int(payload.get("sort_order") or 0),
+        "stripe_price_id": str(payload.get("stripe_price_id") or "").strip(),
     }
 
 
@@ -73,11 +74,14 @@ class PlanStore:
         try:
             content = json.loads(self.path.read_text(encoding="utf-8"))
             merged = {**self._empty(), **content}
-            if not isinstance(merged.get("plans"), list):
-                merged["plans"] = []
-            if not merged.get("seeded"):
-                merged["plans"] = [dict(p) for p in _DEFAULT_PLANS] + merged["plans"]
-                merged["seeded"] = True
+            original_plans = merged.get("plans")
+            if not isinstance(original_plans, list):
+                original_plans = []
+            was_seeded = bool(merged.get("seeded"))
+            plans = ([dict(p) for p in _DEFAULT_PLANS] + original_plans) if not was_seeded else original_plans
+            merged["plans"] = [_normalize_plan(p) for p in plans]
+            merged["seeded"] = True
+            if not was_seeded or merged["plans"] != original_plans:
                 self._save_data(merged)
             return merged
         except (OSError, json.JSONDecodeError):

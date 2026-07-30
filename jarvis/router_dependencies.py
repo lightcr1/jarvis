@@ -140,6 +140,20 @@ def build_tasks_deps(state: object) -> dict:
     }
 
 
+def build_billing_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "resolve_effective_permissions": state.resolve_effective_permissions,
+        "membership_store": live_attr(state, "membership_store"),
+        "permission_store": live_attr(state, "permission_store"),
+        "integration_credential_store": live_attr(state, "integration_credential_store"),
+        "plan_store": live_attr(state, "plan_store"),
+        "user_limits_store": live_attr(state, "user_limits_store"),
+        "credit_store": live_attr(state, "credit_store"),
+        "audit_log": live_attr(state, "audit_log"),
+    }
+
+
 def build_calendar_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,

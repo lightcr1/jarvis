@@ -143,6 +143,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         return {
             "home_assistant_access": "home_assistant.access" in effective_permissions,
             "alerts_manage": "alerts.manage" in effective_permissions,
+            "billing_manage": "billing.manage" in effective_permissions,
         }
 
     def _get_llm_history(session_id: str, owner_key: str, limit: int = 20) -> list[dict]:

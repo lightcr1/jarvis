@@ -113,6 +113,7 @@ from jarvis.frontend_routes import frontend_router, mount_frontend_assets
 from jarvis.home_assistant.client import HA_CREDENTIAL_INTEGRATION, HA_CREDENTIAL_OWNER, HomeAssistantClient
 from jarvis.home_assistant.service import HomeAssistantService
 from jarvis.home_assistant.store import HomeAssistantStore
+from jarvis.api_billing import build_billing_router
 from jarvis.api_tasks import build_tasks_router
 from jarvis.tasks.service import TaskService
 from jarvis.tasks.share_store import TaskShareStore
@@ -143,7 +144,7 @@ from jarvis.playbook_store import PlaybookStore
 from jarvis.playbook_executor import PlaybookExecutor, build_default_action_dispatch
 from jarvis.api_admin_integrations import build_admin_integrations_router
 from jarvis.api_weather import build_weather_router
-from jarvis.router_dependencies import build_admin_deps, build_admin_integrations_deps, build_alerts_deps, build_auth_chat_deps, build_calendar_deps, build_device_sync_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_weather_deps, build_workspace_deps, live_attr
+from jarvis.router_dependencies import build_admin_deps, build_admin_integrations_deps, build_alerts_deps, build_auth_chat_deps, build_billing_deps, build_calendar_deps, build_device_sync_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_weather_deps, build_workspace_deps, live_attr
 from jarvis.jarvis_engine import (
     JarvisEngine,
     build_registry,
@@ -606,6 +607,7 @@ app.include_router(build_home_assistant_router(build_home_assistant_deps(sys.mod
 app.include_router(build_memory_router(build_memory_deps(sys.modules[__name__])))
 app.include_router(build_status_router(build_status_deps(sys.modules[__name__])))
 app.include_router(build_tasks_router(build_tasks_deps(sys.modules[__name__])))
+app.include_router(build_billing_router(build_billing_deps(sys.modules[__name__])))
 app.include_router(build_notifications_router(build_notifications_deps(sys.modules[__name__])))
 app.include_router(build_policies_router(build_policies_deps(sys.modules[__name__])))
 app.include_router(build_admin_integrations_router(build_admin_integrations_deps(sys.modules[__name__])))

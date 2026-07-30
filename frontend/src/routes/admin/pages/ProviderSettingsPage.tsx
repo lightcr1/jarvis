@@ -70,7 +70,7 @@ type NewModelRow = {
 
 const EMPTY_ROW: NewModelRow = { model: "", in_usd: "", out_usd: "", tier: "standard", expensive: false };
 
-const EMPTY_PLAN: PlanCreate = { name: "", price_chf_per_month: 0, ai_credit_chf_monthly: 0, storage_gb_included: 0, sort_order: 0 };
+const EMPTY_PLAN: PlanCreate = { name: "", price_chf_per_month: 0, ai_credit_chf_monthly: 0, storage_gb_included: 0, sort_order: 0, stripe_price_id: "" };
 
 export function ProviderSettingsPage() {
   const J = useJ();
@@ -456,7 +456,7 @@ export function ProviderSettingsPage() {
             <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 12 }}>
               <thead>
                 <tr>
-                  {["Name", "CHF/month", "AI credit/month", "Storage (GB)", ""].map(h => (
+                  {["Name", "CHF/month", "AI credit/month", "Storage (GB)", "Stripe Price ID", ""].map(h => (
                     <th key={h} style={{ textAlign: "left", padding: "5px 8px", borderBottom: `1px solid ${J.border}`, color: J.textMuted, fontSize: 11, fontWeight: 500 }}>{h}</th>
                   ))}
                 </tr>
@@ -481,6 +481,10 @@ export function ProviderSettingsPage() {
                         onBlur={e => { const v = parseFloat(e.target.value) || 0; if (v !== plan.storage_gb_included) void savePlanField(plan.id, { storage_gb_included: v }); }} />
                     </td>
                     <td style={{ padding: "6px 8px" }}>
+                      <input style={{ ...inp, width: 140 }} placeholder="price_..." defaultValue={plan.stripe_price_id}
+                        onBlur={e => { const v = e.target.value.trim(); if (v !== plan.stripe_price_id) void savePlanField(plan.id, { stripe_price_id: v }); }} />
+                    </td>
+                    <td style={{ padding: "6px 8px" }}>
                       <button onClick={() => void removePlan(plan.id)}
                         style={{ padding: "2px 8px", fontSize: 11, borderRadius: 3, cursor: "pointer", background: "transparent", border: `1px solid ${J.border}`, color: J.error }}>
                         Remove
@@ -502,6 +506,8 @@ export function ProviderSettingsPage() {
             value={newPlan.ai_credit_chf_monthly} onChange={e => setNewPlan(p => ({ ...p, ai_credit_chf_monthly: parseFloat(e.target.value) || 0 }))} />
           <input type="number" style={{ ...inp, flex: "1 1 90px" }} placeholder="GB storage" step={1}
             value={newPlan.storage_gb_included} onChange={e => setNewPlan(p => ({ ...p, storage_gb_included: parseFloat(e.target.value) || 0 }))} />
+          <input style={{ ...inp, flex: "1 1 140px" }} placeholder="Stripe Price ID (optional)"
+            value={newPlan.stripe_price_id} onChange={e => setNewPlan(p => ({ ...p, stripe_price_id: e.target.value.trim() }))} />
           <button onClick={() => void addPlan()} disabled={!newPlan.name.trim()}
             style={{
               padding: "5px 14px", fontSize: 12, fontWeight: 600, borderRadius: 4, cursor: "pointer",
