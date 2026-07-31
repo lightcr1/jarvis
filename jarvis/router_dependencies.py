@@ -60,6 +60,9 @@ def build_auth_chat_deps(state: object) -> dict:
         "usage_log_store": live_attr(state, "usage_log_store"),
         "credit_store": live_attr(state, "credit_store"),
         "user_limits_store": live_attr(state, "user_limits_store"),
+        "plan_store": live_attr(state, "plan_store"),
+        "admin_settings_store": live_attr(state, "admin_settings_store"),
+        "file_service": live_attr(state, "file_service"),
         "get_anthropic": state.get_anthropic,
         "get_gemini": state.get_gemini,
         "get_openai": state.get_openai,
@@ -103,6 +106,7 @@ def build_admin_deps(state: object) -> dict:
         "credit_store": live_attr(state, "credit_store"),
         "user_limits_store": live_attr(state, "user_limits_store"),
         "byok_store": live_attr(state, "byok_store"),
+        "plan_store": live_attr(state, "plan_store"),
     }
 
 
@@ -133,6 +137,20 @@ def build_tasks_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,
         "task_service": live_attr(state, "task_service"),
+    }
+
+
+def build_billing_deps(state: object) -> dict:
+    return {
+        "require_identity_session": state.require_identity_session,
+        "resolve_effective_permissions": state.resolve_effective_permissions,
+        "membership_store": live_attr(state, "membership_store"),
+        "permission_store": live_attr(state, "permission_store"),
+        "integration_credential_store": live_attr(state, "integration_credential_store"),
+        "plan_store": live_attr(state, "plan_store"),
+        "user_limits_store": live_attr(state, "user_limits_store"),
+        "credit_store": live_attr(state, "credit_store"),
+        "audit_log": live_attr(state, "audit_log"),
     }
 
 
@@ -178,6 +196,9 @@ def build_alerts_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,
         "require_admin_access": state.require_admin_access,
+        "resolve_effective_permissions": state.resolve_effective_permissions,
+        "membership_store": live_attr(state, "membership_store"),
+        "permission_store": live_attr(state, "permission_store"),
         "home_assistant_service": live_attr(state, "home_assistant_service"),
         "alert_rules_store": live_attr(state, "alert_rules_store"),
         "alert_engine": live_attr(state, "alert_engine"),
@@ -227,6 +248,9 @@ def build_admin_integrations_deps(state: object) -> dict:
         "require_admin_access": state.require_admin_access,
         "integration_credential_store": live_attr(state, "integration_credential_store"),
         "user_store": live_attr(state, "user_store"),
+        "home_assistant_client": live_attr(state, "home_assistant_client"),
+        "sync_home_assistant_credentials": state._sync_home_assistant_credentials,
+        "audit_admin_event": state._audit_admin_event,
     }
 
 

@@ -300,7 +300,7 @@ class RagStore:
         self.data = self._load()
 
     def _empty(self) -> dict:
-        return {"sources": {"wikijs": [], "github": []}, "updated_at": 0}
+        return {"sources": {"github": []}, "updated_at": 0}
 
     def _load(self) -> dict:
         if not self.path.exists():
@@ -380,31 +380,8 @@ class RagStore:
             return json.loads(raw or "{}")
 
     def refresh(self) -> dict:
-        report = {"wikijs": "skipped", "github": "skipped"}
-        sources = {"wikijs": [], "github": []}
-
-        wikijs_url = (os.getenv("WIKIJS_GRAPHQL_URL") or "").strip()
-        wikijs_key = (os.getenv("WIKIJS_API_KEY") or "").strip()
-        wikijs_query = os.getenv("WIKIJS_GRAPHQL_QUERY") or "query { pages { list(orderBy: TITLE) { title path description } } }"
-        if wikijs_url and wikijs_key:
-            try:
-                resp = self._http_json(
-                    wikijs_url,
-                    method="POST",
-                    headers={"Authorization": f"Bearer {wikijs_key}"},
-                    payload={"query": wikijs_query},
-                )
-                raw_items = (((resp.get("data") or {}).get("pages") or {}).get("list") or [])
-                for item in raw_items:
-                    title = (item.get("title") or "").strip()
-                    path = (item.get("path") or "").strip()
-                    desc = (item.get("description") or "").strip()
-                    text = " | ".join(x for x in [title, path, desc] if x)
-                    if text:
-                        sources["wikijs"].append({"title": title or path or "wiki", "text": text, "url": path})
-                report["wikijs"] = f"ok ({len(sources['wikijs'])})"
-            except Exception as exc:
-                report["wikijs"] = f"error: {type(exc).__name__}"
+        report = {"github": "skipped"}
+        sources = {"github": []}
 
         gh_repo = (os.getenv("GITHUB_REPO") or "").strip()
         gh_branch = (os.getenv("GITHUB_BRANCH") or "main").strip()

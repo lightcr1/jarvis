@@ -11,6 +11,7 @@ from jarvis.jarvis_engine import normalize_role
 from jarvis.membership_store import MembershipStore
 from jarvis.permission_store import KNOWN_PERMISSIONS, PermissionStore
 from jarvis.tasks.service import TaskAccessError, TaskService
+from jarvis.tasks.share_store import TaskShareStore
 from jarvis.tasks.store import TaskStore
 from jarvis.user_store import UserStore
 
@@ -37,6 +38,7 @@ class TaskStoreTests(unittest.TestCase):
         self.assertIn("tasks.read", KNOWN_PERMISSIONS)
         self.assertIn("tasks.write", KNOWN_PERMISSIONS)
         self.assertIn("tasks.manage", KNOWN_PERMISSIONS)
+        self.assertIn("tasks.share", KNOWN_PERMISSIONS)
 
     def test_add_list_get_update_complete_delete(self):
         task = self.store.add_task({"id": "t1", "owner_user_id": "u1", "title": "Buy milk", "status": "open"})
@@ -75,12 +77,14 @@ class TaskServiceTests(unittest.TestCase):
         os.environ["JARVIS_MEMBERSHIP_STORE_PATH"] = os.path.join(base, "memberships.json")
         os.environ["JARVIS_PERMISSION_STORE_PATH"] = os.path.join(base, "permissions.json")
         os.environ["JARVIS_TASKS_STORE_PATH"] = os.path.join(base, "tasks.json")
+        os.environ["JARVIS_TASKS_SHARE_STORE_PATH"] = os.path.join(base, "tasks_shares.json")
 
         self.user_store = UserStore()
         self.group_store = GroupStore()
         self.membership_store = MembershipStore()
         self.permission_store = PermissionStore()
         self.store = TaskStore()
+        self.share_store = TaskShareStore()
         self.audit_probe = _AuditLogProbe()
         self.service = TaskService(
             store=self.store,
@@ -89,6 +93,8 @@ class TaskServiceTests(unittest.TestCase):
             permission_store=self.permission_store,
             resolve_effective_permissions=resolve_effective_permissions,
             normalize_role=normalize_role,
+            share_store=self.share_store,
+            group_store=self.group_store,
             audit_log=self.audit_probe,
         )
 
@@ -203,6 +209,116 @@ class TaskServiceTests(unittest.TestCase):
         updated = self.service.set_task_steps(task_id, ["Book venue", "Send invites"], user_id=user["id"], role=user["role"])
         self.assertEqual(["Book venue", "Send invites"], updated["task"]["steps"])
 
+    def test_due_at_round_trips_through_create_and_update(self):
+        user = self.user_store.create_user("greta", role="standard_user", enabled=True)
+        self.permission_store.set_user_permissions(user["id"], ["tasks.read", "tasks.write"])
+        created = self.service.create_task({"title": "File taxes", "due_at": 1_800_000_000}, user_id=user["id"], role=user["role"])
+        self.assertEqual(1_800_000_000, created["task"]["due_at"])
+        updated = self.service.update_task(created["task"]["id"], {"due_at": None}, user_id=user["id"], role=user["role"])
+        self.assertIsNone(updated["task"]["due_at"])
+
+    def test_invalid_assignee_rejected(self):
+        user = self.user_store.create_user("harry", role="standard_user", enabled=True)
+        self.permission_store.set_user_permissions(user["id"], ["tasks.read", "tasks.write"])
+        with self.assertRaises(ValueError):
+            self.service.create_task({"title": "Assign to nobody", "assignee_user_id": "does-not-exist"}, user_id=user["id"], role=user["role"])
+
+    def test_assignee_sees_task_and_can_complete_but_not_reassign_or_delete(self):
+        owner = self.user_store.create_user("owner1", role="standard_user", enabled=True)
+        assignee = self.user_store.create_user("assignee1", role="standard_user", enabled=True)
+        self.permission_store.set_user_permissions(owner["id"], ["tasks.read", "tasks.write", "tasks.manage"])
+        self.permission_store.set_user_permissions(assignee["id"], ["tasks.read", "tasks.write"])
+
+        created = self.service.create_task(
+            {"title": "Review PR", "assignee_user_id": assignee["id"]}, user_id=owner["id"], role=owner["role"],
+        )
+        task_id = created["task"]["id"]
+
+        assignee_tasks = self.service.list_tasks(user_id=assignee["id"], role=assignee["role"])["tasks"]
+        self.assertEqual(1, len(assignee_tasks))
+
+        completed = self.service.complete_task(task_id, user_id=assignee["id"], role=assignee["role"])
+        self.assertEqual("done", completed["task"]["status"])
+
+        with self.assertRaises(TaskAccessError):
+            self.service.update_task(task_id, {"assignee_user_id": owner["id"]}, user_id=assignee["id"], role=assignee["role"])
+        with self.assertRaises(TaskAccessError):
+            self.service.delete_task(task_id, user_id=assignee["id"], role=assignee["role"])
+
+    def test_share_task_read_access_blocks_writes(self):
+        owner = self.user_store.create_user("owner2", role="standard_user", enabled=True)
+        viewer = self.user_store.create_user("viewer1", role="standard_user", enabled=True)
+        self.permission_store.set_user_permissions(owner["id"], ["tasks.read", "tasks.write", "tasks.manage", "tasks.share"])
+        self.permission_store.set_user_permissions(viewer["id"], ["tasks.read", "tasks.write"])
+        group = self.group_store.create_group("viewers")
+        self.membership_store.add_membership(viewer["id"], group["id"])
+
+        created = self.service.create_task({"title": "Q3 plan"}, user_id=owner["id"], role=owner["role"])
+        task_id = created["task"]["id"]
+        self.service.share_task(task_id, group["id"], "read", user_id=owner["id"], role=owner["role"])
+
+        viewed = self.service.get_task(task_id, user_id=viewer["id"], role=viewer["role"])
+        self.assertEqual("read", viewed["access"])
+        with self.assertRaises(TaskAccessError):
+            self.service.update_task(task_id, {"priority": "high"}, user_id=viewer["id"], role=viewer["role"])
+        with self.assertRaises(TaskAccessError):
+            self.service.complete_task(task_id, user_id=viewer["id"], role=viewer["role"])
+
+        shared = self.service.list_shared_with_me(user_id=viewer["id"], role=viewer["role"])["shared"]
+        self.assertEqual(1, len(shared))
+        self.assertEqual(task_id, shared[0]["task"]["id"])
+
+    def test_share_task_write_access_allows_updates_but_not_delete_or_reshare(self):
+        owner = self.user_store.create_user("owner3", role="standard_user", enabled=True)
+        editor = self.user_store.create_user("editor1", role="standard_user", enabled=True)
+        self.permission_store.set_user_permissions(owner["id"], ["tasks.read", "tasks.write", "tasks.manage", "tasks.share"])
+        self.permission_store.set_user_permissions(editor["id"], ["tasks.read", "tasks.write"])
+        group = self.group_store.create_group("editors")
+        self.membership_store.add_membership(editor["id"], group["id"])
+
+        created = self.service.create_task({"title": "Budget doc"}, user_id=owner["id"], role=owner["role"])
+        task_id = created["task"]["id"]
+        self.service.share_task(task_id, group["id"], "write", user_id=owner["id"], role=owner["role"])
+
+        updated = self.service.update_task(task_id, {"status": "in_progress"}, user_id=editor["id"], role=editor["role"])
+        self.assertEqual("in_progress", updated["task"]["status"])
+
+        with self.assertRaises(TaskAccessError):
+            self.service.delete_task(task_id, user_id=editor["id"], role=editor["role"])
+        with self.assertRaises(TaskAccessError):
+            self.service.share_task(task_id, group["id"], "read", user_id=editor["id"], role=editor["role"])
+
+    def test_only_owner_can_unshare_and_share_id_is_removed_on_delete(self):
+        owner = self.user_store.create_user("owner4", role="standard_user", enabled=True)
+        other = self.user_store.create_user("other4", role="standard_user", enabled=True)
+        self.permission_store.set_user_permissions(owner["id"], ["tasks.read", "tasks.write", "tasks.manage", "tasks.share"])
+        self.permission_store.set_user_permissions(other["id"], ["tasks.read", "tasks.write", "tasks.share"])
+        group = self.group_store.create_group("g4")
+
+        created = self.service.create_task({"title": "Roadmap"}, user_id=owner["id"], role=owner["role"])
+        task_id = created["task"]["id"]
+        share = self.service.share_task(task_id, group["id"], "read", user_id=owner["id"], role=owner["role"])["share"]
+
+        with self.assertRaises(LookupError):
+            self.service.unshare_task(share["id"], user_id=other["id"], role=other["role"])
+
+        self.service.delete_task(task_id, user_id=owner["id"], role=owner["role"])
+        self.assertEqual([], self.share_store.list_shares_for_task(task_id))
+
+    def test_list_assignable_users_and_my_groups(self):
+        owner = self.user_store.create_user("owner5", role="standard_user", enabled=True)
+        self.user_store.create_user("teammate5", role="standard_user", enabled=True)
+        self.permission_store.set_user_permissions(owner["id"], ["tasks.read", "tasks.write"])
+        self.group_store.create_group("alpha")
+
+        users = self.service.list_assignable_users(user_id=owner["id"], role=owner["role"])["users"]
+        usernames = {u["username"] for u in users}
+        self.assertIn("owner5", usernames)
+        self.assertIn("teammate5", usernames)
+
+        groups = self.service.list_my_groups(user_id=owner["id"], role=owner["role"])["groups"]
+        self.assertTrue(any(g["name"] == "alpha" for g in groups))
+
 
 class TaskApiTests(unittest.TestCase):
     def setUp(self):
@@ -215,6 +331,7 @@ class TaskApiTests(unittest.TestCase):
         os.environ["JARVIS_ADMIN_PASSWORD_STORE_PATH"] = os.path.join(base, "admin_passwords.json")
         os.environ["JARVIS_USER_PREFERENCES_PATH"] = os.path.join(base, "user_preferences.json")
         os.environ["JARVIS_TASKS_STORE_PATH"] = os.path.join(base, "tasks.json")
+        os.environ["JARVIS_TASKS_SHARE_STORE_PATH"] = os.path.join(base, "tasks_shares.json")
 
         jarvisappv4.user_store = jarvisappv4.UserStore()
         jarvisappv4.group_store = jarvisappv4.GroupStore()
@@ -223,6 +340,7 @@ class TaskApiTests(unittest.TestCase):
         jarvisappv4.admin_password_store = jarvisappv4.AdminPasswordStore()
         jarvisappv4.user_preferences_store = jarvisappv4.UserPreferencesStore()
         jarvisappv4.task_store = jarvisappv4.TaskStore()
+        jarvisappv4.task_share_store = jarvisappv4.TaskShareStore()
         jarvisappv4.task_service = jarvisappv4.TaskService(
             store=jarvisappv4.task_store,
             user_store=jarvisappv4.user_store,
@@ -230,6 +348,8 @@ class TaskApiTests(unittest.TestCase):
             permission_store=jarvisappv4.permission_store,
             resolve_effective_permissions=jarvisappv4.resolve_effective_permissions,
             normalize_role=jarvisappv4.normalize_role,
+            share_store=jarvisappv4.task_share_store,
+            group_store=jarvisappv4.group_store,
             audit_log=jarvisappv4.audit_log,
         )
         jarvisappv4._identity_tokens.clear()
@@ -368,6 +488,88 @@ class TaskApiTests(unittest.TestCase):
         bob_tasks = self.client.get("/tasks", headers={"X-Jarvis-Session": bob_token})
         self.assertEqual(200, bob_tasks.status_code)
         self.assertEqual(0, len(bob_tasks.json()["tasks"]))
+
+    def test_assign_task_to_teammate_via_api(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        owner_id, owner_token = self._create_user_with_permissions(
+            admin["token"], admin["user_id"], "assignowner", ["tasks.read", "tasks.write", "tasks.manage"]
+        )
+        assignee_id, assignee_token = self._create_user_with_permissions(
+            admin["token"], admin["user_id"], "assignee", ["tasks.read", "tasks.write"]
+        )
+
+        assignable = self.client.get("/tasks/assignable-users", headers={"X-Jarvis-Session": owner_token})
+        self.assertEqual(200, assignable.status_code)
+        usernames = {u["username"] for u in assignable.json()["users"]}
+        self.assertIn("assignee", usernames)
+
+        created = self.client.post(
+            "/tasks",
+            headers={"X-Jarvis-Session": owner_token},
+            json={"title": "Fix the bug", "assignee_user_id": assignee_id},
+        ).json()["task"]
+        self.assertEqual(assignee_id, created["assignee_user_id"])
+
+        assignee_list = self.client.get("/tasks", headers={"X-Jarvis-Session": assignee_token})
+        self.assertEqual(1, len(assignee_list.json()["tasks"]))
+
+        completed = self.client.post(f"/tasks/{created['id']}/complete", headers={"X-Jarvis-Session": assignee_token})
+        self.assertEqual(200, completed.status_code)
+        self.assertEqual("done", completed.json()["task"]["status"])
+
+    def test_share_task_with_group_via_api(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        _, owner_token = self._create_user_with_permissions(
+            admin["token"], admin["user_id"], "shareowner", ["tasks.read", "tasks.write", "tasks.manage", "tasks.share"]
+        )
+        _, viewer_token = self._create_user_with_permissions(
+            admin["token"], admin["user_id"], "shareviewer", ["tasks.read", "tasks.write"]
+        )
+
+        group = self.client.post(
+            "/admin/groups",
+            headers={"Authorization": f"Bearer {admin['token']}", "X-Jarvis-Role": "admin", "X-Jarvis-User-Id": admin["user_id"]},
+            json={"name": "shared-with"},
+        ).json()
+        users = self.client.get(
+            "/admin/users",
+            headers={"Authorization": f"Bearer {admin['token']}", "X-Jarvis-Role": "admin", "X-Jarvis-User-Id": admin["user_id"]},
+        ).json()["users"]
+        viewer_id = next(u["id"] for u in users if u["username"] == "shareviewer")
+        self.client.post(
+            "/admin/assignments",
+            headers={"Authorization": f"Bearer {admin['token']}", "X-Jarvis-Role": "admin", "X-Jarvis-User-Id": admin["user_id"]},
+            json={"user_id": viewer_id, "group_id": group["id"]},
+        )
+
+        created = self.client.post(
+            "/tasks", headers={"X-Jarvis-Session": owner_token}, json={"title": "Shared roadmap"},
+        ).json()["task"]
+
+        share = self.client.post(
+            f"/tasks/{created['id']}/shares",
+            headers={"X-Jarvis-Session": owner_token},
+            json={"group_id": group["id"], "permission": "read"},
+        )
+        self.assertEqual(200, share.status_code)
+
+        shared_with_me = self.client.get("/tasks/shared-with-me", headers={"X-Jarvis-Session": viewer_token})
+        self.assertEqual(200, shared_with_me.status_code)
+        self.assertEqual(1, len(shared_with_me.json()["shared"]))
+        self.assertEqual(created["id"], shared_with_me.json()["shared"][0]["task"]["id"])
+
+        denied_edit = self.client.patch(
+            f"/tasks/{created['id']}", headers={"X-Jarvis-Session": viewer_token}, json={"priority": "high"},
+        )
+        self.assertEqual(403, denied_edit.status_code)
+
+        share_id = share.json()["share"]["id"]
+        unshared = self.client.delete(f"/tasks/shares/{share_id}", headers={"X-Jarvis-Session": owner_token})
+        self.assertEqual(200, unshared.status_code)
+        self.assertTrue(unshared.json()["deleted"])
+
+        after_unshare = self.client.get("/tasks/shared-with-me", headers={"X-Jarvis-Session": viewer_token})
+        self.assertEqual(0, len(after_unshare.json()["shared"]))
 
 
 if __name__ == "__main__":

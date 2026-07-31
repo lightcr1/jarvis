@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import base64
+import time
 import uuid
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone
 from urllib import error, request
+from urllib.parse import urljoin
 
 from icalendar import Calendar as ICalendar
 from icalendar import Event as ICalEvent
@@ -23,6 +25,29 @@ _REPORT_BODY = """<?xml version="1.0" encoding="utf-8" ?>
     </C:comp-filter>
   </C:filter>
 </C:calendar-query>"""
+
+_PROPFIND_RESOURCETYPE_BODY = """<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop><D:resourcetype/></D:prop>
+</D:propfind>"""
+
+_PROPFIND_CURRENT_USER_PRINCIPAL_BODY = """<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:">
+  <D:prop><D:current-user-principal/></D:prop>
+</D:propfind>"""
+
+_PROPFIND_CALENDAR_HOME_SET_BODY = """<?xml version="1.0" encoding="utf-8" ?>
+<D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav">
+  <D:prop><C:calendar-home-set/></D:prop>
+</D:propfind>"""
+
+_MAX_REDIRECTS = 5
+_REDIRECT_CODES = (301, 302, 303, 307, 308)
+_DISCOVERY_BUDGET_SEC = 7.0
+
+
+class CalDavConnectionError(RuntimeError):
+    pass
 
 
 def _local_name(tag: str) -> str:
@@ -88,12 +113,19 @@ class CalDavClient:
     """Pure CalDAV I/O over raw HTTP (urllib + Basic auth) — no external HTTP client
     dependency, matching the pattern of jarvis/home_assistant/client.py. Uses the
     `icalendar` library only for RFC 5545 parsing/generation, not for transport.
+
+    Implements RFC 4791/6764 discovery (.well-known/caldav -> current-user-principal
+    -> calendar-home-set -> calendar collections) so a single pasted service-root URL
+    (e.g. iCloud's https://caldav.icloud.com) resolves to real calendar collections,
+    with a fast path that skips discovery entirely when the pasted URL is already a
+    calendar collection (the common self-hosted Nextcloud/Radicale case).
     """
 
     def __init__(self, base_url: str, username: str, password: str) -> None:
         self.base_url = base_url.rstrip("/")
         self.username = username
         self.password = password
+        self._calendar_urls: list[str] | None = None
 
     def _headers(self, content_type: str = "") -> dict[str, str]:
         token = base64.b64encode(f"{self.username}:{self.password}".encode()).decode()
@@ -102,28 +134,169 @@ class CalDavClient:
             headers["Content-Type"] = content_type
         return headers
 
-    def test_connection(self) -> bool:
-        req = request.Request(self.base_url, headers={**self._headers(), "Depth": "0"}, method="PROPFIND")
+    def _request(
+        self,
+        url: str,
+        *,
+        method: str,
+        body: bytes | None = None,
+        depth: str | None = None,
+        content_type: str = "",
+        timeout: float = 8,
+        deadline: float | None = None,
+        _redirects: int = 0,
+    ) -> tuple[int, bytes, str]:
+        if deadline is not None:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise CalDavConnectionError(f"timed out before requesting {url}")
+            timeout = min(timeout, left)
+        headers = self._headers(content_type)
+        if depth is not None:
+            headers["Depth"] = depth
+        req = request.Request(url, data=body, headers=headers, method=method)
         try:
-            with request.urlopen(req, timeout=8) as resp:
-                return resp.status in (200, 207)
-        except (error.URLError, TimeoutError, error.HTTPError):
+            with request.urlopen(req, timeout=max(timeout, 0.001)) as resp:
+                return resp.status, resp.read(), resp.geturl()
+        except error.HTTPError as exc:
+            if exc.code in _REDIRECT_CODES:
+                if _redirects >= _MAX_REDIRECTS:
+                    raise CalDavConnectionError(f"too many redirects starting at {url}") from exc
+                location = exc.headers.get("Location") if exc.headers else None
+                if not location:
+                    raise CalDavConnectionError(f"redirect from {url} had no Location header") from exc
+                next_url = urljoin(url, location)
+                return self._request(
+                    next_url, method=method, body=body, depth=depth, content_type=content_type,
+                    timeout=timeout, deadline=deadline, _redirects=_redirects + 1,
+                )
+            if exc.code in (401, 403):
+                raise CalDavConnectionError(
+                    f"authentication failed (HTTP {exc.code}) — check the CalDAV username and password"
+                ) from exc
+            return exc.code, exc.read(), url
+        except (error.URLError, TimeoutError) as exc:
+            raise CalDavConnectionError(f"{method} {url} failed: {exc}") from exc
+
+    def _parse_calendar_collections(self, raw: bytes, base_url: str) -> list[str]:
+        try:
+            root = ET.fromstring(raw)
+        except ET.ParseError:
+            return []
+        collections: list[str] = []
+        for response_el in root:
+            if _local_name(response_el.tag) != "response":
+                continue
+            href = ""
+            is_calendar = False
+            for child in response_el.iter():
+                name = _local_name(child.tag)
+                if name == "href" and not href:
+                    href = child.text or ""
+                elif name == "calendar":
+                    is_calendar = True
+            if href and is_calendar:
+                collections.append(urljoin(base_url, href))
+        return collections
+
+    def _try_direct_url(self, *, deadline: float) -> list[str]:
+        status, raw, final_url = self._request(
+            self.base_url, method="PROPFIND", depth="0",
+            body=_PROPFIND_RESOURCETYPE_BODY.encode("utf-8"),
+            content_type="application/xml; charset=utf-8", deadline=deadline,
+        )
+        if status != 207:
+            return []
+        return self._parse_calendar_collections(raw, final_url)
+
+    def _propfind_single_href(self, url: str, prop_body: str, want_tag: str, *, deadline: float) -> str | None:
+        status, raw, final_url = self._request(
+            url, method="PROPFIND", depth="0", body=prop_body.encode("utf-8"),
+            content_type="application/xml; charset=utf-8", deadline=deadline,
+        )
+        if status != 207:
+            return None
+        try:
+            root = ET.fromstring(raw)
+        except ET.ParseError:
+            return None
+        for el in root.iter():
+            if _local_name(el.tag) != want_tag:
+                continue
+            for href_el in el.iter():
+                if _local_name(href_el.tag) == "href" and href_el.text:
+                    return urljoin(final_url, href_el.text)
+        return None
+
+    def _resolve_well_known(self, *, deadline: float) -> str | None:
+        url = urljoin(self.base_url + "/", ".well-known/caldav")
+        try:
+            status, _, final_url = self._request(url, method="GET", deadline=deadline)
+        except CalDavConnectionError:
+            return None
+        return final_url if status < 400 else None
+
+    def _discover_calendar_urls(self) -> list[str]:
+        if self._calendar_urls is not None:
+            return self._calendar_urls
+        deadline = time.monotonic() + _DISCOVERY_BUDGET_SEC
+
+        direct = self._try_direct_url(deadline=deadline)
+        if direct:
+            self._calendar_urls = direct
+            return direct
+
+        principal = self._propfind_single_href(
+            self.base_url, _PROPFIND_CURRENT_USER_PRINCIPAL_BODY, "current-user-principal", deadline=deadline,
+        )
+        if principal is None:
+            well_known_root = self._resolve_well_known(deadline=deadline)
+            if well_known_root is not None:
+                principal = self._propfind_single_href(
+                    well_known_root, _PROPFIND_CURRENT_USER_PRINCIPAL_BODY, "current-user-principal",
+                    deadline=deadline,
+                )
+        if principal is None:
+            raise CalDavConnectionError(
+                f"could not discover a CalDAV principal at {self.base_url} "
+                "(tried the URL directly and RFC 6764 .well-known/caldav discovery)"
+            )
+
+        home = self._propfind_single_href(
+            principal, _PROPFIND_CALENDAR_HOME_SET_BODY, "calendar-home-set", deadline=deadline,
+        )
+        if home is None:
+            raise CalDavConnectionError(f"could not find a calendar-home-set for principal {principal}")
+
+        status, raw, final_home = self._request(
+            home, method="PROPFIND", depth="1", body=_PROPFIND_RESOURCETYPE_BODY.encode("utf-8"),
+            content_type="application/xml; charset=utf-8", deadline=deadline,
+        )
+        collections = self._parse_calendar_collections(raw, final_home) if status == 207 else []
+        if not collections:
+            raise CalDavConnectionError(f"no calendar collections found under {home}")
+        self._calendar_urls = collections
+        return collections
+
+    def test_connection(self) -> bool:
+        try:
+            return bool(self._discover_calendar_urls())
+        except CalDavConnectionError:
             return False
 
     def list_events(self, start: datetime, end: datetime) -> list[dict]:
+        urls = self._discover_calendar_urls()
         body = _REPORT_BODY.format(start=_to_ical_utc(start), end=_to_ical_utc(end)).encode("utf-8")
-        req = request.Request(
-            self.base_url,
-            data=body,
-            headers={**self._headers("application/xml; charset=utf-8"), "Depth": "1"},
-            method="REPORT",
-        )
-        try:
-            with request.urlopen(req, timeout=15) as resp:
-                raw = resp.read()
-        except (error.URLError, TimeoutError, error.HTTPError):
-            return []
-        return self._parse_multistatus(raw)
+        events: list[dict] = []
+        for url in urls:
+            status, raw, _ = self._request(
+                url, method="REPORT", depth="1", body=body,
+                content_type="application/xml; charset=utf-8", timeout=15,
+            )
+            if status != 207:
+                raise CalDavConnectionError(f"REPORT against {url} failed with HTTP {status}")
+            events.extend(self._parse_multistatus(raw))
+        return events
 
     def _parse_multistatus(self, raw: bytes) -> list[dict]:
         try:
@@ -150,29 +323,28 @@ class CalDavClient:
                 events.append(parsed)
         return events
 
-    def _event_url(self, uid: str) -> str:
-        return f"{self.base_url}/{uid}.ics"
+    def _event_url(self, collection_url: str, uid: str) -> str:
+        return f"{collection_url.rstrip('/')}/{uid}.ics"
 
-    def put_event(self, event: dict) -> bool:
-        body = build_ics(event)
-        req = request.Request(
-            self._event_url(event["uid"]),
-            data=body,
-            headers=self._headers("text/calendar; charset=utf-8"),
-            method="PUT",
-        )
-        try:
-            with request.urlopen(req, timeout=10) as resp:
-                return resp.status in (200, 201, 204)
-        except (error.URLError, TimeoutError, error.HTTPError):
-            return False
+    def _resolve_write_target(self, uid: str, href: str | None) -> str:
+        collection = self._discover_calendar_urls()[0]
+        return urljoin(collection, href) if href else self._event_url(collection, uid)
 
-    def delete_event(self, uid: str) -> bool:
-        req = request.Request(self._event_url(uid), headers=self._headers(), method="DELETE")
+    def put_event(self, event: dict, *, href: str | None = None) -> str | None:
         try:
-            with request.urlopen(req, timeout=10) as resp:
-                return resp.status in (200, 204, 404)
-        except error.HTTPError as exc:
-            return exc.code == 404
-        except (error.URLError, TimeoutError):
+            target = self._resolve_write_target(event["uid"], href)
+            status, _, _ = self._request(
+                target, method="PUT", body=build_ics(event),
+                content_type="text/calendar; charset=utf-8", timeout=10,
+            )
+        except CalDavConnectionError:
+            return None
+        return target if status in (200, 201, 204) else None
+
+    def delete_event(self, uid: str, *, href: str | None = None) -> bool:
+        try:
+            target = self._resolve_write_target(uid, href)
+            status, _, _ = self._request(target, method="DELETE", timeout=10)
+        except CalDavConnectionError:
             return False
+        return status in (200, 204, 404)

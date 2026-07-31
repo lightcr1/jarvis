@@ -96,6 +96,78 @@ Not in the original phase plan — requested directly for a multi-tenant use cas
   non-leak), and access is confirmed non-inherited by child folders.
 - [ ] File sharing links — not built, not requested yet
 
+## Off-roadmap — Billing, Self-Service Integrations, Deploy Automation (added 2026-07-31)
+
+Not in the original phase plan — grew out of a prior session's uncommitted WIP
+(subscription plans + Proxmox auth rework) plus a run of follow-up requests in
+this session.
+
+- [x] Subscription plans — `jarvis/plan_store.py` (catalog: price, AI credit,
+  storage, `stripe_price_id`) + `jarvis/plan_service.py` (`assign_plan`,
+  `ensure_monthly_grant`, called from both `ai_router.py` preflight and
+  `api_auth_chat.py`). Admin CRUD + per-user assignment already existed
+  uncommitted from a prior session; committed as-is after verifying it end to end.
+- [x] Proxmox self-service — host auth moved from bearer token to
+  session+permission (`proxmox.access`/`proxmox.manage`, same prior-session
+  WIP), plus a frontend `HostManager` panel directly in `ProxmoxScreen.tsx`
+  (backend host CRUD existed with zero UI before this).
+- [x] Home Assistant self-service — was env-var-only; now configurable from
+  the admin panel via the existing `IntegrationCredentialStore` (same pattern
+  `workspace/service.py` already used for RDP/VNC creds), hot-applied via
+  `HomeAssistantClient.apply_credentials()` with no restart needed.
+- [x] WikiJS fully removed — RAG source, chat intents (`wiki page X`, and the
+  legacy "tasks from wiki" natural-language route, superseded by the real
+  Tasks feature), config templates, V1 docs/checklist.
+- [x] Tasks: due dates + assignee (owner-gated reassignment) + group-based
+  sharing — new `jarvis/tasks/share_store.py`, a direct copy of
+  `jarvis/files/share_store.py`'s pattern (`tasks.share` permission mirrors
+  `files.share`). `TaskService._accessible_task()`/`_visible_tasks()` resolve
+  access as owner > assignee (write) > group-share (read/write).
+- [x] Stripe payment integration — `jarvis/billing/stripe_client.py` (raw
+  HTTP, no SDK — checkout sessions, webhook signature verification, per the
+  existing `urllib` convention), `jarvis/api_billing.py`, new `billing.manage`
+  permission so a non-admin (e.g. a "Finance" grant) can configure payments
+  without full admin access. `POST /webhooks/stripe` handles
+  `checkout.session.completed` (assign plan) and `customer.subscription.deleted`
+  (unassign) — known gap, documented in the in-app setup guide: renewal
+  payments aren't re-verified individually, only cancellation is webhook-driven.
+- [x] `deploy_local.sh`/`update_local.sh`/`rollback_local.sh` — the README
+  documented a full first-time-bootstrap TLS deploy flow (systemd install,
+  self-signed cert, port 443, `/etc/jarvis/config.env`) that was never
+  actually built; only the plain-HTTP `install.sh`/`update.sh`/`deploy.sh`
+  flow (port 8000, `jarvis.env`) existed and is what the live instance runs.
+  Built the missing flow as a genuinely separate, additive path — it refuses
+  to silently repurpose a host already running the HTTP scheme without
+  confirmation. Closed the 8 previously-failing tests in
+  `test_deploy_config_defaults.py`/`test_ops_preparation_assets.py` that were
+  checking for this. Not yet drilled against a real host.
+- [x] Bug fixes found via live Playwright testing (not from a specific ask —
+  found while verifying the above): `PermissionsPage.tsx` crashed on every
+  "Save changes" because `GET /admin/permissions/effective/{id}` returns a
+  nested context object but the page read it as a flat array; long-lived
+  sessions never refreshed `UserCapabilities` after login, so permissions
+  granted later (e.g. `billing.manage`) silently didn't unlock UI until
+  logout/login — `JarvisApp.tsx` now refreshes capabilities from `/auth/me`
+  once per mount.
+- [x] Admin IA cleanup — split the "AI Provider" page (which had accumulated
+  Plans + Stripe price IDs + storage overage pricing alongside unrelated
+  routing/budget settings) into a dedicated "Billing" admin page.
+
+**Known issue, not yet root-caused:** user-reported chat reliability problem —
+certain words in a message reliably short-circuit into a canned/deterministic
+reply instead of a real answer, and the cloud LLM fallback path doesn't seem
+to have real access to local components (it can talk about them, not act on
+them). Confirmed `jarvis_engine.py`'s `JarvisEngine.process()` (with its own
+"Need clarification." fuzzy-match logic) is dead code — `engine.process()` is
+never called from the live `/chat` path, only `engine.learning` is used
+elsewhere — so that's not the source. Most likely candidates: `try_skill()`
+keyword matching false-positiving on ordinary words before falling through to
+RAG/LLM, and/or the LLM fallback path having no function-calling/tool-use
+integration with the local skill/action system at all (it's pure text
+generation once it's reached). Needs concrete repro messages from the user to
+pin down further — see `assistant_domain.py::try_skill()` and
+`ai_clients.py`'s system prompt construction as the starting points.
+
 ## Phase 7 — V2.7 Interface & Reach (interleaved)
 
 - [x] PWA shell (manifest + service worker, caching only)
@@ -276,3 +348,38 @@ Not in the original phase plan — requested directly for a multi-tenant use cas
 - **V2 is now feature-complete** except the two explicitly-deferred Phase 7 items above
   and the hardware-gated Phase 6 backlog (network/security monitoring, NAS, camera,
   health, finance, smart car — all blocked on the user providing device/service specifics).
+
+### 2026-07-31
+- See the new "Off-roadmap — Billing, Self-Service Integrations, Deploy Automation"
+  section above for the full list; summary here is just the session shape.
+- Committed a prior session's uncommitted WIP (subscription plans, Proxmox
+  session+permission auth) after independently verifying it end to end — nothing was
+  broken, it just hadn't been committed yet.
+- Built on top of that: Stripe payment integration (real checkout + webhook flow, not
+  just credential storage), the `deploy_local.sh` TLS deploy flow the README had
+  described but never had code for, and a Proxmox/HA self-service admin UI.
+- Found and fixed two real pre-existing bugs via live Playwright verification (not
+  reported by the user first) while checking the above: `PermissionsPage.tsx` crashed
+  on every permission save (nested API response read as a flat array), and long-lived
+  sessions never refreshed capabilities after login (permissions granted post-login
+  silently didn't unlock UI until logout/login).
+- Split the "Billing" concerns (Plans, Stripe price IDs, storage overage pricing) out
+  of the "AI Provider" admin page into their own page after the user pointed out
+  Billing settings were hard to find and asked whether the admin panel needed
+  reorganizing.
+- **Known open issue, not yet root-caused:** user reports chat reliability problems —
+  certain words reliably trigger a canned/deterministic reply instead of a real answer,
+  and the cloud LLM fallback doesn't seem to have real access to local components
+  (can discuss them, can't act on them). Ruled out `jarvis_engine.py`'s `JarvisEngine`
+  fuzzy-matcher (dead code, never called from the live `/chat` path) as the source.
+  Needs concrete repro messages from the user before further investigation —
+  `assistant_domain.py::try_skill()` keyword false-positives and/or a missing
+  function-calling/tool-use bridge between the LLM and the local skill/action system
+  are the leading suspects.
+- Branch: work done on `workspace-hub` (pre-existing branch name, not chosen this
+  session). To be merged into `main` and pushed at the end of this session, same
+  pattern as the `v2v2` session before it, so the production box can pull it via the
+  normal update flow.
+- Immediate next step: get concrete repro messages for the chat reliability issue, then
+  scope File sharing links and the Plugin System (the latter needs its own design pass
+  per the roadmap's existing note — user asked specifically what it would even be for).

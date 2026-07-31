@@ -39,6 +39,8 @@ def resolve_effective_permissions(
     permission_store,
 ) -> set[str]:
     role_name = normalize_role(role)
+    if role_name == "admin":
+        return set(KNOWN_PERMISSIONS)
     effective = set(ROLE_PERMISSIONS.get(role_name, set()))
 
     if not user_id:
@@ -61,7 +63,7 @@ def build_permission_context(
     permission_store,
 ) -> dict:
     role_name = normalize_role(role)
-    role_permissions = sorted(ROLE_PERMISSIONS.get(role_name, set()))
+    role_permissions = sorted(KNOWN_PERMISSIONS) if role_name == "admin" else sorted(ROLE_PERMISSIONS.get(role_name, set()))
 
     if not user_id:
         return {

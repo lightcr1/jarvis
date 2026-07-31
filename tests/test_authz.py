@@ -5,7 +5,7 @@ import unittest
 from jarvis.authz import build_permission_context, permission_decision, resolve_effective_permissions
 from jarvis.group_store import GroupStore
 from jarvis.membership_store import MembershipStore
-from jarvis.permission_store import PermissionStore
+from jarvis.permission_store import KNOWN_PERMISSIONS, PermissionStore
 from jarvis.user_store import UserStore
 
 
@@ -36,6 +36,15 @@ class AuthzResolutionTests(unittest.TestCase):
         perms = resolve_effective_permissions("admin", None, self.memberships, self.permissions)
         self.assertIn("actions.write.execute", perms)
         self.assertIn("actions.dangerous.execute", perms)
+
+    def test_admin_role_receives_every_known_permission(self):
+        u = self.users.create_user("root", role="admin")
+        perms = resolve_effective_permissions("admin", u["id"], self.memberships, self.permissions)
+        self.assertEqual(perms, set(KNOWN_PERMISSIONS))
+
+        ctx = build_permission_context("admin", u["id"], self.memberships, self.permissions)
+        self.assertEqual(set(ctx["role_permissions"]), set(KNOWN_PERMISSIONS))
+        self.assertEqual(set(ctx["effective_permissions"]), set(KNOWN_PERMISSIONS))
 
     def test_user_and_group_permissions_are_combined(self):
         u = self.users.create_user("alice", role="standard_user")

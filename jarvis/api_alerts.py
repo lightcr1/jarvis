@@ -96,6 +96,14 @@ def build_alerts_router(deps: dict) -> APIRouter:
         fn: Callable = current("audit_admin_event")
         fn(event, actor_user_id, actor_role, payload)
 
+    def _own_rules_guard(x_jarvis_session: str | None) -> dict:
+        session = current("require_identity_session")(x_jarvis_session)
+        user = session["user"]
+        effective = current("resolve_effective_permissions")(user["role"], user["id"], current("membership_store"), current("permission_store"))
+        if "alerts.manage" not in effective:
+            raise HTTPException(403, "missing permission: alerts.manage")
+        return session
+
     @router.get("/admin/alerts/rules")
     def list_rules(
         x_jarvis_user_id: str | None = Header(default=None),
@@ -178,6 +186,65 @@ def build_alerts_router(deps: dict) -> APIRouter:
         _admin_guard(x_jarvis_user_id, x_jarvis_role, authorization)
         engine = current("alert_engine")
         return {"alerts": engine.get_history(limit=min(limit, 500))}
+
+    @router.get("/alerts/rules")
+    def list_own_rules(x_jarvis_session: str | None = Header(default=None)):
+        session = _own_rules_guard(x_jarvis_session)
+        store = current("alert_rules_store")
+        return {"rules": store.list_rules(owner_user_id=session["user"]["id"])}
+
+    @router.post("/alerts/rules", status_code=201)
+    def create_own_rule(body: AlertRuleCreate, x_jarvis_session: str | None = Header(default=None)):
+        session = _own_rules_guard(x_jarvis_session)
+        user = session["user"]
+        store = current("alert_rules_store")
+        rule = store.create_rule(body.model_dump(), owner_user_id=user["id"])
+        _audit("alert.rule.created", user["id"], user["role"], {"rule_id": rule["id"], "name": rule["name"]})
+        return {"rule": rule}
+
+    @router.patch("/alerts/rules/{rule_id}")
+    def update_own_rule(rule_id: str, body: AlertRuleUpdate, x_jarvis_session: str | None = Header(default=None)):
+        session = _own_rules_guard(x_jarvis_session)
+        user = session["user"]
+        store = current("alert_rules_store")
+        existing = store.get_rule(rule_id)
+        if existing is None or existing.get("owner_user_id") != user["id"]:
+            raise HTTPException(404, "Rule not found")
+        patch = {k: v for k, v in body.model_dump().items() if v is not None}
+        updated = store.update_rule(rule_id, patch)
+        _audit("alert.rule.updated", user["id"], user["role"], {"rule_id": rule_id, "patch": list(patch.keys())})
+        return {"rule": updated}
+
+    @router.delete("/alerts/rules/{rule_id}")
+    def delete_own_rule(rule_id: str, x_jarvis_session: str | None = Header(default=None)):
+        session = _own_rules_guard(x_jarvis_session)
+        user = session["user"]
+        store = current("alert_rules_store")
+        existing = store.get_rule(rule_id)
+        if existing is None or existing.get("owner_user_id") != user["id"]:
+            raise HTTPException(404, "Rule not found")
+        store.delete_rule(rule_id)
+        _audit("alert.rule.deleted", user["id"], user["role"], {"rule_id": rule_id})
+        return {"ok": True, "id": rule_id}
+
+    @router.post("/alerts/rules/{rule_id}/test")
+    async def test_own_rule(rule_id: str, x_jarvis_session: str | None = Header(default=None)):
+        session = _own_rules_guard(x_jarvis_session)
+        user = session["user"]
+        store = current("alert_rules_store")
+        rule = store.get_rule(rule_id)
+        if rule is None or rule.get("owner_user_id") != user["id"]:
+            raise HTTPException(404, "Rule not found")
+        engine = current("alert_engine")
+        event = await engine.fire_test_alert(rule)
+        _audit("alert.rule.tested", user["id"], user["role"], {"rule_id": rule_id})
+        return {"ok": True, "event": event}
+
+    @router.get("/alerts/history")
+    def get_own_history(limit: int = 100, x_jarvis_session: str | None = Header(default=None)):
+        session = _own_rules_guard(x_jarvis_session)
+        engine = current("alert_engine")
+        return {"alerts": engine.get_history(limit=min(limit, 500), owner_user_id=session["user"]["id"])}
 
     @router.websocket("/ws/alerts")
     async def ws_alerts(websocket: WebSocket):

@@ -67,11 +67,12 @@ class HomeAssistantServiceTests(unittest.TestCase):
     def tearDown(self):
         self.tmpdir.cleanup()
 
-    def test_first_admin_receives_access_without_explicit_permission(self):
-        admin = self.user_store.create_user("owner", role="admin", enabled=True)
-        policy = self.service.policy_snapshot(user_id=admin["id"], role=admin["role"])
+    def test_any_admin_receives_access_without_explicit_permission(self):
+        self.user_store.create_user("owner", role="admin", enabled=True)
+        second_admin = self.user_store.create_user("owner2", role="admin", enabled=True)
+        policy = self.service.policy_snapshot(user_id=second_admin["id"], role=second_admin["role"])
         self.assertTrue(policy["access_granted"])
-        self.assertEqual("first_global_admin", policy["access_reason"])
+        self.assertEqual("admin_role", policy["access_reason"])
 
     def test_non_admin_requires_explicit_permission(self):
         self.user_store.create_user("owner", role="admin", enabled=True)
@@ -295,6 +296,69 @@ class HomeAssistantServiceTests(unittest.TestCase):
             server.shutdown()
             server.server_close()
             thread.join(timeout=2)
+
+    def test_check_connection_false_when_not_configured(self):
+        client = HomeAssistantClient()
+        self.assertFalse(client.check_connection())
+
+    def test_check_connection_true_when_reachable(self):
+        import os
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"message": "API running."}')
+
+            def log_message(self, format, *args):  # noqa: A003
+                return
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            os.environ["JARVIS_HOME_ASSISTANT_URL"] = f"http://127.0.0.1:{server.server_port}"
+            os.environ["JARVIS_HOME_ASSISTANT_TOKEN"] = "test-token"
+            client = HomeAssistantClient()
+            self.assertTrue(client.check_connection())
+        finally:
+            os.environ.pop("JARVIS_HOME_ASSISTANT_URL", None)
+            os.environ.pop("JARVIS_HOME_ASSISTANT_TOKEN", None)
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=2)
+
+    def test_overview_has_no_alert_when_ha_not_configured(self):
+        result = self.service.overview(user_id=None, role="admin")
+        codes = [a["code"] for a in result["alerts"]]
+        self.assertNotIn("ha_unreachable", codes)
+        self.assertIsNone(result["reachable"])
+
+    def test_overview_alerts_when_configured_but_unreachable(self):
+        import os
+
+        os.environ["JARVIS_HOME_ASSISTANT_URL"] = "http://127.0.0.1:1"
+        os.environ["JARVIS_HOME_ASSISTANT_TOKEN"] = "test-token"
+        try:
+            client = HomeAssistantClient()
+            service = HomeAssistantService(
+                store=self.store,
+                client=client,
+                user_store=self.user_store,
+                membership_store=self.membership_store,
+                permission_store=self.permission_store,
+                resolve_effective_permissions=resolve_effective_permissions,
+                normalize_role=lambda role: role or "guest_restricted",
+                audit_log=self.audit_probe,
+            )
+            result = service.overview(user_id=None, role="admin")
+            codes = [a["code"] for a in result["alerts"]]
+            self.assertIn("ha_unreachable", codes)
+            self.assertFalse(result["reachable"])
+        finally:
+            os.environ.pop("JARVIS_HOME_ASSISTANT_URL", None)
+            os.environ.pop("JARVIS_HOME_ASSISTANT_TOKEN", None)
 
     def test_calendar_and_inbox_write_back_can_sync_to_http_provider(self):
         import json

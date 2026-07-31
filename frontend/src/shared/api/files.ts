@@ -28,18 +28,41 @@ export type FilesPolicy = {
 
 export type BreadcrumbItem = { id: string; name: string };
 
+export type FolderAccess = "owner" | "read" | "write";
+
 export type BrowseResponse = {
   policy: FilesPolicy;
   parent_id: string | null;
   breadcrumb: BreadcrumbItem[];
   folders: FileFolder[];
   files: FileEntry[];
+  owner_user_id: string;
+  owner_username: string | null;
+  access: FolderAccess;
 };
 
 export type QuotaResponse = {
   policy: FilesPolicy;
   used_bytes: number;
   quota_bytes: number;
+};
+
+export type MyGroup = { id: string; name: string };
+
+export type ShareGrant = {
+  id: string;
+  folder_id: string;
+  group_id: string;
+  group_name: string;
+  permission: "read" | "write";
+  created_by: string;
+  created_at: number;
+};
+
+export type SharedWithMeEntry = {
+  folder: FileFolder;
+  owner_username: string | null;
+  access: "read" | "write";
 };
 
 export function browseFiles(parentId?: string | null) {
@@ -151,6 +174,35 @@ export async function downloadFile(fileId: string, filename: string): Promise<vo
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+export function fetchMyGroups() {
+  return apiRequest<{ policy: FilesPolicy; groups: MyGroup[] }>("/files/my-groups", { includeUser: true });
+}
+
+export function fetchSharedWithMe() {
+  return apiRequest<{ policy: FilesPolicy; shared: SharedWithMeEntry[] }>("/files/shared-with-me", { includeUser: true });
+}
+
+export function shareFolder(folderId: string, groupId: string, permission: "read" | "write") {
+  return apiRequest<{ policy: FilesPolicy; share: ShareGrant }>(`/files/folders/${encodeURIComponent(folderId)}/shares`, {
+    method: "POST",
+    includeUser: true,
+    body: { group_id: groupId, permission },
+  });
+}
+
+export function listFolderShares(folderId: string) {
+  return apiRequest<{ policy: FilesPolicy; shares: ShareGrant[] }>(`/files/folders/${encodeURIComponent(folderId)}/shares`, {
+    includeUser: true,
+  });
+}
+
+export function unshareFolder(shareId: string) {
+  return apiRequest<{ policy: FilesPolicy; deleted: boolean }>(`/files/shares/${encodeURIComponent(shareId)}`, {
+    method: "DELETE",
+    includeUser: true,
+  });
 }
 
 export function formatBytes(bytes: number): string {

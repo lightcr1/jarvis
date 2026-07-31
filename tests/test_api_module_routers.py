@@ -134,7 +134,7 @@ class _FakeRagStore:
         self.data = {"updated_at": 0, "report": {}, "sources": {}}
 
     def search(self, _query, limit=5):
-        return [{"source": "wikijs", "title": "Task", "text": "A task"}][:limit]
+        return [{"source": "github", "title": "Task", "text": "A task"}][:limit]
 
     def refresh(self):
         return {"ok": True}

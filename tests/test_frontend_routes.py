@@ -2,7 +2,7 @@ import unittest
 
 from starlette.responses import FileResponse, RedirectResponse
 
-from jarvis.frontend_routes import chat_legacy_redirect, frontend_index_response, orb_legacy_redirect
+from jarvis.frontend_routes import chat_legacy_redirect, frontend_index_response, frontend_router, orb_legacy_redirect
 
 
 class FrontendRouteModuleTests(unittest.TestCase):
@@ -10,6 +10,20 @@ class FrontendRouteModuleTests(unittest.TestCase):
         response = frontend_index_response()
         self.assertIsInstance(response, FileResponse)
         self.assertEqual(response.headers.get("cache-control"), "no-store")
+
+    def test_workspace_spa_paths_are_registered(self):
+        registered = {route.path for route in frontend_router.routes}
+        for path in ("/workspace", "/workspace/files", "/workspace/communication", "/workspace/desktop"):
+            self.assertIn(path, registered)
+
+    def test_workspace_spa_route_is_not_a_wildcard(self):
+        # A /workspace/{path:path} wildcard would shadow the real
+        # /workspace/targets* backend API (frontend_router is included before
+        # build_workspace_router in jarvisappv4.py) — GET requests to it would
+        # get the SPA shell back instead of JSON. See the comment in
+        # frontend_routes.py above these routes.
+        registered = {route.path for route in frontend_router.routes}
+        self.assertNotIn("/workspace/{path:path}", registered)
 
     def test_legacy_routes_redirect_to_spa_paths(self):
         orb_response = orb_legacy_redirect()

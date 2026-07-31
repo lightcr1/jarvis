@@ -1,11 +1,106 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
-  J, useJ, StatusBadge, MetricCard, Spinner,
+  J, useJ, StatusBadge, MetricCard, Spinner, showToast,
   IconRefresh, IconServer, IconActivity, IconGrid, IconPower, IconChat, IconSearch,
 } from './jarvis-shared';
 import { sendChatMessage } from '../shared/api/chat';
-import { fetchProxmoxHealth, type ProxmoxHostHealth, type ProxmoxResource } from '../shared/api/proxmox';
+import {
+  fetchProxmoxHealth, fetchProxmoxHosts, createProxmoxHost, deleteProxmoxHost,
+  type ProxmoxHostHealth, type ProxmoxResource, type ProxmoxHostRecord,
+} from '../shared/api/proxmox';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
+
+const EMPTY_HOST_FORM = { name: '', base_url: '', api_token: '', verify_tls: true };
+
+function HostManager({ onChanged }: { onChanged: () => void }) {
+  const J = useJ();
+  const [hosts, setHosts] = useState<ProxmoxHostRecord[]>([]);
+  const [open, setOpen] = useState(false);
+  const [form, setForm] = useState(EMPTY_HOST_FORM);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  const load = () => { fetchProxmoxHosts().then(setHosts).catch(() => {}); };
+  useEffect(() => { load(); }, []);
+
+  const add = async () => {
+    if (!form.name.trim() || !form.base_url.trim() || !form.api_token.trim()) return;
+    setBusy(true);
+    setError('');
+    try {
+      await createProxmoxHost({ ...form, name: form.name.trim(), base_url: form.base_url.trim(), api_token: form.api_token.trim() });
+      setForm(EMPTY_HOST_FORM);
+      load();
+      onChanged();
+      showToast('Proxmox host added', 'success');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to add host.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remove = async (id: string) => {
+    setBusy(true);
+    setError('');
+    try {
+      await deleteProxmoxHost(id);
+      load();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to remove host.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const inp = { background: J.bg3, border: `1px solid ${J.border}`, borderRadius: 6, padding: '6px 9px', fontSize: 12, color: J.text, outline: 'none' };
+
+  return (
+    <div style={{ background: J.bg1, border: `1px solid ${J.border}`, borderRadius: 14, marginBottom: 16, overflow: 'hidden' }}>
+      <button onClick={() => setOpen(v => !v)}
+        style={{ width: '100%', textAlign: 'left', padding: '12px 16px', background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between', color: J.text, fontSize: 13, fontWeight: 600 }}>
+        <span>Manage hosts ({hosts.length})</span>
+        <span style={{ color: J.textMuted, fontSize: 11 }}>{open ? 'Hide' : 'Show'}</span>
+      </button>
+      {open && (
+        <div style={{ padding: '0 16px 16px' }}>
+          {error && <div style={{ color: J.error, fontSize: 12, marginBottom: 10 }}>{error}</div>}
+          {hosts.length === 0 && <div style={{ fontSize: 12, color: J.textMuted, marginBottom: 10 }}>No hosts configured yet.</div>}
+          {hosts.map(h => (
+            <div key={h.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '8px 0', borderTop: `1px solid ${J.border}`, gap: 10 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: J.text, fontWeight: 500 }}>{h.name}</div>
+                <div style={{ fontSize: 11, color: J.textMuted, fontFamily: 'JetBrains Mono,monospace', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  {h.base_url} · token {h.token_hint}{h.verify_tls ? '' : ' · TLS verify off'}
+                </div>
+              </div>
+              <button onClick={() => void remove(h.id)} disabled={busy}
+                style={{ padding: '4px 10px', fontSize: 11, borderRadius: 4, cursor: busy ? 'default' : 'pointer', background: 'transparent', border: `1px solid ${J.border}`, color: J.error, flexShrink: 0 }}>
+                Remove
+              </button>
+            </div>
+          ))}
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginTop: 12, alignItems: 'center' }}>
+            <input style={{ ...inp, flex: '1 1 120px' }} placeholder="Name" value={form.name}
+              onChange={e => setForm(f => ({ ...f, name: e.target.value }))} />
+            <input style={{ ...inp, flex: '2 1 200px' }} placeholder="https://host:8006" value={form.base_url}
+              onChange={e => setForm(f => ({ ...f, base_url: e.target.value }))} />
+            <input style={{ ...inp, flex: '2 1 220px' }} placeholder="API token (user@realm!id=secret)" type="password" value={form.api_token}
+              onChange={e => setForm(f => ({ ...f, api_token: e.target.value }))} />
+            <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, color: J.textSec, flexShrink: 0 }}>
+              <input type="checkbox" checked={form.verify_tls} onChange={e => setForm(f => ({ ...f, verify_tls: e.target.checked }))} /> Verify TLS
+            </label>
+            <button onClick={() => void add()} disabled={busy || !form.name.trim() || !form.base_url.trim() || !form.api_token.trim()}
+              style={{ padding: '6px 14px', fontSize: 12, fontWeight: 600, borderRadius: 6, cursor: 'pointer', background: J.amberDim, border: `1px solid ${J.borderAccent}`, color: J.amber, flexShrink: 0 }}>
+              Add host
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 function fmtPercent(value?: number) {
   if (typeof value !== 'number' || Number.isNaN(value)) return '—';
@@ -328,6 +423,8 @@ export function ProxmoxScreen({ onNavigate }: { onNavigate: (screen: string) => 
           <MetricCard label="Running" value={summary.running} sublabel={`${summary.vms} VMs · ${summary.containers} LXCs`} icon={<IconActivity size={14} />} accent={J.success} />
           <MetricCard label="Stopped" value={summary.stopped} sublabel="Ready to start" icon={<IconPower size={14} />} accent={J.warn} />
         </div>
+
+        <HostManager onChanged={() => { void load(); }} />
 
         {/* Filter bar */}
         {hosts.length > 0 && (

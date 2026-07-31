@@ -65,6 +65,10 @@ export type AdminSettings = {
     confirmation_ttl_sec: number;
     remote_allowed_cidrs: string[];
   };
+  files?: {
+    default_storage_quota_mb: number;
+    overage_price_chf_per_gb_month: number;
+  };
   provider?: {
     default_provider: string;
     openrouter_enabled: boolean;
@@ -173,8 +177,23 @@ export function updateAdminPermissions(scope: "users" | "groups", target: string
   });
 }
 
+export type EffectivePermissionContext = {
+  role: string;
+  user_id: string | null;
+  role_permissions: string[];
+  user_permissions: string[];
+  group_ids: string[];
+  group_permissions: Record<string, string[]>;
+  effective_permissions: string[];
+};
+
+export type EffectivePermissionsResponse = {
+  user: AdminUser;
+  permissions: EffectivePermissionContext;
+};
+
 export function fetchEffectivePermissions(userId: string) {
-  return apiRequest<Record<string, unknown>>(`/admin/permissions/effective/${encodeURIComponent(userId)}`, { includeAdmin: true });
+  return apiRequest<EffectivePermissionsResponse>(`/admin/permissions/effective/${encodeURIComponent(userId)}`, { includeAdmin: true });
 }
 
 export type AdminSession = {
@@ -428,4 +447,38 @@ export type AdminIntegrationsStatus = {
 
 export function fetchAdminIntegrationsStatus() {
   return apiRequest<AdminIntegrationsStatus>("/admin/integrations/status", { includeAdmin: true });
+}
+
+export type HomeAssistantCredentialsStatus = {
+  configured: boolean;
+  custom: boolean;
+  base_url: string;
+  token_hint: string;
+  updated_at: number | null;
+};
+
+export function fetchHomeAssistantCredentials() {
+  return apiRequest<HomeAssistantCredentialsStatus>("/admin/integrations/home-assistant", { includeAdmin: true });
+}
+
+export function setHomeAssistantCredentials(base_url: string, api_token: string) {
+  return apiRequest<{ configured: boolean; base_url: string }>("/admin/integrations/home-assistant", {
+    method: "PUT",
+    includeAdmin: true,
+    body: { base_url, api_token },
+  });
+}
+
+export function clearHomeAssistantCredentials() {
+  return apiRequest<{ configured: boolean }>("/admin/integrations/home-assistant", {
+    method: "DELETE",
+    includeAdmin: true,
+  });
+}
+
+export function testHomeAssistantConnection() {
+  return apiRequest<{ ok: boolean }>("/admin/integrations/home-assistant/test", {
+    method: "POST",
+    includeAdmin: true,
+  });
 }

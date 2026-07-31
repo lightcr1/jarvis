@@ -32,7 +32,7 @@ Use this file as the operational tracker while building toward August launch.
 ## Step 3 — Core Assistant Functionality
 
 - [x] GitHub knowledge source productionized. (GitHub RAG refresh now ingests filtered blob content, not path names only)
-- [ ] WikiJS removed from V1 critical path.
+- [x] WikiJS removed from V1 critical path. (Fully removed from the codebase: no `WIKIJS_*` env vars, no wiki-page/RAG chat intents, GitHub is the sole RAG source)
 - [x] Fallback behavior deterministic and tested. (Full automated suite green under `.venv`; chat fallback/history coverage passing)
 - [x] Skill execution permission-gated. (Engine/chat/direct skill permission paths covered across admin/authz/engine tests)
 

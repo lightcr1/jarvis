@@ -255,7 +255,7 @@ function OverviewSection() {
         {[
           { icon: <IconMic size={15} />, title: 'Voice Interface', desc: 'Wake word detection, speech-to-text, neural TTS with multiple voices' },
           { icon: <IconCode size={15} />, title: '50+ Skills', desc: 'System monitoring, calculations, web lookups, timers, and more' },
-          { icon: <IconSettings size={15} />, title: 'Integrations', desc: 'Proxmox, Home Assistant, GitHub RAG, WikiJS RAG' },
+          { icon: <IconSettings size={15} />, title: 'Integrations', desc: 'Proxmox, Home Assistant, GitHub RAG' },
           { icon: <IconShield size={15} />, title: 'RBAC & Audit', desc: 'Role-based access control, audit log, emergency stop' },
           { icon: <IconMemory size={15} />, title: 'Memory', desc: 'Persistent notes, location, display name — synced server-side' },
           { icon: <IconActivity size={15} />, title: 'Live Metrics', desc: 'CPU, RAM, disk polling in the chat header and admin dashboard' },
@@ -761,7 +761,6 @@ function DeploymentSection() {
           ['JARVIS_PROXMOX_TOKEN_SECRET', 'Proxmox API token secret'],
           ['JARVIS_PROXMOX_VERIFY_SSL', 'Verify Proxmox SSL cert: true · false'],
           ['JARVIS_GITHUB_TOKEN', 'GitHub personal access token for RAG indexing'],
-          ['JARVIS_WIKIJS_URL', 'WikiJS instance URL for RAG indexing'],
         ].map(([key, desc], i) => (
           <div key={key} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,1.5fr)', padding: '9px 14px', borderBottom: i < 16 ? `1px solid ${J.border}` : 'none', background: i % 2 === 1 ? J.bg2 : 'transparent', gap: 16, alignItems: 'center' }}>
             <code style={{ fontSize: 11, color: J.amber, fontFamily: 'JetBrains Mono,monospace', wordBreak: 'break-all' }}>{key}</code>
@@ -836,7 +835,7 @@ function resolveRagState(data: RagStatus | null, error: boolean): IntegrationSta
 function resolveHaState(data: HomeAssistantHealth | null, error: boolean): IntegrationState {
   if (!data && !error) return 'loading';
   if (error) return 'unknown';
-  return data!.integration?.configured && data!.integration?.healthy ? 'active' : 'inactive';
+  return data!.integration?.configured && data!.reachable ? 'active' : 'inactive';
 }
 
 function ragDocCount(data: RagStatus | null): number {

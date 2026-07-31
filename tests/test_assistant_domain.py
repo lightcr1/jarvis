@@ -8,7 +8,6 @@ from jarvis.assistant_domain import (
     _resolve_event_date,
     _safe_eval,
     block_write_if_unauthorized,
-    format_rag_reply,
     rag_query_from_prompt,
     select_rag_hits,
     try_skill,
@@ -47,32 +46,23 @@ class AssistantDomainTests(unittest.TestCase):
         )
         self.assertEqual("missing_token", result["data"]["error"])
 
-    def test_rag_query_from_prompt_detects_tasks_mode(self):
+    def test_rag_query_from_prompt_no_longer_routes_tasks_through_wiki(self):
         result = rag_query_from_prompt("zeige mir die taskliste")
-        self.assertEqual("tasks", result["mode"])
-        self.assertEqual("wikijs", result["source"])
+        self.assertIsNone(result)
 
     def test_select_rag_hits_filters_source_and_title(self):
         rag_store = Mock()
         rag_store.search.return_value = [
             {"source": "github", "title": "other", "text": "nope"},
-            {"source": "wikijs", "title": "Target", "text": "match"},
-            {"source": "wikijs", "title": "other", "text": "later"},
+            {"source": "docs", "title": "Target", "text": "match"},
+            {"source": "docs", "title": "other", "text": "later"},
         ]
         hits = select_rag_hits(
-            {"query": "target", "source": "wikijs", "title": "target"},
+            {"query": "target", "source": "docs", "title": "target"},
             rag_store=rag_store,
             limit=2,
         )
         self.assertEqual(["Target", "other"], [hit["title"] for hit in hits])
-
-    def test_format_rag_reply_formats_tasks(self):
-        reply = format_rag_reply(
-            {"mode": "tasks"},
-            [{"title": "Task A", "text": "Do the important thing"}],
-        )
-        self.assertIn("Current tasks from wiki", reply)
-        self.assertIn("Task A", reply)
 
     def test_try_skill_rejects_invalid_ping_host(self):
         with self.assertRaises(HTTPException):

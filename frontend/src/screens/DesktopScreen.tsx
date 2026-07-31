@@ -273,7 +273,7 @@ function TargetCard({
   );
 }
 
-export function WorkspaceScreen(_props: { onNavigate?: (screen: string) => void }) {
+export function DesktopScreen() {
   useJ();
   const [targets, setTargets] = useState<WorkspaceTarget[]>([]);
   const [credentialStatus, setCredentialStatus] = useState<Record<string, boolean>>({});

@@ -1,11 +1,13 @@
 import React, { useEffect, useState } from "react";
-import { Link, NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 import { getStoredPreferences } from "../api/client";
-import { J, useJ, IconMoon, IconSun, applyTheme } from "../../screens/jarvis-shared";
+import { J, useJ, IconMoon, IconSun, applyTheme, applyAccent, applyCompact, ToastContainer } from "../../screens/jarvis-shared";
+import { AppSwitcher } from "./AppSwitcher";
+import { AppearancePanel } from "../ui/AppearancePanel";
+import { OverlayDialog } from "../ui/OverlayDialog";
 
 const NAV_LINKS = [
-  { to: "/chat",                label: "← Back to Chat", end: false },
   { to: "/dashboard",           label: "Overview",       end: true  },
   { to: "/dashboard/users",     label: "Users",          end: false },
   { to: "/dashboard/groups",    label: "Groups",         end: false },
@@ -15,6 +17,7 @@ const NAV_LINKS = [
   { to: "/dashboard/logs",      label: "Logs",           end: false },
   { to: "/dashboard/settings",  label: "Settings",       end: false },
   { to: "/dashboard/provider",  label: "AI Provider",    end: false },
+  { to: "/dashboard/billing",   label: "Billing",        end: false },
   { to: "/dashboard/usage",     label: "Usage",          end: false },
   { to: "/dashboard/integrations", label: "Integrations", end: false },
   { to: "/dashboard/docs",      label: "Docs",           end: false },
@@ -26,11 +29,15 @@ export function AdminShell() {
   const navigate = useNavigate();
   const [booting, setBooting] = useState(true);
   const [error, setError] = useState("");
+  const [showSwitcher, setShowSwitcher] = useState(false);
+  const [showPreferences, setShowPreferences] = useState(false);
   const isDark = (preferences.theme ?? "dark") === "dark";
 
   useEffect(() => {
-    const storedTheme = getStoredPreferences().theme;
-    if (storedTheme) applyTheme(storedTheme as "dark" | "light");
+    const storedPrefs = getStoredPreferences();
+    if (storedPrefs.theme) applyTheme(storedPrefs.theme as "dark" | "light");
+    if (storedPrefs.accent_color) applyAccent(storedPrefs.accent_color);
+    applyCompact(storedPrefs.compact_mode ?? false);
   }, []);
 
   useEffect(() => {
@@ -59,18 +66,21 @@ export function AdminShell() {
         width: 200, flexShrink: 0, background: J.bg1, borderRight: `1px solid ${J.border}`,
         display: "flex", flexDirection: "column", overflow: "hidden",
       }}>
-        {/* Brand */}
-        <Link to="/dashboard" style={{ textDecoration: "none", display: "flex", alignItems: "center", gap: 10, padding: "16px 16px 12px", borderBottom: `1px solid ${J.border}` }}>
-          <div style={{
-            width: 32, height: 32, borderRadius: 8, background: J.amberDim,
-            border: `1px solid ${J.borderAccent}`, display: "flex", alignItems: "center",
-            justifyContent: "center", fontSize: 14, fontWeight: 700, color: J.amber, flexShrink: 0,
-          }}>J</div>
-          <div>
-            <div style={{ fontSize: 13, fontWeight: 700, color: J.text }}>Jarvis Admin</div>
-            <div style={{ fontSize: 10, color: J.textMuted }}>Operator Dashboard</div>
-          </div>
-        </Link>
+        {/* Brand / area switcher */}
+        <div style={{ position: "relative", borderBottom: `1px solid ${J.border}` }}>
+          <button onClick={() => setShowSwitcher(v => !v)} style={{ width: "100%", textAlign: "left", background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 10, padding: "16px 16px 12px" }}>
+            <div style={{
+              width: 32, height: 32, borderRadius: 8, background: J.amberDim,
+              border: `1px solid ${J.borderAccent}`, display: "flex", alignItems: "center",
+              justifyContent: "center", fontSize: 14, fontWeight: 700, color: J.amber, flexShrink: 0,
+            }}>J</div>
+            <div>
+              <div style={{ fontSize: 13, fontWeight: 700, color: J.text }}>Jarvis Admin</div>
+              <div style={{ fontSize: 10, color: J.textMuted }}>Operator Dashboard</div>
+            </div>
+          </button>
+          {showSwitcher && <AppSwitcher current="admin" onClose={() => setShowSwitcher(false)} placement="below" />}
+        </div>
 
         {/* Nav links */}
         <nav style={{ flex: 1, padding: "8px 8px", display: "flex", flexDirection: "column", gap: 2, overflowY: "auto" }}>
@@ -101,6 +111,13 @@ export function AdminShell() {
               <div style={{ fontSize: 10, color: J.textMuted }}>admin</div>
             </div>
           </div>
+          <button
+            onClick={() => setShowPreferences(true)}
+            style={{
+              width: "100%", padding: "6px 10px", fontSize: 12, borderRadius: 5, cursor: "pointer", marginBottom: 6,
+              background: "transparent", color: J.textSec, border: `1px solid ${J.border}`,
+            }}
+          >Preferences</button>
           <button
             onClick={() => logout().then(() => navigate("/chat"))}
             style={{
@@ -148,6 +165,13 @@ export function AdminShell() {
           <Outlet />
         </main>
       </div>
+
+      {showPreferences && (
+        <OverlayDialog title="Preferences" eyebrow="Appearance" onClose={() => setShowPreferences(false)}>
+          <AppearancePanel />
+        </OverlayDialog>
+      )}
+      <ToastContainer />
     </div>
   );
 }

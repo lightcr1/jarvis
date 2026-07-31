@@ -40,6 +40,8 @@ class FileService:
         normalize_role,
         user_limits_store,
         admin_settings_store,
+        share_store=None,
+        group_store=None,
         audit_log=None,
     ) -> None:
         self.store = store
@@ -50,6 +52,8 @@ class FileService:
         self.normalize_role = normalize_role
         self.user_limits_store = user_limits_store
         self.admin_settings_store = admin_settings_store
+        self.share_store = share_store
+        self.group_store = group_store
         self.audit_log = audit_log
 
     def _write_audit(self, event: str, *, actor_user_id: str | None, actor_role: str | None, payload: dict | None = None) -> None:
@@ -91,6 +95,35 @@ class FileService:
             raise LookupError("file not found")
         return file_meta
 
+    def _accessible_folder(self, folder_id: str, *, user_id: str | None, role: str | None) -> tuple[dict, str]:
+        """Returns (folder, access) where access is 'owner' | 'write' | 'read'.
+        Raises LookupError (404, not 403 — preserves existing existence-hiding
+        behavior) if the folder doesn't exist or the caller has no access at all.
+        Cascading: a share on any ancestor of this folder (including itself)
+        grants access to this folder too — unlike jarvis_access_granted, which
+        is deliberately non-cascading (see test_jarvis_access_is_per_folder_not_inherited).
+        """
+        folder = self.store.get_folder(folder_id)
+        if not folder:
+            raise LookupError("folder not found")
+        if folder.get("owner_user_id") == user_id or self.normalize_role(role) == "admin":
+            return folder, "owner"
+        if self.share_store is None:
+            raise LookupError("folder not found")
+        user_group_ids = set(self.membership_store.list_user_groups(user_id or ""))
+        best: str | None = None
+        for ancestor in self.store.folder_ancestor_ids(folder_id):
+            for share in self.share_store.list_shares_for_folder(ancestor["id"]):
+                if share.get("group_id") not in user_group_ids:
+                    continue
+                if share.get("permission") == "write":
+                    best = "write"
+                elif best is None and share.get("permission") == "read":
+                    best = "read"
+        if best is None:
+            raise LookupError("folder not found")
+        return folder, best
+
     @staticmethod
     def _sanitize_name(raw: str) -> str:
         try:
@@ -130,7 +163,7 @@ class FileService:
     # Browsing
     # ------------------------------------------------------------------
 
-    def _breadcrumb(self, user_id: str, folder_id: str | None) -> list[dict]:
+    def _breadcrumb(self, owner_user_id: str, folder_id: str | None) -> list[dict]:
         trail: list[dict] = []
         current_id = folder_id
         seen: set[str] = set()
@@ -139,7 +172,7 @@ class FileService:
                 break
             seen.add(current_id)
             folder = self.store.get_folder(current_id)
-            if not folder or folder.get("owner_user_id") != user_id:
+            if not folder or folder.get("owner_user_id") != owner_user_id:
                 break
             trail.append({"id": folder["id"], "name": folder["name"]})
             current_id = folder.get("parent_id")
@@ -148,12 +181,20 @@ class FileService:
 
     def browse(self, parent_id: str | None, *, user_id: str | None, role: str | None) -> dict[str, object]:
         policy = self.require_access(user_id=user_id, role=role, required_permission="files.read")
+        owner_user_id = user_id or ""
+        access = "owner"
         if parent_id:
-            self._owned_folder(parent_id, user_id=user_id, role=role)
-        folders = sorted(self.store.list_child_folders(user_id or "", parent_id), key=lambda item: item.get("name", ""))
-        files = sorted(self.store.list_files_in_folder(user_id or "", parent_id), key=lambda item: item.get("filename", ""))
-        breadcrumb = self._breadcrumb(user_id or "", parent_id)
-        return {"policy": policy, "parent_id": parent_id, "breadcrumb": breadcrumb, "folders": folders, "files": files}
+            folder, access = self._accessible_folder(parent_id, user_id=user_id, role=role)
+            owner_user_id = folder["owner_user_id"]
+        folders = sorted(self.store.list_child_folders(owner_user_id, parent_id), key=lambda item: item.get("name", ""))
+        files = sorted(self.store.list_files_in_folder(owner_user_id, parent_id), key=lambda item: item.get("filename", ""))
+        breadcrumb = self._breadcrumb(owner_user_id, parent_id)
+        owner_user = self.user_store.get_user(owner_user_id)
+        return {
+            "policy": policy, "parent_id": parent_id, "breadcrumb": breadcrumb, "folders": folders, "files": files,
+            "owner_user_id": owner_user_id, "owner_username": (owner_user or {}).get("username"),
+            "access": access,
+        }
 
     # ------------------------------------------------------------------
     # Folder CRUD
@@ -165,9 +206,12 @@ class FileService:
         policy = self.require_access(user_id=user_id, role=role, required_permission="files.write")
         name = self._sanitize_name(str((payload or {}).get("name") or ""))
         parent_id = (payload or {}).get("parent_id") or None
-        if parent_id:
-            self._owned_folder(str(parent_id), user_id=user_id, role=role)
         owner = user_id or ""
+        if parent_id:
+            parent_folder, access = self._accessible_folder(str(parent_id), user_id=user_id, role=role)
+            if access == "read":
+                raise FileAccessError("read-only access to this shared folder")
+            owner = parent_folder["owner_user_id"]
         if self.store.find_folder_by_name(owner, parent_id, name):
             raise ValueError("a folder with this name already exists here")
         if self.store.find_file_by_name(owner, parent_id, name):
@@ -257,6 +301,9 @@ class FileService:
             self.store.delete_files_in_folder(owner, fid)
         for fid in reversed(descendant_ids):
             self.store.delete_folder(fid)
+        if self.share_store is not None:
+            for fid in descendant_ids:
+                self.share_store.remove_shares_for_folder(fid)
 
         if freed_bytes:
             self.store.adjust_quota_usage_bytes(owner, -freed_bytes)
@@ -317,7 +364,10 @@ class FileService:
         clean_name = self._sanitize_name(filename or "")
         owner = user_id or ""
         if folder_id:
-            self._owned_folder(folder_id, user_id=user_id, role=role)
+            folder, access = self._accessible_folder(folder_id, user_id=user_id, role=role)
+            if access == "read":
+                raise FileAccessError("read-only access to this shared folder")
+            owner = folder["owner_user_id"]
         if self.store.find_file_by_name(owner, folder_id, clean_name):
             raise ValueError("a file with this name already exists in this folder")
         if self.store.find_folder_by_name(owner, folder_id, clean_name):
@@ -431,8 +481,96 @@ class FileService:
 
     def resolve_download(self, file_id: str, *, user_id: str | None, role: str | None) -> dict[str, object]:
         policy = self.require_access(user_id=user_id, role=role, required_permission="files.read")
-        file_meta = self._owned_file(file_id, user_id=user_id, role=role)
+        file_meta = self.store.get_file(file_id)
+        if not file_meta:
+            raise LookupError("file not found")
+        is_owner = file_meta.get("owner_user_id") == user_id or self.normalize_role(role) == "admin"
+        if not is_owner:
+            folder_id = file_meta.get("folder_id")
+            if not folder_id:
+                raise LookupError("file not found")
+            self._accessible_folder(folder_id, user_id=user_id, role=role)
         disk_path = self.store.file_disk_path(file_meta)
         if not disk_path.is_file():
             raise LookupError("file content missing on disk")
         return {"policy": policy, "file": file_meta, "disk_path": disk_path}
+
+    # ------------------------------------------------------------------
+    # Folder sharing via existing Groups — resource-scoped grants, distinct
+    # from files.read/write/manage/share (the global permission gates).
+    # ------------------------------------------------------------------
+
+    def list_my_groups(self, *, user_id: str | None, role: str | None) -> dict[str, object]:
+        """All groups' id/name (no description, no membership) — the picker for
+        "share with group X" needs every group that exists, not just ones the
+        sharer happens to belong to (e.g. sharing with a "Kids" group the owner
+        administers but isn't a member of). Membership itself stays private —
+        this never reveals who's in a group, only that the group exists.
+        """
+        policy = self.require_access(user_id=user_id, role=role, required_permission="files.read")
+        groups = [{"id": g["id"], "name": g["name"]} for g in self.group_store.list_groups()]
+        groups.sort(key=lambda g: g["name"])
+        return {"policy": policy, "groups": groups}
+
+    def share_folder(self, folder_id: str, group_id: str, permission: str, *, user_id: str | None, role: str | None) -> dict[str, object]:
+        if _emergency_stop_active():
+            raise PermissionError("emergency stop is active — write actions are blocked")
+        policy = self.require_access(user_id=user_id, role=role, required_permission="files.share")
+        self._owned_folder(folder_id, user_id=user_id, role=role)
+        if permission not in ("read", "write"):
+            raise ValueError("permission must be 'read' or 'write'")
+        if not self.group_store.get_group(group_id):
+            raise ValueError("group not found")
+        share = self.share_store.add_share(folder_id, group_id, permission, user_id or "")
+        self._write_audit(
+            "files_folder_shared", actor_user_id=user_id, actor_role=role,
+            payload={"folder_id": folder_id, "group_id": group_id, "permission": permission},
+        )
+        return {"policy": policy, "share": share}
+
+    def unshare_folder(self, share_id: str, *, user_id: str | None, role: str | None) -> dict[str, object]:
+        if _emergency_stop_active():
+            raise PermissionError("emergency stop is active — write actions are blocked")
+        policy = self.require_access(user_id=user_id, role=role, required_permission="files.share")
+        share = self.share_store.get_share(share_id)
+        if not share:
+            raise LookupError("share not found")
+        self._owned_folder(share["folder_id"], user_id=user_id, role=role)
+        deleted = self.share_store.remove_share(share_id)
+        self._write_audit(
+            "files_folder_unshared", actor_user_id=user_id, actor_role=role,
+            payload={"share_id": share_id, "folder_id": share["folder_id"]},
+        )
+        return {"policy": policy, "deleted": deleted}
+
+    def list_folder_shares(self, folder_id: str, *, user_id: str | None, role: str | None) -> dict[str, object]:
+        policy = self.require_access(user_id=user_id, role=role, required_permission="files.share")
+        self._owned_folder(folder_id, user_id=user_id, role=role)
+        enriched = []
+        for share in self.share_store.list_shares_for_folder(folder_id):
+            group = self.group_store.get_group(share.get("group_id"))
+            enriched.append({**share, "group_name": (group or {}).get("name") or "(deleted group)"})
+        enriched.sort(key=lambda s: s.get("created_at", 0))
+        return {"policy": policy, "shares": enriched}
+
+    def list_shared_with_me(self, *, user_id: str | None, role: str | None) -> dict[str, object]:
+        policy = self.require_access(user_id=user_id, role=role, required_permission="files.read")
+        seen_folder_ids: set[str] = set()
+        entries = []
+        for group_id in self.membership_store.list_user_groups(user_id or ""):
+            for share in self.share_store.list_shares_for_group(group_id):
+                folder_id = share.get("folder_id")
+                if folder_id in seen_folder_ids:
+                    continue
+                folder = self.store.get_folder(folder_id)
+                if not folder:
+                    continue
+                seen_folder_ids.add(folder_id)
+                owner_user = self.user_store.get_user(folder["owner_user_id"])
+                entries.append({
+                    "folder": folder,
+                    "owner_username": (owner_user or {}).get("username"),
+                    "access": share.get("permission"),
+                })
+        entries.sort(key=lambda e: e["folder"].get("name", ""))
+        return {"policy": policy, "shared": entries}

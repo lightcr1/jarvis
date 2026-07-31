@@ -513,6 +513,11 @@ class SSEShapeWithRouterTest(unittest.TestCase):
 
         class _NoopLimits:
             def get(self, u): return {}
+            def update(self, u, patch): return {}
+
+        class _NoopPlans:
+            def get_plan(self, plan_id): return None
+            def list_plans(self): return []
 
         class _NoopHub:
             def begin(self, *a, **kw): return "tok"
@@ -567,6 +572,7 @@ class SSEShapeWithRouterTest(unittest.TestCase):
             credit_store=_NoopCredits(),
             user_limits_store=_NoopLimits(),
             admin_settings_store=_AdminSettings(),
+            plan_store=_NoopPlans(),
             get_anthropic=lambda: None,
             get_gemini=lambda: None,
             get_openai=lambda: None,

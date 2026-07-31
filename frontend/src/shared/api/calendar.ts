@@ -39,6 +39,12 @@ export function createCalendarEvent(body: { title: string; start: number; end: n
   });
 }
 
+export function updateCalendarEvent(eventId: string, body: { title: string; start: number; end: number; description?: string; location?: string; force?: boolean }) {
+  return apiRequest<{ policy: CalendarPolicy; event?: CalendarEvent; conflicts: CalendarEvent[]; updated: boolean }>(`/calendar/events/${encodeURIComponent(eventId)}`, {
+    method: "PUT", includeUser: true, body,
+  });
+}
+
 export function deleteCalendarEvent(eventId: string) {
   return apiRequest<{ policy: CalendarPolicy; deleted: boolean }>(`/calendar/events/${encodeURIComponent(eventId)}`, {
     method: "DELETE", includeUser: true,

@@ -107,6 +107,57 @@ def build_files_router(deps: dict) -> APIRouter:
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
 
+    @router.get("/files/my-groups")
+    def my_groups(x_jarvis_session: str | None = Header(default=None)):
+        user_id, role = _session_identity(x_jarvis_session)
+        try:
+            return current("file_service").list_my_groups(user_id=user_id, role=role)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.get("/files/shared-with-me")
+    def shared_with_me(x_jarvis_session: str | None = Header(default=None)):
+        user_id, role = _session_identity(x_jarvis_session)
+        try:
+            return current("file_service").list_shared_with_me(user_id=user_id, role=role)
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.post("/files/folders/{folder_id}/shares")
+    def share_folder(folder_id: str, payload: dict[str, object], x_jarvis_session: str | None = Header(default=None)):
+        user_id, role = _session_identity(x_jarvis_session)
+        try:
+            return current("file_service").share_folder(
+                folder_id, str((payload or {}).get("group_id") or ""), str((payload or {}).get("permission") or ""),
+                user_id=user_id, role=role,
+            )
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.get("/files/folders/{folder_id}/shares")
+    def list_folder_shares(folder_id: str, x_jarvis_session: str | None = Header(default=None)):
+        user_id, role = _session_identity(x_jarvis_session)
+        try:
+            return current("file_service").list_folder_shares(folder_id, user_id=user_id, role=role)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.delete("/files/shares/{share_id}")
+    def unshare_folder(share_id: str, x_jarvis_session: str | None = Header(default=None)):
+        user_id, role = _session_identity(x_jarvis_session)
+        try:
+            return current("file_service").unshare_folder(share_id, user_id=user_id, role=role)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
     @router.get("/files/{file_id}/download")
     def download_file(file_id: str, x_jarvis_session: str | None = Header(default=None)):
         user_id, role = _session_identity(x_jarvis_session)

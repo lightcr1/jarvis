@@ -198,6 +198,7 @@ export const IconFolder    = (p: { size?: number }) => <Ic {...p}><path d="M22 1
 export const IconFile      = (p: { size?: number }) => <Ic {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></Ic>;
 export const IconUpload    = (p: { size?: number }) => <Ic {...p}><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></Ic>;
 export const IconAmbient   = (p: { size?: number }) => <Ic {...p}><rect x="2" y="7" width="20" height="13" rx="2"/><circle cx="12" cy="13.5" r="1.2"/><path d="M6.5 3.2c3.4-1.6 7.6-1.6 11 0"/><path d="M9 5.3c1.9-.85 4.1-.85 6 0"/></Ic>;
+export const IconShare      = (p: { size?: number }) => <Ic {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.5"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/></Ic>;
 
 export function Badge({ count }: { count: number }) {
   if (count <= 0) return null;
@@ -324,6 +325,38 @@ function renderInline(text: string): React.ReactNode[] {
     remaining = remaining.slice(first[1].length + first[0].length - first[1].length);
   }
   return parts;
+}
+
+export const ACCENT_COLORS = ['#e09a1a', '#5294e8', '#3dba84', '#a855f7', '#e05555', '#f97316'];
+
+export function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
+  return (
+    <button onClick={() => onChange(!on)}
+      style={{ width: 38, height: 21, borderRadius: 11, background: on ? J.amber : J.bg4, border: `1px solid ${on ? J.amber : J.border}`, cursor: 'pointer', position: 'relative', transition: 'all .18s', flexShrink: 0 }}>
+      <span style={{ position: 'absolute', top: 3, left: on ? 17 : 3, width: 13, height: 13, borderRadius: '50%', background: on ? J.bg0 : J.textMuted, transition: 'left .18s' }} />
+    </button>
+  );
+}
+
+export function Row({ label, desc, children }: { label: string; desc?: string; children?: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 0', borderBottom: `1px solid ${J.border}`, gap: 16 }}>
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontSize: 14, color: J.text }}>{label}</div>
+        {desc && <div style={{ fontSize: 12, color: J.textMuted, marginTop: 2 }}>{desc}</div>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+export function Sel({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: Array<{ v: string; l: string }> }) {
+  return (
+    <select className="j-input" value={value} onChange={e => onChange(e.target.value)}
+      style={{ borderRadius: 7, padding: '6px 10px', fontSize: 13, cursor: 'pointer', flexShrink: 0 }}>
+      {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
+    </select>
+  );
 }
 
 export function MarkdownText({ text, style }: { text: string; style?: React.CSSProperties }) {

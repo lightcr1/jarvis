@@ -51,3 +51,31 @@ export type ProxmoxHealthResponse = {
 export async function fetchProxmoxHealth() {
   return apiRequest<ProxmoxHealthResponse>("/proxmox/health", { includeUser: true });
 }
+
+export type ProxmoxHostRecord = {
+  id: string;
+  name: string;
+  base_url: string;
+  token_hint: string;
+  verify_tls: boolean;
+  created_at: number;
+};
+
+export type ProxmoxHostCreate = {
+  name: string;
+  base_url: string;
+  api_token: string;
+  verify_tls: boolean;
+};
+
+export async function fetchProxmoxHosts() {
+  return apiRequest<ProxmoxHostRecord[]>("/proxmox/hosts", { includeUser: true });
+}
+
+export async function createProxmoxHost(payload: ProxmoxHostCreate) {
+  return apiRequest<ProxmoxHostRecord>("/proxmox/hosts", { method: "POST", includeUser: true, body: payload });
+}
+
+export async function deleteProxmoxHost(hostId: string) {
+  return apiRequest<{ ok: boolean }>(`/proxmox/hosts/${encodeURIComponent(hostId)}`, { method: "DELETE", includeUser: true });
+}

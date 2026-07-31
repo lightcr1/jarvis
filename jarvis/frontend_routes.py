@@ -55,7 +55,14 @@ def chat_legacy_redirect():
 @frontend_router.get("/settings")
 @frontend_router.get("/dashboard")
 @frontend_router.get("/dashboard/{path:path}")
-@frontend_router.get("/workspace/home-assistant")
-@frontend_router.get("/workspace/home-assistant/{path:path}")
+# Deliberately NOT a /workspace/{path:path} wildcard like /dashboard above:
+# this router is included before build_workspace_router in jarvisappv4.py, so
+# a wildcard here would shadow the real /workspace/targets* API routes (GET
+# requests would get the SPA shell back instead of JSON). List each hub
+# sub-page explicitly instead.
+@frontend_router.get("/workspace")
+@frontend_router.get("/workspace/files")
+@frontend_router.get("/workspace/communication")
+@frontend_router.get("/workspace/desktop")
 def frontend_routes(path: str | None = None):
     return frontend_index_response()

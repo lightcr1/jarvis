@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconCalendar, IconMail, IconMonitor, IconFolder, IconAmbient } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconAmbient } from './jarvis-shared';
 import { GreetingOverlay } from '../components/GreetingOverlay';
 import { OnboardingModal, shouldShowOnboarding } from '../components/OnboardingModal';
 import { LoginScreen } from './LoginScreen';
@@ -12,17 +12,15 @@ import { ServiceHubScreen } from './ServiceHubScreen';
 import { SettingsScreen } from './SettingsScreen';
 import { DocsScreen } from './DocsScreen';
 import { TasksScreen } from './TasksScreen';
-import { CalendarScreen } from './CalendarScreen';
-import { EmailScreen } from './EmailScreen';
-import { WorkspaceScreen } from './WorkspaceScreen';
-import { FilesScreen } from './FilesScreen';
 import { AmbientDisplayScreen } from './AmbientDisplayScreen';
-import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill, savePreferences } from '../shared/api/client';
+import { AppSwitcher } from '../shared/layout/AppSwitcher';
+import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill, savePreferences, fetchMe, setStoredCapabilities } from '../shared/api/client';
 import { useJarvisAlerts } from '../shared/api/alerts';
 import { useJarvisLiveStatus } from '../shared/api/status';
+import { useIntegrationStatus } from '../shared/api/integrationStatus';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
-type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'tasks' | 'calendar' | 'email' | 'workspace' | 'files' | 'services' | 'settings' | 'docs' | 'ambient';
+type Screen = 'login' | 'chat' | 'orb' | 'home' | 'proxmox' | 'tasks' | 'services' | 'settings' | 'docs' | 'ambient';
 
 const NAV_ALL: Array<{ id: Screen; label: string; icon: (p: { size?: number }) => JSX.Element }> = [
   { id: 'chat',      label: 'Chat',      icon: IconChat     },
@@ -30,10 +28,6 @@ const NAV_ALL: Array<{ id: Screen; label: string; icon: (p: { size?: number }) =
   { id: 'home',      label: 'Home',      icon: IconHome     },
   { id: 'proxmox',   label: 'Proxmox',   icon: IconServer   },
   { id: 'tasks',     label: 'Tasks',     icon: IconCheck    },
-  { id: 'calendar',  label: 'Calendar',  icon: IconCalendar },
-  { id: 'email',     label: 'Email',     icon: IconMail     },
-  { id: 'workspace', label: 'Workspace', icon: IconMonitor  },
-  { id: 'files',     label: 'Files',     icon: IconFolder   },
   { id: 'ambient',   label: 'Ambient',   icon: IconAmbient  },
   { id: 'services',  label: 'Services',  icon: IconGrid     },
   { id: 'docs',      label: 'Docs',      icon: IconBook     },
@@ -62,8 +56,9 @@ const NAV_GUEST: Array<{ id: Screen; label: string; icon: (p: { size?: number })
   document.head.appendChild(s);
 })();
 
-function NavRail({ current, onNav, onLogout, nav, isGuest, isAdmin, unreadCount }: { current: Screen; onNav: (s: Screen) => void; onLogout: () => void; nav: typeof NAV_ALL; isGuest: boolean; isAdmin: boolean; unreadCount: number }) {
+function NavRail({ current, onNav, onLogout, nav, isGuest, unreadCount }: { current: Screen; onNav: (s: Screen) => void; onLogout: () => void; nav: typeof NAV_ALL; isGuest: boolean; unreadCount: number }) {
   const [showMenu, setShowMenu] = useState(false);
+  const [showSwitcher, setShowSwitcher] = useState(false);
   const [hovered, setHovered] = useState<string | null>(null);
   const [isDark, setIsDark] = useState(() => (getStoredPreferences().theme ?? 'dark') === 'dark');
   const prefs = getStoredPreferences();
@@ -82,8 +77,12 @@ function NavRail({ current, onNav, onLogout, nav, isGuest, isAdmin, unreadCount 
 
   return (
     <nav className="nav-rail" aria-label="Main navigation" style={{ width: 60, flexShrink: 0, background: J.bg1, borderRight: `1px solid ${J.border}`, flexDirection: 'column', alignItems: 'center', padding: '14px 0', zIndex: 10, position: 'relative' }}>
-      <div style={{ width: 34, height: 34, borderRadius: 9, background: J.amberDim, border: `1px solid ${J.borderAccent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, color: J.amber, marginBottom: 20, cursor: 'default', userSelect: 'none' }}>
-        J
+      <div style={{ position: 'relative', marginBottom: 20 }}>
+        <button onClick={() => setShowSwitcher(v => !v)} aria-label="Switch area"
+          style={{ width: 34, height: 34, borderRadius: 9, background: J.amberDim, border: `1px solid ${J.borderAccent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, color: J.amber, cursor: 'pointer', userSelect: 'none' }}>
+          J
+        </button>
+        {showSwitcher && <AppSwitcher current="jarvis" onClose={() => setShowSwitcher(false)} placement="right" />}
       </div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, flex: 1 }}>
         {nav.map(item => {
@@ -138,14 +137,6 @@ function NavRail({ current, onNav, onLogout, nav, isGuest, isAdmin, unreadCount 
                   onMouseEnter={e => { e.currentTarget.style.background = J.bg3; e.currentTarget.style.color = J.text; }}
                   onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = J.textSec; }}>
                   Settings
-                </button>
-              )}
-              {isAdmin && (
-                <button onClick={() => { setShowMenu(false); window.location.href = '/dashboard'; }}
-                  style={{ width: '100%', textAlign: 'left', padding: '10px 14px', background: 'none', border: 'none', color: J.textSec, fontSize: 13, cursor: 'pointer' }}
-                  onMouseEnter={e => { e.currentTarget.style.background = J.bg3; e.currentTarget.style.color = J.text; }}
-                  onMouseLeave={e => { e.currentTarget.style.background = 'none'; e.currentTarget.style.color = J.textSec; }}>
-                  Admin Dashboard
                 </button>
               )}
               <div style={{ height: 1, background: J.border, margin: '0 10px' }} />
@@ -263,14 +254,13 @@ export function JarvisApp() {
   useJ(); // re-render when theme changes
   const liveStatus = useJarvisLiveStatus();
   const { alerts, dismissAlert } = useJarvisAlerts();
+  const integrationStatus = useIntegrationStatus();
   const guest = isGuestMode();
-  const storedUser = getStoredUser();
-  const isAdmin = storedUser?.role === 'admin';
   const [screen, setScreen] = useState<Screen>(() => {
     const params = new URLSearchParams(window.location.search);
     const req = params.get('screen') as Screen | null;
     const publicScreens: Screen[] = ['docs'];
-    const validScreens: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'tasks', 'calendar', 'email', 'files', 'services', 'settings', 'docs', 'ambient'];
+    const validScreens: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'tasks', 'services', 'settings', 'docs', 'ambient'];
     const requested = (req && validScreens.includes(req)) ? req : null;
     if (getSessionToken() || isGuestMode()) return requested ?? 'chat';
     if (requested && publicScreens.includes(requested)) return requested;
@@ -281,7 +271,19 @@ export function JarvisApp() {
   const [showShortcuts, setShowShortcuts] = useState(false);
   const prevAlertCount = useRef(0);
 
-  const nav = guest ? NAV_GUEST : NAV_ALL;
+  const setScreenAndUrl = (s: Screen) => {
+    setScreen(s);
+    const url = new URL(window.location.href);
+    if (s === 'login') url.searchParams.delete('screen');
+    else url.searchParams.set('screen', s);
+    window.history.replaceState(null, '', url.toString());
+  };
+
+  const nav = guest ? NAV_GUEST : NAV_ALL.filter(item => {
+    if (item.id === 'home') return integrationStatus.ha === 'connected';
+    if (item.id === 'proxmox') return integrationStatus.proxmox === 'online' || integrationStatus.proxmox === 'offline';
+    return true;
+  });
   const GREETING_COOLDOWN_MS = 4 * 60 * 60 * 1000;
   const GREETING_KEY = 'jarvis_last_greeting';
   const _greetingDue = () => {
@@ -298,6 +300,9 @@ export function JarvisApp() {
     applyCompact(prefs.compact_mode ?? false);
     if (getSessionToken()) {
       shouldShowOnboarding().then(show => { if (show) setShowOnboarding(true); }).catch(() => {});
+      // Refresh capabilities on load — a long-lived session's cached capabilities
+      // can otherwise miss permissions granted after login (e.g. billing.manage).
+      fetchMe().then(me => { if (me.capabilities) setStoredCapabilities(me.capabilities); }).catch(() => {});
     }
   }, []);
 
@@ -315,7 +320,7 @@ export function JarvisApp() {
   useEffect(() => {
     const handleSessionExpired = () => {
       clearGuestMode();
-      setScreen('login');
+      setScreenAndUrl('login');
     };
     window.addEventListener('jarvis:session-expired', handleSessionExpired);
     return () => window.removeEventListener('jarvis:session-expired', handleSessionExpired);
@@ -346,7 +351,7 @@ export function JarvisApp() {
     if (prefs.theme) applyTheme(prefs.theme);
     if (prefs.accent_color) applyAccent(prefs.accent_color);
     applyCompact(prefs.compact_mode ?? false);
-    setScreen('chat');
+    setScreenAndUrl('chat');
     localStorage.setItem(GREETING_KEY, String(Date.now()));
     setShowGreeting(true);
     shouldShowOnboarding().then(show => { if (show) setShowOnboarding(true); }).catch(() => {});
@@ -354,7 +359,7 @@ export function JarvisApp() {
 
   const handleGuestLogin = () => {
     setGuestMode();
-    setScreen('chat');
+    setScreenAndUrl('chat');
     localStorage.setItem(GREETING_KEY, String(Date.now()));
     setShowGreeting(true);
   };
@@ -362,15 +367,15 @@ export function JarvisApp() {
   const handleLogout = () => {
     clearStoredIdentity();
     clearGuestMode();
-    setScreen('login');
+    setScreenAndUrl('login');
   };
 
   const navigate = (s: string) => {
-    const valid: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'tasks', 'calendar', 'email', 'files', 'services', 'settings', 'docs', 'ambient', 'login'];
+    const valid: Screen[] = ['chat', 'orb', 'home', 'proxmox', 'tasks', 'services', 'settings', 'docs', 'ambient', 'login'];
     if (!valid.includes(s as Screen)) return;
     const guestAllowed: Screen[] = ['chat', 'docs', 'settings', 'login'];
     if (guest && !guestAllowed.includes(s as Screen)) return;
-    setScreen(s as Screen);
+    setScreenAndUrl(s as Screen);
     setUnreadCount(0);
   };
 
@@ -392,7 +397,7 @@ export function JarvisApp() {
   }, [alerts, dismissAlert, notificationsEnabled]);
 
   if (screen === 'login') return <LoginScreen onLogin={handleLogin} onGuest={handleGuestLogin} />;
-  if (screen === 'ambient') return <AmbientDisplayScreen onExit={() => setScreen('chat')} />;
+  if (screen === 'ambient') return <AmbientDisplayScreen onExit={() => setScreenAndUrl('chat')} />;
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>
@@ -401,9 +406,9 @@ export function JarvisApp() {
       {showPalette && <CommandPalette nav={nav} onNav={navigate as (s: Screen) => void} onClose={() => setShowPalette(false)} />}
       {showShortcuts && <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />}
       <ToastContainer />
-      <NavRail current={screen} onNav={navigate as (s: Screen) => void} onLogout={handleLogout} nav={nav} isGuest={guest} isAdmin={isAdmin} unreadCount={notificationsEnabled ? unreadCount : 0} />
+      <NavRail current={screen} onNav={navigate as (s: Screen) => void} onLogout={handleLogout} nav={nav} isGuest={guest} unreadCount={notificationsEnabled ? unreadCount : 0} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', paddingBottom: mobilePad ? 60 : 0, position: 'relative' }}>
-        {screen !== 'chat' && screen !== 'orb' && (
+        {!['chat', 'orb', 'home', 'proxmox', 'services', 'tasks'].includes(screen) && (
           <div style={{ position: 'absolute', top: 10, right: 14, zIndex: 30, display: 'flex', alignItems: 'center', gap: 7, background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 999, padding: '6px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
             <StatusBadge status={liveStatus.state === 'idle' ? 'local' : liveStatus.state === 'processing' ? 'running' : liveStatus.state === 'recording' ? 'active' : 'online'} size="xs" />
             <span style={{ fontSize: 11, color: J.textSec, textTransform: 'capitalize' }}>{liveStatus.state}</span>
@@ -415,10 +420,6 @@ export function JarvisApp() {
           {screen === 'home'     && <HomeAssistantScreen onNavigate={navigate} />}
           {screen === 'proxmox'  && <ProxmoxScreen onNavigate={navigate} />}
           {screen === 'tasks'    && <TasksScreen onNavigate={navigate} />}
-          {screen === 'calendar' && <CalendarScreen onNavigate={navigate} />}
-          {screen === 'email'    && <EmailScreen onNavigate={navigate} />}
-          {screen === 'workspace' && <WorkspaceScreen onNavigate={navigate} />}
-          {screen === 'files'    && <FilesScreen onNavigate={navigate} />}
           {screen === 'services' && <ServiceHubScreen onNavigate={navigate} />}
           {screen === 'docs'     && <DocsScreen />}
           {screen === 'settings' && <SettingsScreen />}

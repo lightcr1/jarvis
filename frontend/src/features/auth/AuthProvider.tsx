@@ -25,6 +25,7 @@ type AuthContextValue = {
   loading: boolean;
   isAdmin: boolean;
   hasHomeAssistantAccess: boolean;
+  hasAlertsManage: boolean;
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
@@ -62,7 +63,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(me.user);
       setPreferences(mergedPreferences);
       setCapabilities(me.capabilities || {});
-      setStoredIdentity(localStorage.getItem("jarvis_user_session") || "", me.user, mergedPreferences);
+      setStoredIdentity(localStorage.getItem("jarvis_user_session") || "", me.user, mergedPreferences, me.capabilities);
     } catch {
       // client.ts clears the session token on 401. If it's gone, the session
       // really expired — clear React state too. For network/5xx errors the
@@ -91,10 +92,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loading,
     isAdmin: user?.role === "admin",
     hasHomeAssistantAccess: Boolean(capabilities.home_assistant_access),
+    hasAlertsManage: Boolean(capabilities.alerts_manage),
     login: async (username, password) => {
       const payload = await loginRequest(username, password);
       const mergedPreferences = mergeThemePreference(payload.preferences || {}, getStoredPreferences());
-      setStoredIdentity(payload.session_token, payload.user, mergedPreferences);
+      setStoredIdentity(payload.session_token, payload.user, mergedPreferences, payload.capabilities);
       setUser(payload.user);
       setPreferences(mergedPreferences);
       setCapabilities(payload.capabilities || {});
@@ -131,7 +133,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const payload = await issueAdminSession();
       setAdminToken(payload.token, payload.expires_in_sec);
     },
-  }), [capabilities.home_assistant_access, loading, preferences, refresh, user]);
+  }), [capabilities.home_assistant_access, capabilities.alerts_manage, loading, preferences, refresh, user]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

@@ -9,6 +9,7 @@ import {
   updateAdminUser,
   updateAdminUserLimits,
 } from "../../../shared/api/admin";
+import { Plan, assignUserPlan, fetchAdminPlans } from "../../../shared/api/billing";
 import { useJ } from "../../../screens/jarvis-shared";
 
 const ROLES = ["admin", "standard_user", "guest_restricted", "service_system"] as const;
@@ -142,6 +143,63 @@ function StorageQuotaEditor({ user, onDone }: { user: AdminUser; onDone: (msg: s
   );
 }
 
+function PlanAssignEditor({ user, plans, onDone }: { user: AdminUser; plans: Plan[]; onDone: (msg: string) => void }) {
+  const J = useJ();
+  const [open, setOpen] = useState(false);
+  const [planId, setPlanId] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [current, setCurrent] = useState<string | null>(null);
+
+  if (!open) {
+    const currentName = current ? plans.find(p => p.id === current)?.name : null;
+    return (
+      <button onClick={() => setOpen(true)} style={{
+        padding: "3px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+        background: "transparent", color: J.textSec, border: `1px solid ${J.border}`,
+      }}>{currentName ? `Plan: ${currentName}` : "Assign plan"}</button>
+    );
+  }
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await assignUserPlan(user.id, planId);
+      setCurrent(planId);
+      onDone(planId ? `Plan updated for ${user.username}.` : `Plan cleared for ${user.username}.`);
+      setOpen(false);
+    } catch (e) {
+      onDone(`Error: ${e instanceof Error ? e.message : "Failed."}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", gap: 5, alignItems: "center" }}>
+      <select
+        autoFocus
+        value={planId}
+        onChange={e => setPlanId(e.target.value)}
+        style={{
+          padding: "4px 8px", fontSize: 11, borderRadius: 4,
+          background: J.bg3, border: `1px solid ${J.border}`, color: J.text, outline: "none",
+        }}
+      >
+        <option value="">No plan</option>
+        {plans.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+      </select>
+      <button onClick={() => void submit()} disabled={saving} style={{
+        padding: "4px 10px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+        background: J.amber, color: J.bg0, border: "none", opacity: saving ? 0.6 : 1,
+      }}>{saving ? "…" : "Set"}</button>
+      <button onClick={() => setOpen(false)} style={{
+        padding: "4px 8px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+        background: "transparent", color: J.textMuted, border: `1px solid ${J.border}`,
+      }}>✕</button>
+    </div>
+  );
+}
+
 export function UsersPage() {
   const J = useJ();
   const [users, setUsers] = useState<AdminUser[]>([]);
@@ -152,9 +210,11 @@ export function UsersPage() {
   const [status, setStatus] = useState("");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [plans, setPlans] = useState<Plan[]>([]);
 
   const load = useCallback(() => fetchAdminUsers().then(d => setUsers(d.users || [])), []);
   useEffect(() => { load().catch(() => undefined); }, [load]);
+  useEffect(() => { fetchAdminPlans().then(d => setPlans(d.plans || [])).catch(() => undefined); }, []);
   useEffect(() => {
     if (!status) return;
     const id = setTimeout(() => setStatus(""), 4000);
@@ -412,6 +472,7 @@ export function UsersPage() {
                 }}>{u.enabled ? "Disable" : "Enable"}</button>
                 <PasswordReset user={u} onDone={setStatus} />
                 <StorageQuotaEditor user={u} onDone={setStatus} />
+                <PlanAssignEditor user={u} plans={plans} onDone={setStatus} />
                 <button onClick={async () => {
                   if (!window.confirm(`Clear all chat history for "${u.username}"? This cannot be undone.`)) return;
                   try {

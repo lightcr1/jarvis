@@ -31,7 +31,6 @@ class EntrypointContractTests(unittest.TestCase):
             "_audit_admin_event",
             "require_admin_access",
             "require_identity_session",
-            "require_token",
             "get_stt_provider",
             "wakeword_enabled",
             "wakeword_phrase",

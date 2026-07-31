@@ -160,6 +160,7 @@ def _build_alert_event(rule: dict, value: float | str) -> dict:
         "alert_id": f"alert-{uuid.uuid4().hex[:12]}",
         "rule_id": rule["id"],
         "rule_name": rule.get("name", ""),
+        "owner_user_id": rule.get("owner_user_id"),
         "severity": rule.get("severity", "warning"),
         "metric": rule.get("metric", ""),
         "current_value": value,
@@ -176,12 +177,14 @@ class AlertEngine:
         audit_admin_event: Callable,
         ha_store: object | None = None,
         broadcast_fn: Callable | None = None,
+        broadcast_to_user_fn: Callable | None = None,
         extra_sources: dict[str, SignalSource] | None = None,
     ) -> None:
         self._rules_store = rules_store
         self._audit = audit_admin_event
         self._ha_store = ha_store
         self._broadcast_fn = broadcast_fn
+        self._broadcast_to_user_fn = broadcast_to_user_fn
         self._task: asyncio.Task | None = None
         self._threshold_crossed_at: dict[str, float] = {}
         self._last_fired_at: dict[str, float] = {}
@@ -212,9 +215,11 @@ class AlertEngine:
     def reload_rules(self) -> None:
         pass
 
-    def get_history(self, limit: int = 100) -> list[dict]:
+    def get_history(self, limit: int = 100, owner_user_id: str | None = None) -> list[dict]:
         items = list(self._history)
         items.reverse()
+        if owner_user_id is not None:
+            items = [item for item in items if item.get("owner_user_id") == owner_user_id]
         return items[:limit]
 
     async def fire_test_alert(self, rule: dict) -> dict:
@@ -222,10 +227,16 @@ class AlertEngine:
         event = _build_alert_event(rule, value)
         event["message"] = f"[TEST] {event['message']}"
         self._history.append(event)
-        await self._broadcast(event)
+        await self._broadcast(event, owner_user_id=rule.get("owner_user_id"))
         return event
 
-    async def _broadcast(self, event: dict) -> None:
+    async def _broadcast(self, event: dict, owner_user_id: str | None = None) -> None:
+        if owner_user_id and self._broadcast_to_user_fn:
+            try:
+                await self._broadcast_to_user_fn(owner_user_id, event)
+            except Exception as exc:
+                logger.warning("Alert broadcast to user failed: %s", exc)
+            return
         if self._broadcast_fn:
             try:
                 await self._broadcast_fn(event)
@@ -265,7 +276,7 @@ class AlertEngine:
         event = _build_alert_event(rule, value)
         self._last_fired_at[rule_id] = now
         self._history.append(event)
-        await self._broadcast(event)
+        await self._broadcast(event, owner_user_id=rule.get("owner_user_id"))
         try:
             self._audit("alert.fired", "system", "system", {"rule_id": rule_id, "rule_name": rule.get("name"), "severity": rule.get("severity")})
         except Exception as exc:

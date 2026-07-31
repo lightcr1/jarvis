@@ -12,10 +12,14 @@ from .api_models import (
     AdminSettingsIn,
     AdminUserCreateIn,
     AdminUserUpdateIn,
+    PlanCreate,
+    PlanUpdate,
     TopUpIn,
     UserLimitsIn,
     UserPasswordIn,
+    UserPlanAssign,
 )
+from .plan_service import assign_plan
 from .router_dependencies import LiveRef
 
 
@@ -612,6 +616,78 @@ def build_admin_router(deps: dict) -> APIRouter:
         require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
         updated = current("user_limits_store").update(user_id, payload.model_dump(exclude_none=True))
         current("audit_log").write("user_limits_updated", {"user_id": user_id, "admin_user_id": x_jarvis_user_id})
+        return updated
+
+    @router.get("/admin/plans")
+    def admin_list_plans(
+        x_jarvis_user_id: str | None = Header(default=None),
+        x_jarvis_role: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        return {"plans": current("plan_store").list_plans()}
+
+    @router.post("/admin/plans", status_code=201)
+    def admin_create_plan(
+        payload: PlanCreate,
+        x_jarvis_user_id: str | None = Header(default=None),
+        x_jarvis_role: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        plan = current("plan_store").create_plan(payload.model_dump())
+        audit_admin_event("plan.created", x_jarvis_user_id, x_jarvis_role, {"plan_id": plan["id"], "name": plan["name"]})
+        return {"plan": plan}
+
+    @router.patch("/admin/plans/{plan_id}")
+    def admin_update_plan(
+        plan_id: str,
+        payload: PlanUpdate,
+        x_jarvis_user_id: str | None = Header(default=None),
+        x_jarvis_role: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        updated = current("plan_store").update_plan(plan_id, payload.model_dump(exclude_none=True))
+        if updated is None:
+            raise HTTPException(404, "Plan not found")
+        audit_admin_event("plan.updated", x_jarvis_user_id, x_jarvis_role, {"plan_id": plan_id})
+        return {"plan": updated}
+
+    @router.delete("/admin/plans/{plan_id}")
+    def admin_delete_plan(
+        plan_id: str,
+        x_jarvis_user_id: str | None = Header(default=None),
+        x_jarvis_role: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        deleted = current("plan_store").delete_plan(plan_id)
+        if not deleted:
+            raise HTTPException(404, "Plan not found")
+        audit_admin_event("plan.deleted", x_jarvis_user_id, x_jarvis_role, {"plan_id": plan_id})
+        return {"ok": True, "id": plan_id}
+
+    @router.put("/admin/users/{user_id}/plan")
+    def admin_assign_user_plan(
+        user_id: str,
+        payload: UserPlanAssign,
+        x_jarvis_user_id: str | None = Header(default=None),
+        x_jarvis_role: str | None = Header(default=None),
+        authorization: str | None = Header(default=None),
+    ):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        try:
+            updated = assign_plan(
+                user_id,
+                payload.plan_id,
+                plan_store=current("plan_store"),
+                user_limits_store=current("user_limits_store"),
+                credit_store=current("credit_store"),
+            )
+        except ValueError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        audit_admin_event("user.plan_assigned", x_jarvis_user_id, x_jarvis_role, {"user_id": user_id, "plan_id": payload.plan_id})
         return updated
 
     @router.get("/admin/usage")

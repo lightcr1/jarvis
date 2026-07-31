@@ -69,6 +69,25 @@ class FileStore:
         segments.reverse()
         return segments
 
+    def folder_ancestor_ids(self, folder_id: str) -> list[dict]:
+        """Walks parent_id up to the root, self first — unlike _ancestor_segments,
+        does NOT assert a single owner_user_id, since this is used to check
+        cross-owner share grants at every level of a folder's ancestor chain.
+        """
+        chain: list[dict] = []
+        current_id: str | None = folder_id
+        seen: set[str] = set()
+        while current_id:
+            if current_id in seen:
+                break
+            seen.add(current_id)
+            folder = self.get_folder(current_id)
+            if not folder:
+                break
+            chain.append(folder)
+            current_id = folder.get("parent_id")
+        return chain
+
     def folder_disk_path(self, owner_user_id: str, folder_id: str | None) -> Path:
         root = self.user_root_path(owner_user_id)
         if folder_id is None:

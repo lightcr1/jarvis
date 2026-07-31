@@ -123,8 +123,11 @@ class AlertRulesStore:
     def _save(self) -> None:
         self._save_data(self.data)
 
-    def list_rules(self) -> list[dict]:
-        return [dict(r) for r in self.data.get("rules", [])]
+    def list_rules(self, owner_user_id: str | None = None) -> list[dict]:
+        rules = self.data.get("rules", [])
+        if owner_user_id is not None:
+            rules = [r for r in rules if r.get("owner_user_id") == owner_user_id]
+        return [dict(r) for r in rules]
 
     def get_rule(self, rule_id: str) -> dict | None:
         for rule in self.data.get("rules", []):
@@ -132,9 +135,10 @@ class AlertRulesStore:
                 return dict(rule)
         return None
 
-    def create_rule(self, payload: dict) -> dict:
+    def create_rule(self, payload: dict, owner_user_id: str | None = None) -> dict:
         rule = _normalize_rule(payload)
         rule["id"] = f"rule-{uuid.uuid4().hex[:12]}"
+        rule["owner_user_id"] = owner_user_id
         self.data.setdefault("rules", []).append(rule)
         self._save()
         return dict(rule)
@@ -187,6 +191,7 @@ def _normalize_rule(payload: dict) -> dict:
         cooldown_seconds = 300
     return {
         "id": str(payload.get("id") or ""),
+        "owner_user_id": payload.get("owner_user_id") or None,
         "name": str(payload.get("name") or "Unnamed rule").strip() or "Unnamed rule",
         "enabled": bool(payload.get("enabled", True)),
         "metric": metric,

@@ -95,6 +95,7 @@ from jarvis.byok_store import ByokKeyStore
 from jarvis.usage_log_store import UsageLogStore
 from jarvis.credit_store import CreditStore
 from jarvis.user_limits_store import UserLimitsStore
+from jarvis.plan_store import PlanStore
 from jarvis.pending_signup_store import PendingSignupStore
 from jarvis.api_admin import build_admin_router
 from jarvis.api_auth_chat import build_auth_chat_router
@@ -109,11 +110,13 @@ from jarvis.api_voice import build_voice_router
 from jarvis.memory_store import MemoryStore
 from jarvis.api_models import UnlockOut
 from jarvis.frontend_routes import frontend_router, mount_frontend_assets
-from jarvis.home_assistant.client import HomeAssistantClient
+from jarvis.home_assistant.client import HA_CREDENTIAL_INTEGRATION, HA_CREDENTIAL_OWNER, HomeAssistantClient
 from jarvis.home_assistant.service import HomeAssistantService
 from jarvis.home_assistant.store import HomeAssistantStore
+from jarvis.api_billing import build_billing_router
 from jarvis.api_tasks import build_tasks_router
 from jarvis.tasks.service import TaskService
+from jarvis.tasks.share_store import TaskShareStore
 from jarvis.tasks.store import TaskStore
 from jarvis.integration_credentials import IntegrationCredentialStore
 from jarvis.api_calendar import build_calendar_router
@@ -124,6 +127,7 @@ from jarvis.workspace.service import WorkspaceService
 from jarvis.workspace.store import WorkspaceTargetStore
 from jarvis.api_files import build_files_router
 from jarvis.files.service import FileService
+from jarvis.files.share_store import FolderShareStore
 from jarvis.files.store import FileStore
 from jarvis.api_email import build_email_router
 from jarvis.email.service import EmailService
@@ -140,7 +144,7 @@ from jarvis.playbook_store import PlaybookStore
 from jarvis.playbook_executor import PlaybookExecutor, build_default_action_dispatch
 from jarvis.api_admin_integrations import build_admin_integrations_router
 from jarvis.api_weather import build_weather_router
-from jarvis.router_dependencies import build_admin_deps, build_admin_integrations_deps, build_alerts_deps, build_auth_chat_deps, build_calendar_deps, build_device_sync_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_weather_deps, build_workspace_deps
+from jarvis.router_dependencies import build_admin_deps, build_admin_integrations_deps, build_alerts_deps, build_auth_chat_deps, build_billing_deps, build_calendar_deps, build_device_sync_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_weather_deps, build_workspace_deps, live_attr
 from jarvis.jarvis_engine import (
     JarvisEngine,
     build_registry,
@@ -212,6 +216,7 @@ byok_store = ByokKeyStore()
 usage_log_store = UsageLogStore()
 credit_store = CreditStore()
 user_limits_store = UserLimitsStore()
+plan_store = PlanStore()
 memory_store = MemoryStore()
 pending_signup_store = PendingSignupStore()
 status_hub = JarvisStatusHub()
@@ -219,15 +224,29 @@ home_assistant_store = HomeAssistantStore()
 home_assistant_client = HomeAssistantClient()
 alert_rules_store = AlertRulesStore()
 task_store = TaskStore()
+task_share_store = TaskShareStore()
 push_subscription_store = PushSubscriptionStore()
 policy_store = PolicyStore()
 playbook_store = PlaybookStore()
 integration_credential_store = IntegrationCredentialStore()
+
+_ha_env_credentials = {"base_url": home_assistant_client.base_url, "api_token": home_assistant_client.api_token}
+
+
+def _sync_home_assistant_credentials() -> None:
+    stored = integration_credential_store.get_credentials(HA_CREDENTIAL_OWNER, HA_CREDENTIAL_INTEGRATION)
+    creds = stored or _ha_env_credentials
+    home_assistant_client.apply_credentials(creds.get("base_url", ""), creds.get("api_token", ""))
+
+
+_sync_home_assistant_credentials()
+
 calendar_event_store = CalendarEventStore()
 email_message_store = EmailMessageStore()
 email_draft_store = EmailDraftStore()
 workspace_target_store = WorkspaceTargetStore()
 file_store = FileStore()
+folder_share_store = FolderShareStore()
 
 wakeword_engine: NullWakewordEngine | SoftwareWakewordEngine = NullWakewordEngine()
 
@@ -401,16 +420,16 @@ def _persist_identity_tokens() -> None:
     runtime_save_identity_tokens(_identity_tokens, _IDENTITY_SESSIONS_PATH)
 
 
-def require_token(auth: str | None):
-    prune_expired_tokens(_tokens)
-    if not auth or not auth.lower().startswith("bearer "):
-        raise HTTPException(401, "Missing token")
-    token = bearer_token_from_header(auth)
-    if not is_token_active(_tokens, token):
-        raise HTTPException(401, "Token expired or invalid")
-
-
-app.include_router(build_router(require_token))
+app.include_router(
+    build_router(
+        {
+            "require_identity_session": require_identity_session,
+            "resolve_effective_permissions": resolve_effective_permissions,
+            "membership_store": live_attr(sys.modules[__name__], "membership_store"),
+            "permission_store": live_attr(sys.modules[__name__], "permission_store"),
+        }
+    )
+)
 
 
 def require_admin_access(
@@ -486,6 +505,7 @@ alert_engine = AlertEngine(
     audit_admin_event=_audit_admin_event,
     ha_store=home_assistant_store,
     broadcast_fn=get_alert_broadcaster().broadcast,
+    broadcast_to_user_fn=get_alert_broadcaster().broadcast_to_user,
 )
 
 suggestion_engine = SuggestionEngine()
@@ -523,6 +543,8 @@ task_service = TaskService(
     permission_store=permission_store,
     resolve_effective_permissions=resolve_effective_permissions,
     normalize_role=normalize_role,
+    share_store=task_share_store,
+    group_store=group_store,
     audit_log=audit_log,
 )
 
@@ -570,6 +592,8 @@ file_service = FileService(
     normalize_role=normalize_role,
     user_limits_store=user_limits_store,
     admin_settings_store=admin_settings_store,
+    share_store=folder_share_store,
+    group_store=group_store,
     audit_log=audit_log,
 )
 
@@ -583,6 +607,7 @@ app.include_router(build_home_assistant_router(build_home_assistant_deps(sys.mod
 app.include_router(build_memory_router(build_memory_deps(sys.modules[__name__])))
 app.include_router(build_status_router(build_status_deps(sys.modules[__name__])))
 app.include_router(build_tasks_router(build_tasks_deps(sys.modules[__name__])))
+app.include_router(build_billing_router(build_billing_deps(sys.modules[__name__])))
 app.include_router(build_notifications_router(build_notifications_deps(sys.modules[__name__])))
 app.include_router(build_policies_router(build_policies_deps(sys.modules[__name__])))
 app.include_router(build_admin_integrations_router(build_admin_integrations_deps(sys.modules[__name__])))

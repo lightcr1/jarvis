@@ -1,11 +1,18 @@
 import { useState, useEffect, useRef } from 'react';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey, IconBell, IconBook } from './jarvis-shared';
-import { getStoredPreferences, setStoredPreferences, getSessionToken, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey, IconBell, IconBook, Toggle, Row, Sel } from './jarvis-shared';
+import { getStoredPreferences, setStoredPreferences, getSessionToken, getStoredUser, getStoredCapabilities, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
 import { synthesizeSpeech } from '../shared/api/chat';
 import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
-import { fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, type BillingInfo, type ByokKey } from '../shared/api/billing';
+import {
+  fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, createCheckoutSession,
+  fetchStripeStatus, setStripeCredentials, clearStripeCredentials, testStripeConnection,
+  type BillingInfo, type ByokKey, type StripeStatus,
+} from '../shared/api/billing';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 import { getPushSubscriptionStatus, isPushSupported, subscribeToPush, unsubscribeFromPush } from '../shared/api/push';
+import { useIntegrationStatus } from '../shared/api/integrationStatus';
+import { AppearancePanel } from '../shared/ui/AppearancePanel';
+import { fetchOwnAlertRules, createOwnAlertRule, updateOwnAlertRule, deleteOwnAlertRule, testOwnAlertRule, type AlertRule } from '../shared/api/alerts';
 
 type IntegrationState = 'checking' | 'online' | 'offline' | 'unconfigured';
 
@@ -15,44 +22,16 @@ const CATS = [
   { id: 'appearance',   label: 'Appearance',   icon: <IconActivity size={13} /> },
   { id: 'chat',         label: 'Chat',         icon: <IconChat size={13} /> },
   { id: 'notifications',label: 'Notifications',icon: <IconBell size={13} /> },
+  { id: 'alerts',       label: 'Alerts',       icon: <IconBell size={13} /> },
   { id: 'briefing',     label: 'Briefing',     icon: <IconBook size={13} /> },
   { id: 'voice',        label: 'Voice',        icon: <IconMic size={13} /> },
   { id: 'memory',       label: 'Memory',       icon: <IconMemory size={13} /> },
   { id: 'billing',      label: 'AI & Billing', icon: <IconKey size={13} /> },
+  { id: 'payments',     label: 'Payments',     icon: <IconCheck size={13} /> },
   { id: 'integrations', label: 'Integrations', icon: <IconGrid size={13} /> },
   { id: 'security',     label: 'Security',     icon: <IconShield size={13} /> },
   { id: 'developer',    label: 'Developer',    icon: <IconCode size={13} /> },
 ];
-
-function Toggle({ on, onChange }: { on: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <button onClick={() => onChange(!on)}
-      style={{ width: 38, height: 21, borderRadius: 11, background: on ? J.amber : J.bg4, border: `1px solid ${on ? J.amber : J.border}`, cursor: 'pointer', position: 'relative', transition: 'all .18s', flexShrink: 0 }}>
-      <span style={{ position: 'absolute', top: 3, left: on ? 17 : 3, width: 13, height: 13, borderRadius: '50%', background: on ? J.bg0 : J.textMuted, transition: 'left .18s' }} />
-    </button>
-  );
-}
-
-function Row({ label, desc, children }: { label: string; desc?: string; children?: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '13px 0', borderBottom: `1px solid ${J.border}`, gap: 16 }}>
-      <div style={{ minWidth: 0 }}>
-        <div style={{ fontSize: 14, color: J.text }}>{label}</div>
-        {desc && <div style={{ fontSize: 12, color: J.textMuted, marginTop: 2 }}>{desc}</div>}
-      </div>
-      {children}
-    </div>
-  );
-}
-
-function Sel({ value, onChange, options }: { value: string; onChange: (v: string) => void; options: Array<{ v: string; l: string }> }) {
-  return (
-    <select className="j-input" value={value} onChange={e => onChange(e.target.value)}
-      style={{ borderRadius: 7, padding: '6px 10px', fontSize: 13, cursor: 'pointer', flexShrink: 0 }}>
-      {options.map(o => <option key={o.v} value={o.v}>{o.l}</option>)}
-    </select>
-  );
-}
 
 function Field({ label, value, onChange, placeholder, type = 'text', readOnly }: { label: string; value: string; onChange?: (v: string) => void; placeholder?: string; type?: string; readOnly?: boolean }) {
   return (
@@ -79,8 +58,6 @@ function Integration({ name, status, note, icon }: { name: string; status: strin
     </div>
   );
 }
-
-const ACCENT_COLORS = ['#e09a1a', '#5294e8', '#3dba84', '#a855f7', '#e05555', '#f97316'];
 
 function MemoryPanel() {
   useJ();
@@ -294,6 +271,193 @@ function MemoryPanel() {
   );
 }
 
+const ALERT_METRICS = [
+  { v: 'cpu', l: 'CPU usage' },
+  { v: 'ram', l: 'RAM usage' },
+  { v: 'disk', l: 'Disk usage' },
+  { v: 'ha_health', l: 'Home Assistant health' },
+  { v: 'ha_entity', l: 'Home Assistant entity' },
+];
+const ALERT_CONDITIONS = [
+  { v: 'above', l: 'is above' },
+  { v: 'below', l: 'is below' },
+  { v: 'equals', l: 'equals' },
+  { v: 'contains', l: 'contains' },
+];
+const ALERT_SEVERITIES = [
+  { v: 'info', l: 'Info' },
+  { v: 'warning', l: 'Warning' },
+  { v: 'critical', l: 'Critical' },
+];
+
+function AlertsPanel() {
+  const [rules, setRules] = useState<AlertRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [showCreate, setShowCreate] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [testingId, setTestingId] = useState<string | null>(null);
+  const [testResult, setTestResult] = useState<string>('');
+  const [form, setForm] = useState({ name: '', metric: 'cpu', condition: 'above', threshold: '80', severity: 'warning', ha_entity_id: '' });
+  const isLoggedIn = !!getSessionToken();
+
+  const reload = () => {
+    if (!isLoggedIn) { setLoading(false); return; }
+    setLoading(true);
+    fetchOwnAlertRules()
+      .then(res => setRules(res.rules))
+      .catch(() => setError('Failed to load alert rules.'))
+      .finally(() => setLoading(false));
+  };
+
+  useEffect(() => { reload(); }, []);
+
+  const handleCreate = async () => {
+    if (!form.name.trim()) return;
+    setSaving(true);
+    setError('');
+    try {
+      const created = await createOwnAlertRule({
+        name: form.name.trim(),
+        enabled: true,
+        metric: form.metric as AlertRule['metric'],
+        condition: form.condition as AlertRule['condition'],
+        threshold: Number.isNaN(Number(form.threshold)) ? form.threshold : Number(form.threshold),
+        duration_seconds: 0,
+        severity: form.severity as AlertRule['severity'],
+        cooldown_seconds: 300,
+        ha_entity_id: form.metric === 'ha_entity' ? (form.ha_entity_id.trim() || null) : null,
+        ha_attribute: null,
+        message_template: 'Alert: {metric} is {value} (threshold: {threshold})',
+      });
+      setRules(prev => [...prev, created.rule]);
+      setForm({ name: '', metric: 'cpu', condition: 'above', threshold: '80', severity: 'warning', ha_entity_id: '' });
+      setShowCreate(false);
+    } catch {
+      setError('Failed to create rule.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const handleToggle = async (rule: AlertRule) => {
+    try {
+      const updated = await updateOwnAlertRule(rule.id, { enabled: !rule.enabled });
+      setRules(prev => prev.map(r => r.id === rule.id ? updated.rule : r));
+    } catch {
+      setError('Failed to update rule.');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    try {
+      await deleteOwnAlertRule(id);
+      setRules(prev => prev.filter(r => r.id !== id));
+    } catch {
+      setError('Failed to delete rule.');
+    }
+  };
+
+  const handleTest = async (id: string) => {
+    setTestingId(id);
+    setTestResult('');
+    try {
+      const res = await testOwnAlertRule(id);
+      setTestResult(res.event.message);
+    } catch {
+      setError('Failed to test rule.');
+    } finally {
+      setTestingId(null);
+    }
+  };
+
+  if (!isLoggedIn) {
+    return <div style={{ padding: '16px 0', fontSize: 13, color: J.textMuted }}>Alerts require a logged-in account.</div>;
+  }
+
+  return (
+    <>
+      {error && (
+        <div style={{ background: J.errorDim, border: `1px solid ${J.error}`, borderRadius: 7, padding: '8px 12px', fontSize: 12, color: J.error, marginBottom: 12 }}
+          onClick={() => setError('')}>
+          {error}
+        </div>
+      )}
+
+      <div style={{ padding: '4px 0 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <span style={{ fontSize: 12, color: J.textMuted }}>
+          {loading ? 'Loading…' : `${rules.length} personal rule${rules.length !== 1 ? 's' : ''}`}
+        </span>
+        <button onClick={() => setShowCreate(v => !v)}
+          style={{ background: J.amberDim, border: `1px solid ${J.borderAccent}`, color: J.amber, borderRadius: 6, padding: '5px 12px', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
+          {showCreate ? 'Cancel' : '+ New rule'}
+        </button>
+      </div>
+
+      {showCreate && (
+        <div style={{ padding: '13px', marginBottom: 14, background: J.bg3, border: `1px solid ${J.border}`, borderRadius: 8, display: 'flex', flexDirection: 'column', gap: 10 }}>
+          <input className="j-input" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })}
+            placeholder="Rule name, e.g. Front door left open"
+            style={{ borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <Sel value={form.metric} onChange={v => setForm({ ...form, metric: v })} options={ALERT_METRICS} />
+            <Sel value={form.condition} onChange={v => setForm({ ...form, condition: v })} options={ALERT_CONDITIONS} />
+            <input className="j-input" value={form.threshold} onChange={e => setForm({ ...form, threshold: e.target.value })}
+              placeholder="Threshold" style={{ width: 100, borderRadius: 7, padding: '6px 10px', fontSize: 13 }} />
+            <Sel value={form.severity} onChange={v => setForm({ ...form, severity: v })} options={ALERT_SEVERITIES} />
+          </div>
+          {form.metric === 'ha_entity' && (
+            <input className="j-input" value={form.ha_entity_id} onChange={e => setForm({ ...form, ha_entity_id: e.target.value })}
+              placeholder="Entity ID, e.g. binary_sensor.front_door"
+              style={{ borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+          )}
+          <button onClick={() => void handleCreate()} disabled={saving || !form.name.trim()}
+            style={{ alignSelf: 'flex-start', background: J.amber, color: J.bg0, border: 'none', borderRadius: 7, padding: '7px 16px', fontSize: 13, fontWeight: 600, cursor: saving || !form.name.trim() ? 'not-allowed' : 'pointer', opacity: saving || !form.name.trim() ? 0.6 : 1 }}>
+            {saving ? 'Saving…' : 'Save rule'}
+          </button>
+        </div>
+      )}
+
+      {testResult && (
+        <div style={{ background: J.bg3, border: `1px solid ${J.border}`, borderRadius: 7, padding: '8px 12px', fontSize: 12, color: J.textSec, marginBottom: 12 }}>
+          Test fired: {testResult}
+        </div>
+      )}
+
+      {loading ? (
+        <div style={{ fontSize: 12, color: J.textMuted }}>Loading…</div>
+      ) : rules.length === 0 ? (
+        <div style={{ fontSize: 12, color: J.textMuted }}>No personal alert rules yet.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {rules.map(rule => (
+            <div key={rule.id} style={{ display: 'flex', alignItems: 'center', gap: 10, background: J.bg3, borderRadius: 8, padding: '9px 12px', border: `1px solid ${J.border}` }}>
+              <Toggle on={rule.enabled} onChange={() => void handleToggle(rule)} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, color: J.text, fontWeight: 500 }}>{rule.name}</div>
+                <div style={{ fontSize: 11, color: J.textMuted }}>
+                  {rule.metric} {rule.condition} {rule.threshold}
+                  {rule.ha_entity_id ? ` (${rule.ha_entity_id})` : ''} · {rule.severity}
+                </div>
+              </div>
+              <button onClick={() => void handleTest(rule.id)} disabled={testingId === rule.id}
+                style={{ background: 'none', border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 6, padding: '4px 10px', fontSize: 12, cursor: 'pointer', flexShrink: 0 }}>
+                {testingId === rule.id ? '…' : 'Test'}
+              </button>
+              <button onClick={() => void handleDelete(rule.id)}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: J.textMuted, fontSize: 16, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}
+                onMouseEnter={e => { e.currentTarget.style.color = J.error; }}
+                onMouseLeave={e => { e.currentTarget.style.color = J.textMuted; }}>
+                ×
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+    </>
+  );
+}
+
 function SecurityPanel() {
   const [cur, setCur] = useState('');
   const [next, setNext] = useState('');
@@ -301,6 +465,7 @@ function SecurityPanel() {
   const [state, setState] = useState<'idle' | 'saving' | 'ok' | 'error'>('idle');
   const [errMsg, setErrMsg] = useState('');
   const isLoggedIn = !!getSessionToken();
+  const isAdmin = getStoredUser()?.role === 'admin';
 
   const handleChange = async () => {
     if (!cur || !next) { setState('error'); setErrMsg('Fill in all fields.'); return; }
@@ -349,10 +514,12 @@ function SecurityPanel() {
         </div>
       </div>
     )}
-    <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
-      Role permissions and emergency stop are managed in the{' '}
-      <a href="/dashboard" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>.
-    </div>
+    {isAdmin && (
+      <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
+        Role permissions and emergency stop are managed in the{' '}
+        <a href="/dashboard" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>.
+      </div>
+    )}
   </>);
 }
 
@@ -391,6 +558,20 @@ function AIBillingPanel() {
     }
   };
 
+  const [subscribing, setSubscribing] = useState<string | null>(null);
+  const handleSubscribe = async (planId: string) => {
+    setSubscribing(planId);
+    try {
+      const res = await createCheckoutSession(planId);
+      if (res.checkout_url) window.location.href = res.checkout_url;
+      else setError('Checkout is not available for this plan.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to start checkout.');
+    } finally {
+      setSubscribing(null);
+    }
+  };
+
   const handleDeleteKey = async (provider: string) => {
     setSaving(p => ({ ...p, [provider]: true }));
     try {
@@ -419,6 +600,51 @@ function AIBillingPanel() {
           <button onClick={() => setError('')} style={{ marginLeft: 10, background: 'none', border: 'none', cursor: 'pointer', color: J.error, fontSize: 13 }}>×</button>
         </div>
       )}
+
+      {/* Plan */}
+      <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
+        <div style={{ fontSize: 14, color: J.text, marginBottom: 4 }}>Plan</div>
+        {billing?.plan ? (
+          <div style={{ fontSize: 13, color: J.textSec }}>
+            <span style={{ color: J.text, fontWeight: 600 }}>{billing.plan.name}</span>
+            {' — CHF '}{billing.plan.price_chf_per_month.toFixed(2)}/month
+            {' · '}CHF {billing.plan.ai_credit_chf_monthly.toFixed(2)} AI credit/month
+            {' · '}{billing.plan.storage_gb_included} GB storage
+          </div>
+        ) : (
+          <div style={{ fontSize: 13, color: J.textMuted }}>No plan assigned. Contact your admin to subscribe.</div>
+        )}
+        {billing && (
+          <div style={{ marginTop: 8, fontSize: 12, color: J.textMuted }}>
+            Storage: {(billing.storage.used_bytes / (1024 ** 3)).toFixed(2)} GB / {(billing.storage.quota_bytes / (1024 ** 3)).toFixed(0)} GB
+            {billing.storage.estimated_overage_chf > 0 && (
+              <span style={{ color: J.warn }}> · est. CHF {billing.storage.estimated_overage_chf.toFixed(2)}/month overage</span>
+            )}
+          </div>
+        )}
+        {billing && billing.plans.length > 0 && (
+          <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div style={{ fontSize: 11, color: J.textMuted, textTransform: 'uppercase', letterSpacing: 0.4 }}>Available plans</div>
+            {billing.plans.map(p => {
+              const isCurrent = p.id === billing.plan?.id;
+              return (
+                <div key={p.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '7px 10px', background: isCurrent ? J.amberDim : J.bg3, border: `1px solid ${isCurrent ? J.borderAccent : J.border}`, borderRadius: 7, fontSize: 12, gap: 10 }}>
+                  <div>
+                    <span style={{ color: J.text, fontWeight: 500 }}>{p.name}</span>
+                    <span style={{ color: J.textMuted }}> — CHF {p.price_chf_per_month.toFixed(2)}/mo · {p.ai_credit_chf_monthly.toFixed(2)} CHF AI · {p.storage_gb_included} GB</span>
+                  </div>
+                  {!isCurrent && p.stripe_price_id && (
+                    <button onClick={() => void handleSubscribe(p.id)} disabled={subscribing === p.id}
+                      style={{ flexShrink: 0, padding: '4px 12px', fontSize: 11, fontWeight: 600, borderRadius: 5, cursor: 'pointer', background: J.amber, color: J.bg0, border: 'none' }}>
+                      {subscribing === p.id ? '…' : 'Subscribe'}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
 
       {/* Balance */}
       <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
@@ -522,10 +748,125 @@ function AIBillingPanel() {
   );
 }
 
+function PaymentsPanel() {
+  const J = useJ();
+  const [status, setStatus] = useState<StripeStatus | null>(null);
+  const [secretKey, setSecretKey] = useState('');
+  const [webhookSecret, setWebhookSecret] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [msg, setMsg] = useState('');
+  const [showGuide, setShowGuide] = useState(false);
+
+  const load = () => { fetchStripeStatus().then(setStatus).catch(() => setMsg('Failed to load Stripe status.')); };
+  useEffect(load, []);
+
+  const save = async () => {
+    if (!secretKey.trim() || !webhookSecret.trim()) return;
+    setBusy(true);
+    setMsg('');
+    try {
+      await setStripeCredentials(secretKey.trim(), webhookSecret.trim());
+      setSecretKey('');
+      setWebhookSecret('');
+      load();
+      setMsg('Stripe credentials saved.');
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Failed to save Stripe credentials.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const clear = async () => {
+    setBusy(true);
+    try {
+      await clearStripeCredentials();
+      load();
+      setMsg('Stripe credentials cleared.');
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Failed to clear Stripe credentials.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const test = async () => {
+    setTesting(true);
+    setMsg('');
+    try {
+      const res = await testStripeConnection();
+      setMsg(res.ok ? 'Connection OK — the key works.' : 'Connection failed — check the secret key.');
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : 'Connection test failed.');
+    } finally {
+      setTesting(false);
+    }
+  };
+
+  return (
+    <>
+      <div style={{ padding: '13px 0', borderBottom: `1px solid ${J.border}` }}>
+        <div style={{ fontSize: 14, color: J.text, marginBottom: 4 }}>Stripe connection</div>
+        <div style={{ fontSize: 12, color: status?.configured ? J.success : J.textMuted, marginBottom: 10 }}>
+          {status?.configured ? `Configured — key ${status.secret_key_hint}${status.has_webhook_secret ? ', webhook secret set' : ', webhook secret missing'}` : 'Not configured — subscriptions are unavailable until this is set up.'}
+        </div>
+        {msg && <div style={{ fontSize: 12, color: J.textSec, marginBottom: 10 }}>{msg}</div>}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxWidth: 420 }}>
+          <input className="j-input" type="password" placeholder="Secret key (sk_live_... or sk_test_...)" value={secretKey}
+            onChange={e => setSecretKey(e.target.value)} style={{ borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+          <input className="j-input" type="password" placeholder="Webhook signing secret (whsec_...)" value={webhookSecret}
+            onChange={e => setWebhookSecret(e.target.value)} style={{ borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+        </div>
+        <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
+          <button onClick={() => void save()} disabled={busy || !secretKey.trim() || !webhookSecret.trim()} className="j-btn"
+            style={{ background: J.amber, color: J.bg0, borderRadius: 7, padding: '7px 16px', fontSize: 13, fontWeight: 600 }}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+          <button onClick={() => void test()} disabled={testing || !status?.configured} className="j-btn"
+            style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 7, padding: '7px 16px', fontSize: 13 }}>
+            {testing ? 'Testing…' : 'Test connection'}
+          </button>
+          {status?.configured && (
+            <button onClick={() => void clear()} disabled={busy} className="j-btn"
+              style={{ background: 'none', border: `1px solid ${J.error}`, color: J.error, borderRadius: 7, padding: '7px 16px', fontSize: 13 }}>
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
+
+      <div style={{ padding: '13px 0' }}>
+        <button onClick={() => setShowGuide(v => !v)}
+          style={{ background: 'none', border: 'none', color: J.amber, cursor: 'pointer', fontSize: 13, padding: 0, textDecoration: 'underline' }}>
+          {showGuide ? 'Hide setup guide' : 'How do I set this up?'}
+        </button>
+        {showGuide && (
+          <ol style={{ marginTop: 10, paddingLeft: 20, fontSize: 13, color: J.textSec, lineHeight: 1.7 }}>
+            <li>Create a <strong>Stripe</strong> account at stripe.com if you don't have one, and switch to Live mode when you're ready to accept real payments (Test mode works for trying this out first).</li>
+            <li>In the Stripe Dashboard, go to <strong>Product catalog</strong> and create one Product + recurring monthly Price per plan you want to sell (e.g. "Standard — CHF 8.00/month"). Copy each Price's ID (starts with <code>price_</code>).</li>
+            <li>Paste each Price ID into the matching plan's <strong>Stripe Price ID</strong> field under Dashboard → Billing → Plans. A plan with no Price ID has no "Subscribe" button and stays manual-only.</li>
+            <li>In Stripe, go to <strong>Developers → API keys</strong> and copy the <strong>Secret key</strong> (starts with <code>sk_</code>). Paste it above.</li>
+            <li>In Stripe, go to <strong>Developers → Webhooks</strong>, add an endpoint pointing at <code>{`${window.location.origin}/webhooks/stripe`}</code>, and subscribe it to the <code>checkout.session.completed</code> and <code>customer.subscription.deleted</code> events. Copy the endpoint's <strong>Signing secret</strong> (starts with <code>whsec_</code>) and paste it above.</li>
+            <li>Click <strong>Test connection</strong> to confirm the secret key works. Users can now click "Subscribe" on the AI & Billing tab — Stripe handles checkout and recurring charges; JARVIS assigns the plan automatically when checkout completes, and removes it if the subscription is cancelled.</li>
+          </ol>
+        )}
+        <div style={{ marginTop: 12, fontSize: 12, color: J.textMuted }}>
+          Note: JARVIS grants a plan's monthly AI credit once assigned and keeps granting it every calendar month as long as the plan stays assigned — it does not currently re-verify each Stripe renewal payment individually. If a renewal payment fails, Stripe will eventually cancel the subscription and JARVIS will unassign the plan at that point, not immediately on the failed charge.
+        </div>
+      </div>
+    </>
+  );
+}
+
 export function SettingsScreen() {
   useJ();
   const isGuest = isGuestMode();
-  const availableCats = isGuest ? CATS.filter(c => c.id === 'appearance') : CATS;
+  const hasAlertsManage = Boolean(getStoredCapabilities().alerts_manage);
+  const hasBillingManage = Boolean(getStoredCapabilities().billing_manage);
+  const availableCats = isGuest
+    ? CATS.filter(c => c.id === 'appearance')
+    : CATS.filter(c => (c.id !== 'alerts' || hasAlertsManage) && (c.id !== 'payments' || hasBillingManage));
   const [cat, setCat] = useState('appearance');
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -534,9 +875,8 @@ export function SettingsScreen() {
   const [testingVoice, setTestingVoice] = useState(false);
   const [voiceTestErr, setVoiceTestErr] = useState('');
   const [previewingVoice, setPreviewingVoice] = useState<string | null>(null);
-  const [intStatus, setIntStatus] = useState<Record<string, IntegrationState>>({
-    proxmox: 'checking', ha: 'checking', rag: 'checking',
-  });
+  const [intStatus, setIntStatus] = useState<Record<string, IntegrationState>>({ rag: 'checking' });
+  const integrationStatus = useIntegrationStatus();
   const [pushSupported, setPushSupported] = useState(false);
   const [pushEnabled, setPushEnabled] = useState(false);
   const [pushBusy, setPushBusy] = useState(false);
@@ -631,18 +971,10 @@ export function SettingsScreen() {
       .then(data => setVoices(data.voices))
       .catch(() => setVoices([]));
 
-    // Check integration status dynamically
+    // Check RAG status dynamically (Proxmox/HA come from useIntegrationStatus())
     const checkInt = async () => {
-      const [px, ha, rag] = await Promise.allSettled([
-        apiRequest<{ healthy?: boolean }>('/proxmox/health', { includeUser: true }),
-        apiRequest<{ healthy?: boolean }>('/home-assistant/health', { includeUser: true }),
-        apiRequest<{ counts?: Record<string, number> }>('/rag/status', { includeUser: true }),
-      ]);
-      setIntStatus({
-        proxmox: px.status === 'fulfilled' ? 'online' : 'offline',
-        ha: ha.status === 'fulfilled' ? 'online' : 'offline',
-        rag: rag.status === 'fulfilled' ? 'online' : 'offline',
-      });
+      const rag = await apiRequest<{ counts?: Record<string, number> }>('/rag/status', { includeUser: true }).catch(() => null);
+      setIntStatus({ rag: rag ? 'online' : 'offline' });
     };
     void checkInt();
 
@@ -682,25 +1014,10 @@ export function SettingsScreen() {
   };
 
   const current = availableCats.find(c => c.id === cat);
+  const isAdmin = getStoredUser()?.role === 'admin';
 
   const panels: Record<string, React.ReactNode> = {
-    appearance: (<>
-      <Row label="Theme" desc="Applies immediately">
-        <Sel value={prefs.theme || 'dark'} onChange={v => set('theme', v as 'dark' | 'light')}
-          options={[{ v: 'dark', l: 'Dark' }, { v: 'light', l: 'Light' }]} />
-      </Row>
-      <Row label="Accent Color" desc="Saved with preferences">
-        <div style={{ display: 'flex', gap: 6 }}>
-          {ACCENT_COLORS.map(c => (
-            <button key={c} onClick={() => set('accent_color', c)}
-              style={{ width: 22, height: 22, borderRadius: '50%', background: c, border: (prefs.accent_color || '#e09a1a') === c ? `2px solid ${J.text}` : '2px solid transparent', cursor: 'pointer', transition: 'border .15s' }} />
-          ))}
-        </div>
-      </Row>
-      <Row label="Compact Mode" desc="Reduce spacing and element sizes">
-        <Toggle on={prefs.compact_mode ?? false} onChange={v => set('compact_mode', v)} />
-      </Row>
-    </>),
+    appearance: (<AppearancePanel />),
 
     chat: (<>
       <Row label="Auto-play Voice" desc="Automatically play voice responses">
@@ -833,13 +1150,15 @@ export function SettingsScreen() {
           {voiceTestErr && <span style={{ fontSize: 12, color: J.error }}>{voiceTestErr}</span>}
         </div>
       </div>
-      <div style={{ padding: '16px 0', borderBottom: `1px solid ${J.border}` }}>
-        <div style={{ fontSize: 14, color: J.text, marginBottom: 6 }}>Wake Word</div>
-        <div style={{ fontSize: 13, color: J.textMuted, lineHeight: 1.6 }}>
-          Wake word settings (phrase, enabled state) are configured in the{' '}
-          <a href="/dashboard/settings" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard → Settings</a>.
+      {isAdmin && (
+        <div style={{ padding: '16px 0', borderBottom: `1px solid ${J.border}` }}>
+          <div style={{ fontSize: 14, color: J.text, marginBottom: 6 }}>Wake Word</div>
+          <div style={{ fontSize: 13, color: J.textMuted, lineHeight: 1.6 }}>
+            Wake word settings (phrase, enabled state) are configured in the{' '}
+            <a href="/dashboard/settings" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard → Settings</a>.
+          </div>
         </div>
-      </div>
+      )}
       <div style={{ padding: '16px 0', borderBottom: `1px solid ${J.border}` }}>
         <div style={{ fontSize: 14, color: J.text, marginBottom: 6 }}>STT provider</div>
         <div style={{ fontSize: 13, color: J.textMuted, lineHeight: 1.6 }}>
@@ -850,17 +1169,22 @@ export function SettingsScreen() {
 
     memory: (<MemoryPanel />),
 
+    alerts: (<AlertsPanel />),
+
     billing: (<AIBillingPanel />),
 
+    payments: (<PaymentsPanel />),
+
     integrations: (<>
-      <Integration name="Proxmox" status={intStatus.proxmox === 'checking' ? 'checking' : intStatus.proxmox === 'online' ? 'online' : 'offline'} note="Via JARVIS_PROXMOX_HOST env var" icon={<IconSettings size={14} />} />
-      <Integration name="Home Assistant" status={intStatus.ha === 'checking' ? 'checking' : intStatus.ha === 'online' ? 'online' : 'offline'} note="Via JARVIS_HA_BASE_URL env var" icon={<IconSettings size={14} />} />
-      <Integration name="RAG / Knowledge" status={intStatus.rag === 'checking' ? 'checking' : intStatus.rag === 'online' ? 'active' : 'offline'} note="GitHub repos + WikiJS indexing" icon={<IconCode size={14} />} />
-      <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
-        Integrations are configured via environment variables on the server. Use the{' '}
-        <a href="/dashboard/settings" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>{' '}
-        to view current configuration.
-      </div>
+      <Integration name="Proxmox" status={integrationStatus.proxmox === 'not_configured' ? 'not configured' : integrationStatus.proxmox} note="Manage hosts in the Proxmox screen" icon={<IconSettings size={14} />} />
+      <Integration name="Home Assistant" status={integrationStatus.ha === 'not_configured' ? 'not configured' : integrationStatus.ha} note="Configurable by an admin under Dashboard → Integrations" icon={<IconSettings size={14} />} />
+      <Integration name="RAG / Knowledge" status={intStatus.rag === 'checking' ? 'checking' : intStatus.rag === 'online' ? 'active' : 'offline'} note="GitHub repo indexing" icon={<IconCode size={14} />} />
+      {isAdmin && (
+        <div style={{ padding: '14px 0', fontSize: 13, color: J.textMuted }}>
+          Proxmox hosts are configured directly in the Proxmox screen. Home Assistant credentials and other server-level settings live in the{' '}
+          <a href="/dashboard/integrations" style={{ color: J.amber, textDecoration: 'underline' }}>Admin Dashboard</a>.
+        </div>
+      )}
     </>),
 
     security: (<SecurityPanel />),
@@ -930,7 +1254,7 @@ export function SettingsScreen() {
         <h2 style={{ fontSize: 18, fontWeight: 600, color: J.text, marginBottom: 3 }}>{current?.label}</h2>
         <p style={{ fontSize: 13, color: J.textMuted, marginBottom: 24 }}>Configure {current?.label?.toLowerCase()} preferences</p>
         {panels[cat]}
-        {['appearance', 'chat', 'notifications', 'briefing', 'voice', 'developer'].includes(cat) && (
+        {['chat', 'notifications', 'briefing', 'voice', 'developer'].includes(cat) && (
           <div style={{ padding: '22px 0 8px', display: 'flex', gap: 9, alignItems: 'center' }}>
             <button onClick={handleSave} disabled={saving} className="j-btn"
               style={{ background: saved ? J.success : J.amber, color: J.bg0, borderRadius: 8, padding: '9px 20px', fontSize: 13, fontWeight: 600, opacity: saving ? 0.7 : 1, transition: 'background .2s' }}>

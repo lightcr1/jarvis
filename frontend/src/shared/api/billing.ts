@@ -1,10 +1,31 @@
 import { apiRequest } from "./client";
 
+export type Plan = {
+  id: string;
+  name: string;
+  price_chf_per_month: number;
+  ai_credit_chf_monthly: number;
+  storage_gb_included: number;
+  sort_order: number;
+  stripe_price_id: string;
+};
+
+export type PlanCreate = Omit<Plan, "id">;
+export type PlanUpdate = Partial<PlanCreate>;
+
 export type BillingInfo = {
   user_id: string;
   balance_chf: number;
   limits: Record<string, unknown>;
   recent_usage: unknown[];
+  plan: Plan | null;
+  plans: Plan[];
+  storage: {
+    used_bytes: number;
+    quota_bytes: number;
+    overage_price_chf_per_gb_month: number;
+    estimated_overage_chf: number;
+  };
 };
 
 export type ByokKey = {
@@ -86,6 +107,37 @@ export function updateUserLimits(
   });
 }
 
+export function fetchAdminPlans(): Promise<{ plans: Plan[] }> {
+  return apiRequest<{ plans: Plan[] }>("/admin/plans", { includeAdmin: true });
+}
+
+export function createAdminPlan(body: PlanCreate): Promise<{ plan: Plan }> {
+  return apiRequest<{ plan: Plan }>("/admin/plans", { method: "POST", includeAdmin: true, body });
+}
+
+export function updateAdminPlan(planId: string, body: PlanUpdate): Promise<{ plan: Plan }> {
+  return apiRequest<{ plan: Plan }>(`/admin/plans/${encodeURIComponent(planId)}`, {
+    method: "PATCH",
+    includeAdmin: true,
+    body,
+  });
+}
+
+export function deleteAdminPlan(planId: string): Promise<{ ok: boolean; id: string }> {
+  return apiRequest<{ ok: boolean; id: string }>(`/admin/plans/${encodeURIComponent(planId)}`, {
+    method: "DELETE",
+    includeAdmin: true,
+  });
+}
+
+export function assignUserPlan(userId: string, planId: string): Promise<Record<string, unknown>> {
+  return apiRequest<Record<string, unknown>>(`/admin/users/${encodeURIComponent(userId)}/plan`, {
+    method: "PUT",
+    includeAdmin: true,
+    body: { plan_id: planId },
+  });
+}
+
 export function fetchAdminUsage(params?: {
   user_id?: string;
   provider?: string;
@@ -97,4 +149,37 @@ export function fetchAdminUsage(params?: {
   if (params?.days != null) qs.set("days", String(params.days));
   const query = qs.toString() ? `?${qs.toString()}` : "";
   return apiRequest<UsageSummary>(`/admin/usage${query}`, { includeAdmin: true });
+}
+
+// Stripe payment integration (billing.manage permission or admin)
+
+export type StripeStatus = {
+  configured: boolean;
+  secret_key_hint: string;
+  has_webhook_secret: boolean;
+  updated_at: number | null;
+};
+
+export function fetchStripeStatus(): Promise<StripeStatus> {
+  return apiRequest<StripeStatus>("/billing/stripe/status", { includeUser: true });
+}
+
+export function setStripeCredentials(secret_key: string, webhook_secret: string): Promise<{ configured: boolean }> {
+  return apiRequest<{ configured: boolean }>("/billing/stripe/credentials", {
+    method: "PUT", includeUser: true, body: { secret_key, webhook_secret },
+  });
+}
+
+export function clearStripeCredentials(): Promise<{ configured: boolean }> {
+  return apiRequest<{ configured: boolean }>("/billing/stripe/credentials", { method: "DELETE", includeUser: true });
+}
+
+export function testStripeConnection(): Promise<{ ok: boolean }> {
+  return apiRequest<{ ok: boolean }>("/billing/stripe/test", { method: "POST", includeUser: true });
+}
+
+export function createCheckoutSession(planId: string): Promise<{ checkout_url: string | null }> {
+  return apiRequest<{ checkout_url: string | null }>("/billing/checkout-session", {
+    method: "POST", includeUser: true, body: { plan_id: planId, return_url: window.location.origin },
+  });
 }

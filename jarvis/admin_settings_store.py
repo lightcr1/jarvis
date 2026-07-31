@@ -31,6 +31,7 @@ class AdminSettingsStore:
             },
             "files": {
                 "default_storage_quota_mb": 12000,
+                "overage_price_chf_per_gb_month": 0.15,
             },
             "provider": {
                 "default_provider": "openrouter",
@@ -118,6 +119,10 @@ class AdminSettingsStore:
         except (TypeError, ValueError):
             default_storage_quota_mb = base["files"]["default_storage_quota_mb"]
         default_storage_quota_mb = max(1, default_storage_quota_mb)
+        try:
+            overage_price_chf_per_gb_month = max(0.0, float(files_raw.get("overage_price_chf_per_gb_month", base["files"]["overage_price_chf_per_gb_month"])))
+        except (TypeError, ValueError):
+            overage_price_chf_per_gb_month = base["files"]["overage_price_chf_per_gb_month"]
 
         # Provider section normalization
         bp = base["provider"]
@@ -176,6 +181,7 @@ class AdminSettingsStore:
             },
             "files": {
                 "default_storage_quota_mb": default_storage_quota_mb,
+                "overage_price_chf_per_gb_month": overage_price_chf_per_gb_month,
             },
             "provider": {
                 "default_provider": default_provider,

@@ -11,6 +11,8 @@ DEFAULT_LIMITS: dict = {
     "expensive_models_per_day": 0,  # 0 = unlimited
     "allowed_models": [],           # empty = all allowed
     "storage_quota_mb": 0,           # 0 = use admin_settings_store default_storage_quota_mb
+    "plan_id": "",                  # "" = no plan assigned
+    "plan_last_grant_ym": "",        # "YYYY-MM" of the last monthly AI-credit grant
     "updated_at": 0,
 }
 
@@ -60,6 +62,10 @@ class UserLimitsStore:
                 out["allowed_models"] = []
         if "storage_quota_mb" in raw:
             out["storage_quota_mb"] = max(0, int(raw["storage_quota_mb"] or 0))
+        if "plan_id" in raw:
+            out["plan_id"] = str(raw["plan_id"] or "")
+        if "plan_last_grant_ym" in raw:
+            out["plan_last_grant_ym"] = str(raw["plan_last_grant_ym"] or "")
         out["updated_at"] = int(raw.get("updated_at") or 0)
         return out
 

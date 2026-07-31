@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { J, useJ, Spinner, showToast, IconPlus, IconUpload, IconFolder, IconFile, IconTrash, IconPencil, IconX, IconZap, IconDownload, IconChevRight } from './jarvis-shared';
+import { J, useJ, Spinner, showToast, IconPlus, IconUpload, IconFolder, IconFile, IconTrash, IconPencil, IconX, IconZap, IconDownload, IconChevRight, IconShare } from './jarvis-shared';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 import {
-  BreadcrumbItem, FileEntry, FileFolder,
-  browseFiles, createFolder, deleteFile, deleteFolder, downloadFile, fetchQuotaStatus,
-  formatBytes, moveFile, moveFolder, renameFile, renameFolder, setJarvisFolderAccess, uploadFile,
+  BreadcrumbItem, FileEntry, FileFolder, FolderAccess, MyGroup, ShareGrant, SharedWithMeEntry,
+  browseFiles, createFolder, deleteFile, deleteFolder, downloadFile, fetchMyGroups, fetchQuotaStatus,
+  fetchSharedWithMe, formatBytes, listFolderShares, moveFile, moveFolder, renameFile, renameFolder,
+  setJarvisFolderAccess, shareFolder, unshareFolder, uploadFile,
 } from '../shared/api/files';
 
 function errMsg(err: unknown, fallback: string): string {
@@ -170,25 +171,149 @@ function MoveModal({ excludeFolderId, onClose, onPick }: { excludeFolderId?: str
   );
 }
 
+function ShareFolderDialog({ folder, onClose }: { folder: FileFolder; onClose: () => void }) {
+  const [groups, setGroups] = useState<MyGroup[]>([]);
+  const [shares, setShares] = useState<ShareGrant[]>([]);
+  const [selectedGroup, setSelectedGroup] = useState('');
+  const [permission, setPermission] = useState<'read' | 'write'>('read');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  const load = useCallback(() => {
+    setLoading(true);
+    Promise.all([fetchMyGroups(), listFolderShares(folder.id)])
+      .then(([g, s]) => { setGroups(g.groups); setShares(s.shares); })
+      .catch(err => showToast(errMsg(err, 'Failed to load sharing info'), 'error'))
+      .finally(() => setLoading(false));
+  }, [folder.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const addShare = async () => {
+    if (!selectedGroup || saving) return;
+    setSaving(true);
+    try {
+      await shareFolder(folder.id, selectedGroup, permission);
+      showToast('Folder shared', 'success');
+      setSelectedGroup('');
+      load();
+    } catch (err) {
+      showToast(errMsg(err, 'Failed to share folder'), 'error');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const removeShare = async (shareId: string) => {
+    try {
+      await unshareFolder(shareId);
+      setShares(prev => prev.filter(s => s.id !== shareId));
+      showToast('Share removed', 'info');
+    } catch (err) {
+      showToast(errMsg(err, 'Failed to remove share'), 'error');
+    }
+  };
+
+  const sharedGroupIds = new Set(shares.map(s => s.group_id));
+  const availableGroups = groups.filter(g => !sharedGroupIds.has(g.id));
+
+  return (
+    <OverlayDialog
+      title={`Share "${folder.name}"`}
+      onClose={onClose}
+      actions={
+        <button onClick={onClose} className="j-btn" style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, padding: '8px 16px', fontSize: 13 }}>Done</button>
+      }
+    >
+      {loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: J.textMuted, fontSize: 13 }}><Spinner size={13} /> Loading...</div>
+      ) : (
+        <>
+          {groups.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: J.textMuted, marginBottom: 16, lineHeight: 1.6 }}>
+              You're not a member of any group yet — ask an admin to add you to one to share folders.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+              <select value={selectedGroup} onChange={e => setSelectedGroup(e.target.value)} className="j-input"
+                style={{ flex: 1, borderRadius: 8, padding: '8px 10px', fontSize: 13 }}>
+                <option value="">Select a group...</option>
+                {availableGroups.map(g => <option key={g.id} value={g.id}>{g.name}</option>)}
+              </select>
+              <select value={permission} onChange={e => setPermission(e.target.value as 'read' | 'write')} className="j-input"
+                style={{ borderRadius: 8, padding: '8px 10px', fontSize: 13 }}>
+                <option value="read">Can view</option>
+                <option value="write">Can edit</option>
+              </select>
+              <button onClick={addShare} disabled={!selectedGroup || saving} className="j-btn"
+                style={{ background: J.amber, color: J.bg0, borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 600, opacity: selectedGroup ? 1 : .5 }}>
+                {saving ? <Spinner size={13} color={J.bg0} /> : 'Share'}
+              </button>
+            </div>
+          )}
+          <div style={{ fontSize: 11, color: J.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Shared with</div>
+          {shares.length === 0 ? (
+            <div style={{ fontSize: 12.5, color: J.textMuted }}>Not shared with anyone yet.</div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {shares.map(s => (
+                <div key={s.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: J.bg3, borderRadius: 8, padding: '8px 12px' }}>
+                  <div style={{ fontSize: 13, color: J.text }}>
+                    {s.group_name} <span style={{ color: J.textMuted, fontSize: 11.5 }}>· {s.permission === 'write' ? 'can edit' : 'can view'}</span>
+                  </div>
+                  <button onClick={() => removeShare(s.id)} title="Remove access" aria-label="Remove access"
+                    style={{ background: 'none', border: 'none', color: J.error, cursor: 'pointer', display: 'flex' }}>
+                    <IconTrash size={13} />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
+    </OverlayDialog>
+  );
+}
+
 function QuotaBar({ used, total }: { used: number; total: number }) {
   const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
   const color = pct > 90 ? J.error : pct > 70 ? J.warn : J.success;
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 200 }}>
-      <div style={{ flex: 1, height: 6, background: J.bg3, borderRadius: 3, overflow: 'hidden', minWidth: 90 }}>
+    <div>
+      <div style={{ height: 5, background: J.bg3, borderRadius: 3, overflow: 'hidden' }}>
         <div style={{ width: `${pct}%`, height: '100%', background: color, borderRadius: 3, transition: 'width .2s' }} />
       </div>
-      <div style={{ fontSize: 11, color: J.textMuted, whiteSpace: 'nowrap' }}>{formatBytes(used)} / {formatBytes(total)}</div>
+      <div style={{ fontSize: 11, color: J.textMuted, marginTop: 7 }}>{formatBytes(used)} of {formatBytes(total)} used</div>
     </div>
+  );
+}
+
+function SidebarNavItem({ icon, label, active, onClick }: { icon: React.ReactNode; label: string; active: boolean; onClick: () => void }) {
+  return (
+    <button onClick={onClick} style={{
+      display: 'flex', alignItems: 'center', gap: 10, width: '100%', textAlign: 'left',
+      padding: '8px 12px 8px 10px', borderRadius: 7, fontSize: 13, cursor: 'pointer', border: 'none',
+      borderLeft: `2px solid ${active ? J.amber : 'transparent'}`,
+      background: active ? J.amberGlow : 'transparent',
+      color: active ? J.amber : J.textSec,
+      fontWeight: active ? 600 : 400,
+    }}>
+      {icon}
+      {label}
+    </button>
   );
 }
 
 export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
   useJ();
+  const [view, setView] = useState<'mine' | 'shared'>('mine');
   const [parentId, setParentId] = useState<string | null>(null);
   const [breadcrumb, setBreadcrumb] = useState<BreadcrumbItem[]>([]);
   const [folders, setFolders] = useState<FileFolder[]>([]);
   const [files, setFiles] = useState<FileEntry[]>([]);
+  const [sharedList, setSharedList] = useState<SharedWithMeEntry[]>([]);
+  const [access, setAccess] = useState<FolderAccess>('owner');
+  const [ownerUsername, setOwnerUsername] = useState<string | null>(null);
   const [quota, setQuota] = useState<{ used_bytes: number; quota_bytes: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -197,30 +322,52 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
   const [uploading, setUploading] = useState(false);
   const [renameTarget, setRenameTarget] = useState<{ kind: 'folder' | 'file'; id: string; name: string } | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ kind: 'folder' | 'file'; id: string } | null>(null);
+  const [shareTarget, setShareTarget] = useState<FileFolder | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const onSharedTopLevel = view === 'shared' && parentId === null;
 
   const loadQuota = () => fetchQuotaStatus().then(res => setQuota({ used_bytes: res.used_bytes, quota_bytes: res.quota_bytes })).catch(() => {});
 
   const load = useCallback((id: string | null) => {
     setLoading(true);
     setError(null);
+    if (id === null && view === 'shared') {
+      fetchSharedWithMe()
+        .then(res => {
+          setSharedList(res.shared);
+          setBreadcrumb([]);
+          setFolders([]);
+          setFiles([]);
+          setAccess('owner');
+          setOwnerUsername(null);
+        })
+        .catch(err => setError(errMsg(err, 'Failed to load shared folders')))
+        .finally(() => setLoading(false));
+      return;
+    }
     browseFiles(id)
       .then(res => {
         setBreadcrumb(res.breadcrumb);
         setFolders(res.folders);
         setFiles(res.files);
+        setAccess(res.access);
+        setOwnerUsername(res.owner_username);
       })
       .catch(err => setError(errMsg(err, 'Failed to load files')))
       .finally(() => setLoading(false));
-  }, []);
+  }, [view]);
 
   useEffect(() => { load(parentId); }, [parentId, load]);
   useEffect(() => { loadQuota(); }, [parentId]);
 
   const navigateTo = (id: string | null) => setParentId(id);
+  const switchView = (v: 'mine' | 'shared') => { setView(v); setParentId(null); };
+  const canWrite = !onSharedTopLevel && access !== 'read';
 
   const doUpload = async (fileList: FileList | null) => {
     if (!fileList || fileList.length === 0) return;
+    if (!canWrite) { showToast('You only have view access to this folder', 'error'); return; }
     setUploading(true);
     try {
       for (const file of Array.from(fileList)) {
@@ -278,42 +425,65 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
     }
   };
 
-  const empty = !loading && !error && folders.length === 0 && files.length === 0;
+  const empty = !loading && !error && !onSharedTopLevel && folders.length === 0 && files.length === 0;
 
   return (
     <div
-      style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: J.bg0, position: 'relative' }}
+      style={{ flex: 1, display: 'flex', overflow: 'hidden', background: J.bg0, position: 'relative' }}
       onDragOver={e => { e.preventDefault(); setDragOver(true); }}
       onDragLeave={e => { e.preventDefault(); setDragOver(false); }}
       onDrop={e => { e.preventDefault(); setDragOver(false); void doUpload(e.dataTransfer.files); }}
     >
-      <div style={{ minHeight: 50, borderBottom: `1px solid ${J.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 24px', background: J.bg1, flexShrink: 0, flexWrap: 'wrap', gap: 10 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, flexWrap: 'wrap' }}>
-          <span onClick={() => navigateTo(null)} style={{ cursor: 'pointer', color: parentId === null ? J.text : J.textSec, fontWeight: parentId === null ? 600 : 400 }}>My Files</span>
-          {breadcrumb.map(b => (
-            <span key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <IconChevRight size={11} />
-              <span onClick={() => navigateTo(b.id)} style={{ cursor: 'pointer', color: b.id === parentId ? J.text : J.textSec, fontWeight: b.id === parentId ? 600 : 400 }}>{b.name}</span>
-            </span>
-          ))}
-        </div>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap' }}>
-          {quota && <QuotaBar used={quota.used_bytes} total={quota.quota_bytes} />}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => setShowCreate(true)} className="j-btn"
-              style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500 }}>
-              <IconPlus size={13} /> Folder
-            </button>
-            <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="j-btn"
-              style={{ background: J.amberDim, border: `1px solid ${J.borderAccent}`, color: J.amber, borderRadius: 8, padding: '6px 14px', fontSize: 12, fontWeight: 500 }}>
-              {uploading ? <Spinner size={13} /> : <IconUpload size={13} />} Upload
-            </button>
-            <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={e => { void doUpload(e.target.files); e.target.value = ''; }} />
+      <aside style={{ width: 200, flexShrink: 0, borderRight: `1px solid ${J.border}`, background: J.bg1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <nav style={{ padding: '14px 10px', display: 'flex', flexDirection: 'column', gap: 2 }}>
+          <SidebarNavItem icon={<IconFolder size={15} />} label="My Files" active={view === 'mine'} onClick={() => switchView('mine')} />
+          <SidebarNavItem icon={<IconShare size={15} />} label="Shared with me" active={view === 'shared'} onClick={() => switchView('shared')} />
+        </nav>
+        <div style={{ flex: 1 }} />
+        {quota && (
+          <div style={{ padding: 14, borderTop: `1px solid ${J.border}` }}>
+            <div style={{ fontSize: 10.5, color: J.textMuted, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Storage</div>
+            <QuotaBar used={quota.used_bytes} total={quota.quota_bytes} />
           </div>
-        </div>
-      </div>
+        )}
+      </aside>
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '22px 24px' }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div style={{ minHeight: 50, borderBottom: `1px solid ${J.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 24px', background: J.bg1, flexShrink: 0, flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, flexWrap: 'wrap' }}>
+              <span onClick={() => navigateTo(null)} style={{ cursor: 'pointer', color: parentId === null ? J.text : J.textSec, fontWeight: parentId === null ? 600 : 400 }}>
+                {view === 'mine' ? 'My Files' : 'Shared with me'}
+              </span>
+              {breadcrumb.map(b => (
+                <span key={b.id} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <IconChevRight size={11} />
+                  <span onClick={() => navigateTo(b.id)} style={{ cursor: 'pointer', color: b.id === parentId ? J.text : J.textSec, fontWeight: b.id === parentId ? 600 : 400 }}>{b.name}</span>
+                </span>
+              ))}
+            </div>
+            {access !== 'owner' && parentId !== null && (
+              <span style={{ fontSize: 11, color: J.textMuted, background: J.bg3, borderRadius: 6, padding: '3px 9px', whiteSpace: 'nowrap' }}>
+                Shared by {ownerUsername || 'unknown'} · {access === 'write' ? 'can edit' : 'can view'}
+              </span>
+            )}
+          </div>
+          {canWrite && (
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button onClick={() => setShowCreate(true)} className="j-btn"
+                style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, padding: '6px 12px', fontSize: 12, fontWeight: 500 }}>
+                <IconPlus size={13} /> Folder
+              </button>
+              <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="j-btn"
+                style={{ background: J.amberDim, border: `1px solid ${J.borderAccent}`, color: J.amber, borderRadius: 8, padding: '6px 14px', fontSize: 12, fontWeight: 500 }}>
+                {uploading ? <Spinner size={13} /> : <IconUpload size={13} />} Upload
+              </button>
+              <input ref={fileInputRef} type="file" multiple style={{ display: 'none' }} onChange={e => { void doUpload(e.target.files); e.target.value = ''; }} />
+            </div>
+          )}
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: '22px 24px' }}>
         {loading && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: J.textMuted, fontSize: 13, padding: '24px 0' }}>
             <Spinner size={14} /> Loading...
@@ -327,13 +497,34 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
           </div>
         )}
 
-        {empty && (
+        {onSharedTopLevel && !loading && !error && sharedList.length === 0 && (
           <div style={{ textAlign: 'center', color: J.textMuted, fontSize: 13, padding: '48px 0' }}>
-            Empty. Drag and drop files here, or use Upload / Folder above.
+            Nothing has been shared with you yet.
           </div>
         )}
 
-        {!loading && !error && folders.length > 0 && (
+        {onSharedTopLevel && !loading && !error && sharedList.length > 0 && (
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))', gap: 10 }}>
+            {sharedList.map(entry => (
+              <div key={entry.folder.id} onClick={() => navigateTo(entry.folder.id)}
+                style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 12, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 6, cursor: 'pointer' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, overflow: 'hidden' }}>
+                  <IconFolder size={17} />
+                  <span style={{ fontSize: 13, fontWeight: 500, color: J.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.folder.name}</span>
+                </div>
+                <div style={{ fontSize: 11, color: J.textMuted }}>Shared by {entry.owner_username || 'unknown'} · {entry.access === 'write' ? 'can edit' : 'can view'}</div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {empty && (
+          <div style={{ textAlign: 'center', color: J.textMuted, fontSize: 13, padding: '48px 0' }}>
+            {canWrite ? 'Empty. Drag and drop files here, or use Upload / Folder above.' : 'This folder is empty.'}
+          </div>
+        )}
+
+        {!onSharedTopLevel && !loading && !error && folders.length > 0 && (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))', gap: 10, marginBottom: files.length > 0 ? 18 : 0 }}>
             {folders.map(folder => (
               <div key={folder.id} style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 12, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -343,26 +534,29 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
                     <span style={{ fontSize: 13, fontWeight: 500, color: J.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{folder.name}</span>
                   </div>
                 </div>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <button onClick={() => handleToggleJarvis(folder)} title={folder.jarvis_access_granted ? 'JARVIS can access this folder — click to revoke' : 'Give JARVIS access to this folder'}
-                    style={{
-                      display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 5, padding: '2px 8px', fontSize: 10.5, fontWeight: 500, cursor: 'pointer', border: `1px solid ${folder.jarvis_access_granted ? J.borderAccent : J.border}`,
-                      background: folder.jarvis_access_granted ? J.amberDim : 'transparent', color: folder.jarvis_access_granted ? J.amber : J.textMuted,
-                    }}>
-                    <IconZap size={10} /> {folder.jarvis_access_granted ? 'JARVIS' : 'Private'}
-                  </button>
-                  <div style={{ display: 'flex', gap: 5, marginLeft: 'auto' }}>
-                    <IconButton onClick={() => setRenameTarget({ kind: 'folder', id: folder.id, name: folder.name })} title="Rename"><IconPencil size={12} /></IconButton>
-                    <IconButton onClick={() => setMoveTarget({ kind: 'folder', id: folder.id })} title="Move"><IconFolder size={12} /></IconButton>
-                    <IconButton onClick={() => handleDeleteFolder(folder)} title="Delete" danger><IconTrash size={12} /></IconButton>
+                {access === 'owner' && (
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button onClick={() => handleToggleJarvis(folder)} title={folder.jarvis_access_granted ? 'JARVIS can access this folder — click to revoke' : 'Give JARVIS access to this folder'}
+                      style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 5, padding: '2px 8px', fontSize: 10.5, fontWeight: 500, cursor: 'pointer', border: `1px solid ${folder.jarvis_access_granted ? J.borderAccent : J.border}`,
+                        background: folder.jarvis_access_granted ? J.amberDim : 'transparent', color: folder.jarvis_access_granted ? J.amber : J.textMuted,
+                      }}>
+                      <IconZap size={10} /> {folder.jarvis_access_granted ? 'JARVIS' : 'Private'}
+                    </button>
+                    <div style={{ display: 'flex', gap: 5, marginLeft: 'auto' }}>
+                      <IconButton onClick={() => setShareTarget(folder)} title="Share"><IconShare size={12} /></IconButton>
+                      <IconButton onClick={() => setRenameTarget({ kind: 'folder', id: folder.id, name: folder.name })} title="Rename"><IconPencil size={12} /></IconButton>
+                      <IconButton onClick={() => setMoveTarget({ kind: 'folder', id: folder.id })} title="Move"><IconFolder size={12} /></IconButton>
+                      <IconButton onClick={() => handleDeleteFolder(folder)} title="Delete" danger><IconTrash size={12} /></IconButton>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             ))}
           </div>
         )}
 
-        {!loading && !error && files.length > 0 && (
+        {!onSharedTopLevel && !loading && !error && files.length > 0 && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {files.map(file => (
               <div key={file.id} style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 10, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
@@ -373,14 +567,19 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
                 </div>
                 <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
                   <IconButton onClick={() => handleDownload(file)} title="Download"><IconDownload size={12} /></IconButton>
-                  <IconButton onClick={() => setRenameTarget({ kind: 'file', id: file.id, name: file.filename })} title="Rename"><IconPencil size={12} /></IconButton>
-                  <IconButton onClick={() => setMoveTarget({ kind: 'file', id: file.id })} title="Move"><IconFolder size={12} /></IconButton>
-                  <IconButton onClick={() => handleDeleteFile(file)} title="Delete" danger><IconTrash size={12} /></IconButton>
+                  {access === 'owner' && (
+                    <>
+                      <IconButton onClick={() => setRenameTarget({ kind: 'file', id: file.id, name: file.filename })} title="Rename"><IconPencil size={12} /></IconButton>
+                      <IconButton onClick={() => setMoveTarget({ kind: 'file', id: file.id })} title="Move"><IconFolder size={12} /></IconButton>
+                      <IconButton onClick={() => handleDeleteFile(file)} title="Delete" danger><IconTrash size={12} /></IconButton>
+                    </>
+                  )}
                 </div>
               </div>
             ))}
           </div>
         )}
+        </div>
       </div>
 
       {dragOver && (
@@ -431,6 +630,10 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
             showToast('Moved', 'success');
           }}
         />
+      )}
+
+      {shareTarget && (
+        <ShareFolderDialog folder={shareTarget} onClose={() => setShareTarget(null)} />
       )}
     </div>
   );

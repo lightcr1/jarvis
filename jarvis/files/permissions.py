@@ -5,4 +5,5 @@ FILES_PERMISSIONS: tuple[str, ...] = (
     "files.read",
     "files.write",
     "files.manage",
+    "files.share",
 )

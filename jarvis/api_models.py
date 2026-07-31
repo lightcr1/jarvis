@@ -165,6 +165,7 @@ class AdminProviderSettingsIn(BaseModel):
 
 class AdminFilesSettingsIn(BaseModel):
     default_storage_quota_mb: int = Field(default=12000, ge=1)
+    overage_price_chf_per_gb_month: float = Field(default=0.15, ge=0)
 
 
 class AdminSettingsIn(BaseModel):
@@ -201,6 +202,28 @@ class AlertRuleUpdate(BaseModel):
     ha_entity_id: str | None = None
     ha_attribute: str | None = None
     message_template: str | None = None
+
+
+class PlanCreate(BaseModel):
+    name: str = Field(min_length=1)
+    price_chf_per_month: float = Field(default=0.0, ge=0)
+    ai_credit_chf_monthly: float = Field(default=0.0, ge=0)
+    storage_gb_included: float = Field(default=0.0, ge=0)
+    sort_order: int = 0
+    stripe_price_id: str = ""
+
+
+class PlanUpdate(BaseModel):
+    name: str | None = None
+    price_chf_per_month: float | None = Field(default=None, ge=0)
+    ai_credit_chf_monthly: float | None = Field(default=None, ge=0)
+    storage_gb_included: float | None = Field(default=None, ge=0)
+    sort_order: int | None = None
+    stripe_price_id: str | None = None
+
+
+class UserPlanAssign(BaseModel):
+    plan_id: str = ""
 
 
 class PolicyConditionIn(BaseModel):
