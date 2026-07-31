@@ -10,7 +10,7 @@ The goal is a fully autonomous, always-available personal AI that:
 - Responds to voice and text commands in natural language
 - Controls smart home devices (lights, climate, sensors, locks)
 - Manages server infrastructure (Proxmox VMs, LXC containers, Docker)
-- Answers questions from a personal knowledge base (GitHub repos, WikiJS)
+- Answers questions from a personal knowledge base (GitHub repos)
 - Enforces strict access control and logs every sensitive action
 - Runs locally by default, falls back to cloud LLMs only when needed
 - Speaks with the calm precision of Iron Man's JARVIS
@@ -30,7 +30,8 @@ The goal is a fully autonomous, always-available personal AI that:
 | STT | `faster-whisper` (local, offline) or Google Gemini (cloud) |
 | TTS | `edge-tts` (Microsoft Edge cloud TTS), Piper (local), OS `say` (macOS fallback) |
 | Data store | SQLite (chat history), JSON files (users, groups, permissions, settings) |
-| RAG | GitHub API + WikiJS GraphQL (keyword/semantic document retrieval) |
+| RAG | GitHub API (keyword/semantic document retrieval) — WikiJS support was removed |
+| Payments | Stripe (raw HTTP, no SDK) — subscription checkout + webhook-driven plan assignment |
 
 ### Frontend
 | Layer | Technology |
@@ -96,7 +97,19 @@ jarvis/
 │   ├── admin_password_store.py # Bcrypt-hashed admin passwords
 │   ├── admin_settings_store.py # Global settings JSON store
 │   ├── user_preferences_store.py # Per-user preferences (theme, voice, display_name, notes)
-│   ├── proxmox_module.py       # Proxmox REST proxy — hosts CRUD, VMs, LXC, storage
+│   ├── proxmox_module.py       # Proxmox REST proxy — hosts CRUD, VMs, LXC, storage (session+permission auth)
+│   ├── plan_store.py           # Admin-managed subscription plan catalog (CHF price, AI credit, storage, Stripe price id)
+│   ├── plan_service.py         # assign_plan / ensure_monthly_grant — plan↔user_limits↔credit_store glue
+│   ├── api_billing.py          # /billing/stripe/* /billing/checkout-session /webhooks/stripe
+│   ├── billing/
+│   │   ├── stripe_client.py    # Raw-HTTP Stripe client — checkout sessions, webhook signature verification
+│   │   └── permissions.py      # BILLING_PERMISSIONS (billing.manage)
+│   ├── api_tasks.py            # /tasks/* CRUD + assignee + group sharing + shared-with-me
+│   ├── tasks/
+│   │   ├── store.py            # TaskStore — due_at, assignee_user_id, steps
+│   │   ├── service.py          # TaskService — owner/assignee/share access resolution
+│   │   ├── share_store.py      # TaskShareStore — group-based read/write task sharing (mirrors files/share_store.py)
+│   │   └── permissions.py      # TASKS_PERMISSIONS (tasks.read/write/manage/share)
 │   │
 │   └── home_assistant/
 │       ├── __init__.py
@@ -133,9 +146,10 @@ jarvis/
 │       │   ├── ChatScreen.tsx      # Full chat UI with session sidebar, streaming, TTS playback
 │       │   ├── OrbScreen.tsx       # Voice interaction — animated orb canvas, mic, STT→chat→TTS
 │       │   ├── HomeAssistantScreen.tsx  # Smart home — devices, shopping, calendar, inbox, control requests
-│       │   ├── ProxmoxScreen.tsx   # Proxmox VMs/LXC/storage dashboard
+│       │   ├── ProxmoxScreen.tsx   # Proxmox VMs/LXC/storage dashboard + self-service host CRUD (HostManager)
 │       │   ├── ServiceHubScreen.tsx    # Overview of all connected services + status
-│       │   ├── SettingsScreen.tsx  # Appearance, voice, integrations, security, developer settings
+│       │   ├── TasksScreen.tsx     # Tasks: due dates, assignee, group sharing ("My Tasks" / "Shared with me")
+│       │   ├── SettingsScreen.tsx  # Appearance, voice, integrations, security, AI & Billing, Payments (Stripe), developer settings
 │       │   └── DocsScreen.tsx      # Interactive skill reference / command documentation
 │       │
 │       ├── routes/
@@ -143,11 +157,14 @@ jarvis/
 │       │   │   └── AdminLoginPage.tsx
 │       │   └── admin/pages/
 │       │       ├── DashboardPage.tsx   # Admin summary stats
-│       │       ├── UsersPage.tsx       # User management
+│       │       ├── UsersPage.tsx       # User management + plan assignment
 │       │       ├── GroupsPage.tsx      # Group management + membership
 │       │       ├── PermissionsPage.tsx # Permission grant UI
 │       │       ├── LogsPage.tsx        # Audit log viewer with filters
 │       │       ├── SettingsPage.tsx    # Admin-level settings (voice, LLM, HA)
+│       │       ├── ProviderSettingsPage.tsx # AI routing, budgets, kill switch, model prices
+│       │       ├── BillingPage.tsx     # Subscription plans, Stripe price IDs, storage overage pricing
+│       │       ├── IntegrationsPage.tsx # Per-user calendar/email creds + HA credential config
 │       │       └── StatusPage.tsx      # Live system status
 │       │
 │       └── shared/
@@ -159,6 +176,9 @@ jarvis/
 │               ├── client.ts       # Base fetch wrapper, auth headers, stored prefs/identity
 │               ├── chat.ts         # Chat sessions, streaming, TTS, STT, metrics, search
 │               ├── admin.ts        # Admin REST wrappers
+│               ├── billing.ts      # Plans, Stripe credentials/checkout, BYOK, credits, usage
+│               ├── tasks.ts        # Tasks CRUD, assignee, sharing
+│               ├── proxmox.ts      # Proxmox health + self-service host CRUD
 │               ├── homeAssistant.ts # HA REST + WebSocket hooks
 │               ├── proxmox.ts      # Proxmox REST wrappers
 │               ├── alerts.ts       # useJarvisAlerts WebSocket hook
@@ -224,7 +244,7 @@ jarvis/
 | GET | `/chat/search` | session | Full-text search across messages |
 | GET | `/sys/metrics` | session | CPU, RAM, disk, load metrics |
 | GET | `/rag/status` | session | RAG store status |
-| POST | `/rag/refresh` | session | Trigger RAG re-index (GitHub/WikiJS) |
+| POST | `/rag/refresh` | session | Trigger RAG re-index (GitHub) |
 | GET | `/rag/search` | session | Search RAG knowledge base |
 
 ### Voice
@@ -272,7 +292,7 @@ jarvis/
 | GET | `/admin/backup` | admin | Export full backup JSON |
 | POST | `/admin/backup/restore` | admin | Restore from backup JSON |
 
-### Admin — Credits, Limits, Usage
+### Admin — Credits, Limits, Usage, Plans
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/admin/credits/topup` | admin | Add CHF credit to a user's balance |
@@ -280,14 +300,43 @@ jarvis/
 | PUT | `/admin/users/{id}/limits` | admin | Set per-user spending limits |
 | GET | `/admin/usage` | admin | Usage aggregate + daily buckets + recent records |
 | GET | `/admin/users/{id}/keys` | admin | List BYOK provider presence for a user (masked only) |
+| GET | `/admin/plans` | admin | List subscription plans |
+| POST | `/admin/plans` | admin | Create plan |
+| PATCH | `/admin/plans/{id}` | admin | Update plan (incl. `stripe_price_id`) |
+| DELETE | `/admin/plans/{id}` | admin | Delete plan |
+| PUT | `/admin/users/{id}/plan` | admin | Assign/unassign a plan to a user (grants storage quota + monthly AI credit) |
 
 ### User — Billing & BYOK
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/auth/me/billing` | session | Own balance, limits, recent usage |
+| GET | `/auth/me/billing` | session | Own balance, limits, recent usage, plan, available plans |
 | GET | `/auth/me/keys` | session | Own BYOK key list (masked) |
 | PUT | `/auth/me/keys/{provider}` | session | Store/replace provider API key (encrypted at rest) |
 | DELETE | `/auth/me/keys/{provider}` | session | Remove stored provider key |
+
+### Billing — Stripe (session, `billing.manage` permission or admin unless noted)
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/billing/stripe/status` | session+perm | Stripe connection status (masked key hint) |
+| PUT | `/billing/stripe/credentials` | session+perm | Set Stripe secret key + webhook signing secret |
+| DELETE | `/billing/stripe/credentials` | session+perm | Clear Stripe credentials |
+| POST | `/billing/stripe/test` | session+perm | Verify the stored secret key works |
+| POST | `/billing/checkout-session` | session | Any logged-in user — create a Stripe Checkout session for their own subscription |
+| POST | `/webhooks/stripe` | public, signature-verified | Stripe webhook — `checkout.session.completed` assigns the plan, `customer.subscription.deleted` unassigns it |
+
+### Tasks
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/tasks` | session | List tasks visible to caller (owned + assigned + group-shared) |
+| POST | `/tasks` | session | Create task (optional `due_at`, `assignee_user_id`) |
+| PATCH | `/tasks/{id}` | session | Update task (reassignment is owner-only) |
+| DELETE | `/tasks/{id}` | session | Delete task (owner/admin only) |
+| POST | `/tasks/{id}/complete` | session | Mark complete (owner, assignee, or write-share) |
+| GET | `/tasks/assignable-users` | session | Users selectable as an assignee |
+| GET | `/tasks/my-groups` | session | Groups selectable for sharing |
+| GET | `/tasks/shared-with-me` | session | Tasks shared via group, with owner + access level |
+| GET/POST | `/tasks/{id}/shares` | session | List / add a group share (owner only) |
+| DELETE | `/tasks/shares/{id}` | session | Remove a share (owner only) |
 
 ### Home Assistant
 | Method | Path | Auth | Description |
@@ -327,21 +376,33 @@ jarvis/
 | POST | `/home-assistant/sync/inbox` | session | Sync inbox from HA |
 
 ### Proxmox
-All Proxmox routes are mounted under `/proxmox`:
+All Proxmox routes are mounted under `/proxmox`. Auth is session + permission
+(`proxmox.access` for reads, `proxmox.manage` for host CRUD) — not bearer
+token; self-service host management (add/remove hosts) is available directly
+in the `ProxmoxScreen.tsx` UI, no admin dashboard round-trip needed:
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
-| GET | `/proxmox/hosts` | bearer | List configured Proxmox hosts |
-| POST | `/proxmox/hosts` | bearer | Add Proxmox host |
-| DELETE | `/proxmox/hosts/{id}` | bearer | Remove host |
-| GET | `/proxmox/hosts/{id}/version` | bearer | Host PVE version |
-| GET | `/proxmox/hosts/{id}/nodes` | bearer | Node list |
-| GET | `/proxmox/hosts/{id}/nodes/{node}/vms` | bearer | VM list |
-| GET | `/proxmox/hosts/{id}/nodes/{node}/containers` | bearer | LXC list |
-| GET | `/proxmox/hosts/{id}/nodes/{node}/storage` | bearer | Storage list |
-| GET | `/proxmox/hosts/{id}/nodes/{node}/vms/{vmid}/status` | bearer | VM status |
-| GET | `/proxmox/hosts/{id}/nodes/{node}/containers/{vmid}/status` | bearer | Container status |
-| GET | `/proxmox/health` | bearer | Proxmox module health |
+| GET | `/proxmox/hosts` | session (`proxmox.access`) | List configured Proxmox hosts |
+| POST | `/proxmox/hosts` | session (`proxmox.manage`) | Add Proxmox host |
+| DELETE | `/proxmox/hosts/{id}` | session (`proxmox.manage`) | Remove host |
+| GET | `/proxmox/hosts/{id}/version` | session (`proxmox.access`) | Host PVE version |
+| GET | `/proxmox/hosts/{id}/nodes` | session (`proxmox.access`) | Node list |
+| GET | `/proxmox/hosts/{id}/nodes/{node}/vms` | session (`proxmox.access`) | VM list |
+| GET | `/proxmox/hosts/{id}/nodes/{node}/containers` | session (`proxmox.access`) | LXC list |
+| GET | `/proxmox/hosts/{id}/nodes/{node}/storage` | session (`proxmox.access`) | Storage list |
+| GET | `/proxmox/hosts/{id}/nodes/{node}/vms/{vmid}/status` | session (`proxmox.access`) | VM status |
+| GET | `/proxmox/hosts/{id}/nodes/{node}/containers/{vmid}/status` | session (`proxmox.access`) | Container status |
+| GET | `/proxmox/health` | session (`proxmox.access`) | Proxmox module health |
+
+### Admin — Integrations
+| Method | Path | Auth | Description |
+|---|---|---|---|
+| GET | `/admin/integrations/status` | admin | Per-user calendar/email credential status |
+| GET | `/admin/integrations/home-assistant` | admin | HA connection status (masked token hint) |
+| PUT | `/admin/integrations/home-assistant` | admin | Set HA base URL + token — hot-applied, no restart |
+| DELETE | `/admin/integrations/home-assistant` | admin | Clear HA credentials, revert to env-var fallback |
+| POST | `/admin/integrations/home-assistant/test` | admin | Verify the stored HA connection |
 
 ### WebSockets
 | Path | Description |
@@ -372,6 +433,9 @@ Permissions can be granted per-user or per-group. Known permissions:
 - `users.manage`, `groups.manage`, `permissions.manage`
 - `audit.read`, `settings.manage`, `emergency_stop.trigger`
 - `home_assistant.access` + granular HA permissions
+- `proxmox.access`, `proxmox.manage` — Proxmox reads vs. self-service host CRUD
+- `tasks.read`, `tasks.write`, `tasks.manage`, `tasks.share`
+- `billing.manage` — configure Stripe credentials without needing full admin (e.g. a "Finance" grant)
 
 ### Emergency Stop
 `JARVIS_EMERGENCY_STOP=1` blocks all write and dangerous actions system-wide instantly.
@@ -427,7 +491,7 @@ TTS providers: `edge-tts` (default), `piper` (local), `say` (macOS only)
 ```
 User input
   1. try_skill() → deterministic skill match → return immediately
-  2. rag_query_from_prompt() → search GitHub/WikiJS knowledge base
+  2. rag_query_from_prompt() → search GitHub knowledge base
      → if hits: format_rag_reply() or rag_llm_answer() (LLM-grounded)
   3. build_context_reply() → LLM (OpenAI / Gemini / local)
      → history trimmed to token budget via trim_to_budget()
@@ -532,8 +596,6 @@ LLM providers (env `LLM_PROVIDER`): `openai`, `gemini`, `local`
 | `GITHUB_REPO` | GitHub repo for knowledge (e.g. `owner/repo`) |
 | `GITHUB_BRANCH` | Branch to index (default: main) |
 | `GITHUB_RAG_INCLUDE_EXTENSIONS` | File extensions to index |
-| `WIKIJS_GRAPHQL_URL` | WikiJS GraphQL endpoint |
-| `WIKIJS_API_KEY` | WikiJS API key |
 
 ### Optional — Paths & Operations
 | Variable | Default | Purpose |
@@ -578,6 +640,10 @@ All data is stored locally by default at `/var/lib/jarvis/` (falls back to `/tmp
 | `pending_signups.json` | JSON | Short-lived self-service signup records (email → hashed code + hashed password, auto-pruned) |
 | `files_metadata.json` | JSON | Per-user file drive metadata — folder tree, file records, running quota-usage totals, JARVIS per-folder access grants (`FileStore`) |
 | `user_files/{user_id}/...` | Directory tree | Actual per-user file bytes — real directories on disk mirroring each user's folder structure, rooted at `JARVIS_USER_FILES_PATH` |
+| `plans.json` | JSON | Subscription plan catalog — price, AI credit, storage, Stripe price id (`PlanStore`) |
+| `tasks.json` | JSON | Tasks — due dates, assignee, steps (`TaskStore`) |
+| `tasks_shares.json` | JSON | Group-based task shares, mirrors `files_shares.json` (`TaskShareStore`) |
+| `integration_credentials.json` | JSON (Fernet-encrypted values) | Per-user calendar/email creds + the global HA and Stripe connection (`IntegrationCredentialStore`, sentinel `user_id="system"`) |
 | `/var/lib/jarvis/auto_backups/` | JSON | Rolling auto-backups (7 kept) |
 
 ---
@@ -591,15 +657,26 @@ All data is stored locally by default at `/var/lib/jarvis/` (falls back to `/tmp
 - Skills: ~40+ deterministic skill routes (system, network, Docker, Proxmox, weather, math, time/date, utilities)
 - LLM: OpenAI + Gemini + local LLM routing with conversation history and token budget
 - Voice: STT (faster-whisper + Gemini), TTS (edge-tts + Piper), wakeword
-- RAG: GitHub + WikiJS ingestion, keyword search, LLM-grounded answers
-- Home Assistant: full entity CRUD, actions with risk gating, automations, discovery, control-request queue, shopping list, calendar, inbox, WebSocket live updates
-- Proxmox: multi-host management, VMs + LXC + storage, VM/LXC skills
-- Admin dashboard: users, groups, permissions, audit logs, settings, backup/restore
+- RAG: GitHub ingestion, keyword search, LLM-grounded answers (WikiJS support removed)
+- Home Assistant: full entity CRUD, actions with risk gating, automations, discovery, control-request queue, shopping list, calendar, inbox, WebSocket live updates — connection credentials configurable from the admin panel (no env-var-only restart-required setup)
+- Proxmox: multi-host management, VMs + LXC + storage, VM/LXC skills, self-service host CRUD directly in `ProxmoxScreen.tsx`
+- Tasks: CRUD + due dates + assignee (owner-gated reassignment) + group-based sharing (mirrors the Files sharing pattern)
+- Billing: admin-managed subscription plans (bundled AI credit + storage), Stripe Checkout + webhook-driven plan assignment, a `billing.manage` permission so non-admins (e.g. a "Finance" grant) can configure payments without full admin access
+- Deployment: two independent paths — `install.sh`/`update.sh`/`rollback.sh`/`deploy.sh` (plain HTTP :8000, `jarvis.env`, currently in live use) and `deploy_local.sh`/`update_local.sh`/`rollback_local.sh` (TLS :443, `config.env`, first-time bootstrap with self-signed cert generation)
+- Admin dashboard: users, groups, permissions, audit logs, settings, billing, backup/restore
 - Auto-backup: hourly/daily JSON backup with 7-file rotation
 - Emergency stop: env-var kill switch blocks all writes
 - Audit log: all sensitive events logged with filtering + aggregation
 - Rate limiting: per-session/IP rate limiter on STT and other endpoints
-- 878+ passing tests across all core modules
+- 2100+ passing tests across all core modules
+
+> **Note on staleness:** this file predates most of the V2 roadmap (Phases 0–7 in
+> `docs/v2/planning/ROADMAP_V2.md`) — persistent memory, implicit learning, calendar,
+> email, the personal cloud workspace, the file drive, push notifications, the alert
+> engine, and the policy/playbook automation engine are all built and live, but aren't
+> fully reflected in this document yet. `docs/v2/planning/EXECUTION_CHECKLIST_V2.md` is
+> the more current source for what's actually shipped; treat a full CLAUDE.md rewrite
+> against that checklist as its own separate task if/when it's worth the time.
 
 ### Frontend
 - Full dark/light theme (amber accent, Linear-style)
@@ -623,9 +700,9 @@ All data is stored locally by default at `/var/lib/jarvis/` (falls back to `/tmp
 
 2. **Voice quality sign-off on target hardware** — STT/TTS pipeline needs formal validation on lower-end hardware (Raspberry Pi 5, mini PC). Latency measurements required (P50/P95).
 
-3. **Deployment + rollback procedure** — Documented and drilled. Systemd unit file, `update.sh`, `rollback.sh`, clean install from scratch. Evidence file required.
+3. **Deployment + rollback procedure** — Scripts now exist for both paths (`install.sh`/`update.sh`/`rollback.sh`/`deploy.sh` — HTTP :8000, in live use; `deploy_local.sh`/`update_local.sh`/`rollback_local.sh` — TLS :443, first-time bootstrap). Neither has been drilled end-to-end on a truly clean host with evidence collected — that's still open.
 
-4. **Environment separation (dev/test/prod)** — Config isolation between environments must be validated end-to-end.
+4. **Environment separation (dev/test/prod)** — `config/env/{dev,test,prod}.env.example` + `config/jarvis.env.example` now exist with isolated per-environment data paths; still needs to be validated end-to-end on real hosts, not just reviewed as files.
 
 5. **Performance benchmark** — Formal latency report on target hardware. Script exists at `scripts/benchmark_local.py` but results not collected.
 
