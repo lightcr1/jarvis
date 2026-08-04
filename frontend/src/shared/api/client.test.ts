@@ -4,6 +4,8 @@ import {
   clearAdminToken,
   clearStoredIdentity,
   clearUnlockToken,
+  getAdminToken,
+  getSessionToken,
   setAdminToken,
   setStoredIdentity,
   setUnlockToken,
@@ -49,5 +51,37 @@ describe("apiRequest", () => {
     expect(headers.Authorization).toBe("Bearer admin-token");
     expect(headers["X-Jarvis-Role"]).toBe("admin");
     expect(headers["X-Jarvis-User-Id"]).toBe("usr-2");
+  });
+
+  it("a 401 on an admin-scoped call only clears the admin token, not the user session", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "expired" }), { status: 401, headers: { "Content-Type": "application/json" } }),
+    );
+    setStoredIdentity("session-3", { id: "usr-3", username: "admin", role: "admin" }, {});
+    setAdminToken("admin-token", 60);
+    const listener = vi.fn();
+    window.addEventListener("jarvis:admin-session-expired", listener);
+
+    await expect(apiRequest("/admin/users", { includeAdmin: true })).rejects.toThrow();
+
+    expect(getAdminToken()).toBeNull();
+    expect(getSessionToken()).toBe("session-3");
+    expect(listener).toHaveBeenCalledTimes(1);
+    window.removeEventListener("jarvis:admin-session-expired", listener);
+  });
+
+  it("a 401 on a user-scoped call clears the full identity", async () => {
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ detail: "expired" }), { status: 401, headers: { "Content-Type": "application/json" } }),
+    );
+    setStoredIdentity("session-4", { id: "usr-4", username: "alice", role: "standard_user" }, {});
+    const listener = vi.fn();
+    window.addEventListener("jarvis:session-expired", listener);
+
+    await expect(apiRequest("/chat", { includeUser: true })).rejects.toThrow();
+
+    expect(getSessionToken()).toBe("");
+    expect(listener).toHaveBeenCalledTimes(1);
+    window.removeEventListener("jarvis:session-expired", listener);
   });
 });

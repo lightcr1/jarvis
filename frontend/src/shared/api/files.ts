@@ -65,6 +65,24 @@ export type SharedWithMeEntry = {
   access: "read" | "write";
 };
 
+export type ShareLink = {
+  id: string;
+  file_id: string;
+  token: string;
+  created_by: string;
+  created_at: number;
+  expires_at: number | null;
+  has_password: boolean;
+  download_count: number;
+};
+
+export type PublicShareInfo = {
+  filename: string;
+  size_bytes: number;
+  mime_type: string;
+  requires_password: boolean;
+};
+
 export function browseFiles(parentId?: string | null) {
   const query = parentId ? `?parent_id=${encodeURIComponent(parentId)}` : "";
   return apiRequest<BrowseResponse>(`/files/browse${query}`, { includeUser: true });
@@ -203,6 +221,62 @@ export function unshareFolder(shareId: string) {
     method: "DELETE",
     includeUser: true,
   });
+}
+
+export function createShareLink(fileId: string, opts: { expiresAt?: number | null; password?: string } = {}) {
+  return apiRequest<{ policy: FilesPolicy; share: ShareLink }>(`/files/${encodeURIComponent(fileId)}/share-links`, {
+    method: "POST",
+    includeUser: true,
+    body: { expires_at: opts.expiresAt ?? null, password: opts.password || undefined },
+  });
+}
+
+export function listShareLinks(fileId: string) {
+  return apiRequest<{ policy: FilesPolicy; shares: ShareLink[] }>(`/files/${encodeURIComponent(fileId)}/share-links`, {
+    includeUser: true,
+  });
+}
+
+export function revokeShareLink(shareId: string) {
+  return apiRequest<{ policy: FilesPolicy; deleted: boolean }>(`/files/share-links/${encodeURIComponent(shareId)}`, {
+    method: "DELETE",
+    includeUser: true,
+  });
+}
+
+export function shareLinkUrl(token: string): string {
+  return `${window.location.origin}/s/${token}`;
+}
+
+export function fetchPublicShareInfo(token: string) {
+  return apiRequest<PublicShareInfo>(`/public/files/shared/${encodeURIComponent(token)}`, {});
+}
+
+export async function downloadPublicShare(token: string, filename: string, password?: string): Promise<void> {
+  const response = await fetch(`/public/files/shared/${encodeURIComponent(token)}/download`, {
+    method: "POST",
+    headers: buildApiHeaders({ body: {} }),
+    body: JSON.stringify({ password: password || undefined }),
+  });
+  if (!response.ok) {
+    const text = await response.text();
+    let detail = text;
+    try {
+      detail = JSON.parse(text).detail || text;
+    } catch {
+      // response body wasn't JSON — fall back to raw text
+    }
+    throw new Error(detail || `HTTP ${response.status}`);
+  }
+  const blob = await response.blob();
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 export function formatBytes(bytes: number): string {

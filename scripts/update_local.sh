@@ -134,8 +134,13 @@ NEW_SHORT="${CURRENT_SHORT}"
 
 if [[ "${LOCAL_ONLY}" -eq 0 && -n "${REMOTE_SHA}" && "${REMOTE_SHA}" != "${CURRENT_SHA}" ]]; then
   section "Pulling origin/${BRANCH}"
-  sudo -u jarvis -H git -C "${JARVIS_SOURCE_ROOT}" pull origin "${BRANCH}" \
-    || fail "git pull origin ${BRANCH} failed."
+  # fetch + hard reset instead of `git pull` — a deploy checkout should always
+  # converge to exactly origin/${BRANCH}, never get stuck asking how to
+  # reconcile a locally-diverged history (merge vs rebase vs ff-only).
+  sudo -u jarvis -H git -C "${JARVIS_SOURCE_ROOT}" fetch origin "${BRANCH}" \
+    || fail "git fetch origin ${BRANCH} failed."
+  sudo -u jarvis -H git -C "${JARVIS_SOURCE_ROOT}" reset --hard "origin/${BRANCH}" \
+    || fail "git reset --hard origin/${BRANCH} failed."
   NEW_SHA="$(git -C "${JARVIS_SOURCE_ROOT}" rev-parse HEAD)"
   NEW_SHORT="$(git -C "${JARVIS_SOURCE_ROOT}" rev-parse --short HEAD)"
   log "Updated to ${NEW_SHORT}"

@@ -187,6 +187,18 @@ class _FakeChatHistory:
         sess = self.ensure_session(session_id, owner_key, owner_user_id)
         sess["pending_home_assistant_action"] = None
 
+    def get_pending_tool_call(self, session_id: str, owner_key: str) -> dict | None:
+        sess = self.get_session(session_id, owner_key)
+        return sess.get("pending_tool_call") if sess else None
+
+    def set_pending_tool_call(self, session_id: str, pending: dict | None, owner_key: str, owner_user_id: str | None = None) -> None:
+        sess = self.ensure_session(session_id, owner_key, owner_user_id)
+        sess["pending_tool_call"] = pending
+
+    def clear_pending_tool_call(self, session_id: str, owner_key: str, owner_user_id: str | None = None) -> None:
+        sess = self.ensure_session(session_id, owner_key, owner_user_id)
+        sess["pending_tool_call"] = None
+
 
 class _FakeAuditLog:
     def __init__(self) -> None:

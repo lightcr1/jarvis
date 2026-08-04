@@ -128,6 +128,7 @@ from jarvis.workspace.store import WorkspaceTargetStore
 from jarvis.api_files import build_files_router
 from jarvis.files.service import FileService
 from jarvis.files.share_store import FolderShareStore
+from jarvis.files.link_share_store import FileLinkShareStore
 from jarvis.files.store import FileStore
 from jarvis.api_email import build_email_router
 from jarvis.email.service import EmailService
@@ -247,6 +248,7 @@ email_draft_store = EmailDraftStore()
 workspace_target_store = WorkspaceTargetStore()
 file_store = FileStore()
 folder_share_store = FolderShareStore()
+file_link_share_store = FileLinkShareStore()
 
 wakeword_engine: NullWakewordEngine | SoftwareWakewordEngine = NullWakewordEngine()
 
@@ -272,6 +274,7 @@ ensure_default_admin_seeded()
 
 async def _on_wakeword_detected() -> None:
     logger.debug("Wakeword detected — always-on engine callback fired")
+    status_hub.notify("wakeword")
 
 
 def _apply_wakeword_settings(updated_settings: dict) -> None:
@@ -594,6 +597,7 @@ file_service = FileService(
     admin_settings_store=admin_settings_store,
     share_store=folder_share_store,
     group_store=group_store,
+    link_share_store=file_link_share_store,
     audit_log=audit_log,
 )
 

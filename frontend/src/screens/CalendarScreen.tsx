@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
-import { J, useJ, Spinner, showToast, IconPlus, IconTrash, IconPencil, IconX, IconCalendar, IconRefresh, IconSettings } from './jarvis-shared';
+import { useEffect, useMemo, useState } from 'react';
+import { J, useJ, Spinner, showToast, IconPlus, IconTrash, IconPencil, IconX, IconCalendar, IconRefresh, IconSettings, IconChevRight } from './jarvis-shared';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
+import { CalendarGrid, CalendarViewMode, formatRangeLabel, rangeForView, stepAnchor } from './CalendarGrid';
 import {
   CalendarEvent, createCalendarEvent, deleteCalendarCredentials, deleteCalendarEvent, fetchCalendarCredentialsStatus,
   fetchCalendarEvents, setCalendarCredentials, syncCalendar, updateCalendarEvent,
@@ -276,13 +277,14 @@ function CreateEventModal({ onClose, onCreated }: { onClose: () => void; onCreat
   );
 }
 
-function EditEventModal({ event, onClose, onUpdated }: { event: CalendarEvent; onClose: () => void; onUpdated: (event: CalendarEvent) => void }) {
+function EditEventModal({ event, onClose, onUpdated, onDeleted }: { event: CalendarEvent; onClose: () => void; onUpdated: (event: CalendarEvent) => void; onDeleted: (id: string) => void }) {
   const [title, setTitle] = useState(event.title);
   const [start, setStart] = useState(toLocalInputValue(event.start));
   const [end, setEnd] = useState(toLocalInputValue(event.end));
   const [location, setLocation] = useState(event.location || '');
   const [description, setDescription] = useState(event.description || '');
   const [saving, setSaving] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [conflicts, setConflicts] = useState<CalendarEvent[] | null>(null);
 
   const submit = async (force = false) => {
@@ -308,12 +310,31 @@ function EditEventModal({ event, onClose, onUpdated }: { event: CalendarEvent; o
     }
   };
 
+  const remove = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      await deleteCalendarEvent(event.id);
+      onDeleted(event.id);
+      showToast('Event deleted', 'info');
+      onClose();
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : 'Failed to delete event', 'error');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
   return (
     <OverlayDialog
       title="Edit Event"
       onClose={onClose}
       actions={
         <>
+          <button onClick={remove} disabled={deleting} title="Delete event" aria-label="Delete event" className="j-btn"
+            style={{ background: 'none', border: `1px solid ${J.error}30`, color: J.error, borderRadius: 8, padding: '8px 12px', fontSize: 13, marginRight: 'auto' }}>
+            {deleting ? <Spinner size={13} color={J.error} /> : <IconTrash size={13} />}
+          </button>
           <button onClick={onClose} className="j-btn" style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, padding: '8px 16px', fontSize: 13 }}>Cancel</button>
           {conflicts ? (
             <button onClick={() => submit(true)} disabled={saving} className="j-btn"
@@ -367,34 +388,12 @@ function EditEventModal({ event, onClose, onUpdated }: { event: CalendarEvent; o
   );
 }
 
-function EventCard({ event, onDelete, onEdit }: { event: CalendarEvent; onDelete: (id: string) => void; onEdit: (event: CalendarEvent) => void }) {
-  const start = new Date(event.start * 1000);
-  const end = new Date(event.end * 1000);
-  return (
-    <div style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 12, padding: '14px 16px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
-        <div style={{ fontSize: 14, fontWeight: 500, color: J.text }}>{event.title}</div>
-        <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-          <button onClick={() => onEdit(event)} title="Edit event" aria-label="Edit event"
-            style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textMuted, borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
-            <IconPencil size={12} />
-          </button>
-          <button onClick={() => onDelete(event.id)} title="Delete event" aria-label="Delete event"
-            style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textMuted, borderRadius: 6, width: 26, height: 26, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0 }}>
-            <IconTrash size={13} />
-          </button>
-        </div>
-      </div>
-      <div style={{ fontSize: 12, color: J.textSec }}>
-        {start.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}
-        {' – '}
-        {end.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' })}
-      </div>
-      {event.location && <div style={{ fontSize: 12, color: J.textMuted }}>{event.location}</div>}
-      {event.description && <div style={{ fontSize: 12, color: J.textSec, lineHeight: 1.5 }}>{event.description}</div>}
-    </div>
-  );
-}
+const VIEW_MODES: { mode: CalendarViewMode; label: string }[] = [
+  { mode: 'month', label: 'Month' },
+  { mode: 'week', label: 'Week' },
+  { mode: 'workweek', label: 'Workweek' },
+  { mode: 'day', label: 'Day' },
+];
 
 export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }) {
   useJ();
@@ -406,6 +405,12 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
   const [showManage, setShowManage] = useState(false);
   const [editingEvent, setEditingEvent] = useState<CalendarEvent | null>(null);
   const [syncing, setSyncing] = useState(false);
+  const [viewMode, setViewMode] = useState<CalendarViewMode>('month');
+  const [anchor, setAnchor] = useState(() => new Date());
+
+  const range = useMemo(() => rangeForView(anchor, viewMode), [anchor, viewMode]);
+  const rangeStartSec = Math.floor(range.start.getTime() / 1000);
+  const rangeEndSec = Math.floor(range.end.getTime() / 1000);
 
   const load = () => {
     setLoading(true);
@@ -414,21 +419,20 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
       .then(res => {
         setConfigured(res.status.configured);
         if (!res.status.configured) { setLoading(false); return; }
-        const now = Math.floor(Date.now() / 1000) - 86400;
-        return fetchCalendarEvents(now).then(r => setEvents(r.events));
+        return fetchCalendarEvents(rangeStartSec, rangeEndSec).then(r => setEvents(r.events));
       })
       .catch(err => setError(err instanceof Error ? err.message : 'Failed to load calendar'))
       .finally(() => setLoading(false));
   };
 
-  useEffect(() => { load(); }, []);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => { load(); }, [rangeStartSec, rangeEndSec]);
 
   const handleSync = async () => {
     setSyncing(true);
     try {
       await syncCalendar();
-      const now = Math.floor(Date.now() / 1000) - 86400;
-      const res = await fetchCalendarEvents(now);
+      const res = await fetchCalendarEvents(rangeStartSec, rangeEndSec);
       setEvents(res.events);
       showToast('Calendar synced', 'success');
     } catch (err) {
@@ -438,20 +442,38 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
     }
   };
 
-  const handleDelete = async (id: string) => {
-    try {
-      await deleteCalendarEvent(id);
-      setEvents(prev => prev.filter(e => e.id !== id));
-      showToast('Event deleted', 'info');
-    } catch (err) {
-      showToast(err instanceof Error ? err.message : 'Failed to delete event', 'error');
-    }
-  };
-
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', background: J.bg0 }}>
-      <div style={{ height: 50, borderBottom: `1px solid ${J.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0 24px', background: J.bg1, flexShrink: 0 }}>
-        <div style={{ fontSize: 14, fontWeight: 500, color: J.text }}>Calendar</div>
+      <div style={{ minHeight: 50, borderBottom: `1px solid ${J.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 24px', background: J.bg1, flexShrink: 0, flexWrap: 'wrap', gap: 10 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <div style={{ fontSize: 14, fontWeight: 600, color: J.text, minWidth: 160 }}>{formatRangeLabel(anchor, viewMode)}</div>
+          <div style={{ display: 'flex', gap: 3 }}>
+            <button onClick={() => setAnchor(stepAnchor(anchor, viewMode, -1))} aria-label="Previous" className="j-btn"
+              style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 6, width: 26, height: 26, padding: 0, justifyContent: 'center', transform: 'rotate(180deg)' }}>
+              <IconChevRight size={12} />
+            </button>
+            <button onClick={() => setAnchor(new Date())} className="j-btn"
+              style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 6, padding: '0 10px', height: 26, fontSize: 12 }}>
+              Today
+            </button>
+            <button onClick={() => setAnchor(stepAnchor(anchor, viewMode, 1))} aria-label="Next" className="j-btn"
+              style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 6, width: 26, height: 26, padding: 0, justifyContent: 'center' }}>
+              <IconChevRight size={12} />
+            </button>
+          </div>
+          <div style={{ display: 'flex', gap: 2, background: J.bg3, borderRadius: 8, padding: 2 }}>
+            {VIEW_MODES.map(v => (
+              <button key={v.mode} onClick={() => setViewMode(v.mode)} className="j-btn" style={{
+                background: viewMode === v.mode ? J.amberGlow : 'transparent',
+                color: viewMode === v.mode ? J.amber : J.textSec,
+                fontWeight: viewMode === v.mode ? 600 : 400,
+                border: 'none', borderRadius: 6, padding: '5px 11px', fontSize: 12.5,
+              }}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </div>
         {configured && (
           <div style={{ display: 'flex', gap: 8 }}>
             <button onClick={handleSync} disabled={syncing} className="j-btn"
@@ -469,7 +491,7 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
           </div>
         )}
       </div>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '22px 24px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: '18px 24px' }}>
         {loading && (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: J.textMuted, fontSize: 13, padding: '24px 0' }}>
             <Spinner size={14} /> Loading calendar...
@@ -487,16 +509,14 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
           <ConnectCalendarPanel onConnected={load} />
         )}
 
-        {!loading && !error && configured && events.length === 0 && (
-          <div style={{ textAlign: 'center', color: J.textMuted, fontSize: 13, padding: '48px 0' }}>
-            Nothing scheduled. Create an event or sync to pull in your calendar.
-          </div>
-        )}
-
-        {!loading && !error && configured && events.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(280px,1fr))', gap: 10 }}>
-            {events.map(ev => <EventCard key={ev.id} event={ev} onDelete={handleDelete} onEdit={setEditingEvent} />)}
-          </div>
+        {!loading && !error && configured && (
+          <CalendarGrid
+            mode={viewMode}
+            anchor={anchor}
+            events={events}
+            onSelectDay={d => { setAnchor(d); setViewMode('day'); }}
+            onEditEvent={setEditingEvent}
+          />
         )}
       </div>
       {showCreate && (
@@ -507,6 +527,7 @@ export function CalendarScreen(_props: { onNavigate?: (screen: string) => void }
           event={editingEvent}
           onClose={() => setEditingEvent(null)}
           onUpdated={updated => setEvents(prev => prev.map(e => (e.id === updated.id ? updated : e)).sort((a, b) => a.start - b.start))}
+          onDeleted={id => setEvents(prev => prev.filter(e => e.id !== id))}
         />
       )}
       {showManage && (

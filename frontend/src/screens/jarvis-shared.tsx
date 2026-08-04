@@ -200,6 +200,16 @@ export const IconUpload    = (p: { size?: number }) => <Ic {...p}><path d="M21 1
 export const IconAmbient   = (p: { size?: number }) => <Ic {...p}><rect x="2" y="7" width="20" height="13" rx="2"/><circle cx="12" cy="13.5" r="1.2"/><path d="M6.5 3.2c3.4-1.6 7.6-1.6 11 0"/><path d="M9 5.3c1.9-.85 4.1-.85 6 0"/></Ic>;
 export const IconShare      = (p: { size?: number }) => <Ic {...p}><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.5" x2="15.4" y2="6.5"/><line x1="8.6" y1="13.5" x2="15.4" y2="17.5"/></Ic>;
 
+// Hex Core monogram — the decided J.A.R.V.I.S. brand mark (see docs/design/mark-concepts).
+export const IconJarvisMark = ({ size = 16 }: { size?: number }) => (
+  <svg width={size} height={size} viewBox="0 0 100 100" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round">
+    <polygon points="50,10 83.9,30 83.9,70 50,90 16.1,70 16.1,30" strokeWidth={2.4} />
+    <polygon points="50,23 73.4,36.5 73.4,63.5 50,77 26.6,63.5 26.6,36.5" strokeWidth={1} opacity={0.35} />
+    <path d="M40,38 L60,38 M50,38 L50,58 A11,11 0 0 1 38,62" strokeWidth={6} />
+  </svg>
+);
+export const IconLink       = (p: { size?: number }) => <Ic {...p}><path d="M10 13a5 5 0 0 0 7.07 0l2.83-2.83a5 5 0 0 0-7.07-7.07L11.5 4.5"/><path d="M14 11a5 5 0 0 0-7.07 0L4.1 13.83a5 5 0 0 0 7.07 7.07L12.5 19.5"/></Ic>;
+
 export function Badge({ count }: { count: number }) {
   if (count <= 0) return null;
   const bg = count > 5 ? J.error : J.amber;

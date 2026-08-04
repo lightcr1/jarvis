@@ -12,12 +12,20 @@ class ChatChunk:
 
 
 @dataclass
+class ToolCall:
+    id: str
+    name: str
+    arguments: dict
+
+
+@dataclass
 class ChatResult:
     text: str
     input_tokens: int
     output_tokens: int
     model: str
     provider: str
+    tool_calls: list[ToolCall] = field(default_factory=list)
 
 
 @dataclass
@@ -46,6 +54,7 @@ class AIProvider(Protocol):
         max_tokens: int,
         tier: Tier,
         stream: bool,
+        tools: list[dict] | None = None,
     ) -> Iterator[ChatChunk] | ChatResult: ...
 
     def estimate_cost(
@@ -98,5 +107,6 @@ class BaseProvider:
         max_tokens: int,
         tier: Tier,
         stream: bool,
+        tools: list[dict] | None = None,
     ) -> Iterator[ChatChunk] | ChatResult:
         raise NotImplementedError

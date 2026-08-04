@@ -3,6 +3,7 @@ from __future__ import annotations
 from fastapi import APIRouter, File, Form, Header, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 
+from .rate_limiter import _rate
 from .router_dependencies import LiveRef
 
 
@@ -195,5 +196,59 @@ def build_files_router(deps: dict) -> APIRouter:
             raise HTTPException(404, str(exc)) from exc
         except PermissionError as exc:
             raise HTTPException(403, str(exc)) from exc
+
+    @router.post("/files/{file_id}/share-links")
+    def create_share_link(file_id: str, payload: dict[str, object], x_jarvis_session: str | None = Header(default=None)):
+        user_id, role = _session_identity(x_jarvis_session)
+        try:
+            return current("file_service").create_share_link(file_id, payload, user_id=user_id, role=role)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.get("/files/{file_id}/share-links")
+    def list_share_links(file_id: str, x_jarvis_session: str | None = Header(default=None)):
+        user_id, role = _session_identity(x_jarvis_session)
+        try:
+            return current("file_service").list_share_links(file_id, user_id=user_id, role=role)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.delete("/files/share-links/{share_id}")
+    def revoke_share_link(share_id: str, x_jarvis_session: str | None = Header(default=None)):
+        user_id, role = _session_identity(x_jarvis_session)
+        try:
+            return current("file_service").revoke_share_link(share_id, user_id=user_id, role=role)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+
+    @router.get("/public/files/shared/{token}")
+    def public_share_info(token: str):
+        try:
+            return current("file_service").get_public_share_info(token)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+
+    @router.post("/public/files/shared/{token}/download")
+    def public_share_download(token: str, payload: dict[str, object] | None = None):
+        if not _rate.allow(f"public_share_download:{token}", limit=10, window=300):
+            raise HTTPException(429, "Too many attempts — slow down")
+        password = (payload or {}).get("password") if payload else None
+        try:
+            disk_path, file_meta = current("file_service").resolve_public_download(token, password=password)
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except PermissionError as exc:
+            raise HTTPException(403, str(exc)) from exc
+        return FileResponse(
+            path=str(disk_path),
+            filename=file_meta["filename"],
+            media_type=file_meta.get("mime_type") or "application/octet-stream",
+        )
 
     return router

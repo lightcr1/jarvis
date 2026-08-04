@@ -42,6 +42,7 @@ class FileService:
         admin_settings_store,
         share_store=None,
         group_store=None,
+        link_share_store=None,
         audit_log=None,
     ) -> None:
         self.store = store
@@ -54,6 +55,7 @@ class FileService:
         self.admin_settings_store = admin_settings_store
         self.share_store = share_store
         self.group_store = group_store
+        self.link_share_store = link_share_store
         self.audit_log = audit_log
 
     def _write_audit(self, event: str, *, actor_user_id: str | None, actor_role: str | None, payload: dict | None = None) -> None:
@@ -574,3 +576,77 @@ class FileService:
                 })
         entries.sort(key=lambda e: e["folder"].get("name", ""))
         return {"policy": policy, "shared": entries}
+
+    # ── Public single-file share links ─────────────────────────────────────
+    def create_share_link(self, file_id: str, payload: dict[str, object], *, user_id: str | None, role: str | None) -> dict[str, object]:
+        if _emergency_stop_active():
+            raise PermissionError("emergency stop is active — write actions are blocked")
+        policy = self.require_access(user_id=user_id, role=role, required_permission="files.share")
+        self._owned_file(file_id, user_id=user_id, role=role)
+        expires_at = (payload or {}).get("expires_at")
+        password = (payload or {}).get("password") or None
+        share = self.link_share_store.create_share(
+            file_id, user_id or "", expires_at=int(expires_at) if expires_at else None, password=password,
+        )
+        self._write_audit(
+            "files_share_link_created", actor_user_id=user_id, actor_role=role,
+            payload={"file_id": file_id, "share_id": share["id"]},
+        )
+        return {"policy": policy, "share": self._sanitize_share(share)}
+
+    def list_share_links(self, file_id: str, *, user_id: str | None, role: str | None) -> dict[str, object]:
+        policy = self.require_access(user_id=user_id, role=role, required_permission="files.share")
+        self._owned_file(file_id, user_id=user_id, role=role)
+        shares = self.link_share_store.list_shares_for_file(file_id)
+        shares.sort(key=lambda s: s.get("created_at", 0))
+        return {"policy": policy, "shares": [self._sanitize_share(s) for s in shares]}
+
+    @staticmethod
+    def _sanitize_share(share: dict) -> dict:
+        # password_hash carries the salted PBKDF2 hash — never send it to the
+        # client, only whether a password is set.
+        sanitized = {k: v for k, v in share.items() if k != "password_hash"}
+        sanitized["has_password"] = bool(share.get("password_hash"))
+        return sanitized
+
+    def revoke_share_link(self, share_id: str, *, user_id: str | None, role: str | None) -> dict[str, object]:
+        policy = self.require_access(user_id=user_id, role=role, required_permission="files.share")
+        share = self.link_share_store.get_share(share_id)
+        if not share:
+            raise LookupError("share not found")
+        self._owned_file(share["file_id"], user_id=user_id, role=role)
+        deleted = self.link_share_store.remove_share(share_id)
+        self._write_audit(
+            "files_share_link_revoked", actor_user_id=user_id, actor_role=role,
+            payload={"share_id": share_id, "file_id": share["file_id"]},
+        )
+        return {"policy": policy, "deleted": deleted}
+
+    def get_public_share_info(self, token: str) -> dict[str, object]:
+        share = self.link_share_store.get_by_token(token)
+        if not share or self.link_share_store.is_expired(share):
+            raise LookupError("share not found")
+        file_meta = self.store.get_file(share["file_id"])
+        if not file_meta:
+            raise LookupError("share not found")
+        return {
+            "filename": file_meta["filename"],
+            "size_bytes": file_meta.get("size_bytes"),
+            "mime_type": file_meta.get("mime_type"),
+            "requires_password": bool(share.get("password_hash")),
+        }
+
+    def resolve_public_download(self, token: str, *, password: str | None = None) -> tuple[Path, dict]:
+        share = self.link_share_store.get_by_token(token)
+        if not share or self.link_share_store.is_expired(share):
+            raise LookupError("share not found")
+        if not self.link_share_store.verify_password(share, password):
+            raise PermissionError("incorrect password")
+        file_meta = self.store.get_file(share["file_id"])
+        if not file_meta:
+            raise LookupError("share not found")
+        disk_path = self.store.file_disk_path(file_meta)
+        if not disk_path.is_file():
+            raise LookupError("file missing from disk")
+        self.link_share_store.record_download(share["id"])
+        return disk_path, file_meta

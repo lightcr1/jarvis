@@ -45,7 +45,11 @@ class OpenAICompatibleProvider(BaseProvider):
         max_tokens: int,
         tier: Tier,
         stream: bool,
+        tools: list[dict] | None = None,
     ) -> Iterator[ChatChunk] | ChatResult:
+        # Tool-calling is not wired up for OpenAI-compatible providers (OpenRouter,
+        # Mistral, DeepSeek) yet — accepted for signature compatibility with
+        # AIRouter.run_with_tools, silently ignored. OpenAI + Anthropic only for now.
         client = self._get_client()
         full_messages = [{"role": "system", "content": system_prompt}] + messages
         if stream:

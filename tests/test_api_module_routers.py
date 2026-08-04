@@ -89,6 +89,20 @@ class _FakeChatHistory:
         session = self.ensure_session(session_id, owner_key, owner_user_id)
         session["pending_home_assistant_action"] = None
 
+    def get_pending_tool_call(self, session_id, owner_key):
+        session = self.get_session(session_id, owner_key)
+        if not session:
+            return None
+        return session.get("pending_tool_call")
+
+    def set_pending_tool_call(self, session_id, pending, owner_key, owner_user_id=None):
+        session = self.ensure_session(session_id, owner_key, owner_user_id)
+        session["pending_tool_call"] = pending
+
+    def clear_pending_tool_call(self, session_id, owner_key, owner_user_id=None):
+        session = self.ensure_session(session_id, owner_key, owner_user_id)
+        session["pending_tool_call"] = None
+
     def list_sessions(self, owner_key):
         return [value for value in self.sessions.values() if value["owner_key"] == owner_key]
 

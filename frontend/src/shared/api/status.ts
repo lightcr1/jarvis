@@ -1,11 +1,14 @@
 import { useEffect, useState } from "react";
 
+export type JarvisStatusEvent = { kind: string; ts: number };
+
 export type JarvisLiveStatus = {
   state: "idle" | "recording" | "processing" | "speaking";
   version: number;
   updated_at: number;
   active: number;
   counts: Record<string, number>;
+  lastEvent: JarvisStatusEvent | null;
 };
 
 const DEFAULT_STATUS: JarvisLiveStatus = {
@@ -14,6 +17,7 @@ const DEFAULT_STATUS: JarvisLiveStatus = {
   updated_at: 0,
   active: 0,
   counts: {},
+  lastEvent: null,
 };
 
 function wsUrl(path: string) {
@@ -33,13 +37,14 @@ export function useJarvisLiveStatus() {
       socket = new WebSocket(wsUrl("/ws/status"));
       socket.onmessage = (event) => {
         try {
-          const payload = JSON.parse(event.data) as JarvisLiveStatus;
+          const payload = JSON.parse(event.data) as JarvisLiveStatus & { last_event?: JarvisStatusEvent | null };
           setStatus({
             state: payload.state || "idle",
             version: Number(payload.version || 0),
             updated_at: Number(payload.updated_at || 0),
             active: Number(payload.active || 0),
             counts: payload.counts || {},
+            lastEvent: payload.last_event || null,
           });
         } catch {
           // ignore malformed payloads

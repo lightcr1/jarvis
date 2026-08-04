@@ -696,7 +696,7 @@ All data is stored locally by default at `/var/lib/jarvis/` (falls back to `/tmp
 
 ### High Priority (P0 — V1 Blockers)
 
-1. **Real wakeword detection** — Current wakeword is software string-stripping only. Needs always-on mic + keyword spotting engine (e.g. OpenWakeWord, Vosk, Porcupine). Required for hands-free "Hey JARVIS" activation.
+1. **Real wakeword detection — code complete, hardware validation still open.** `jarvis/wakeword_engine.py` implements a real always-on `OpenWakeWordEngine` (mic capture thread, `openwakeword.Model`, sensitivity threshold), started at boot in `jarvisappv4.py`, with admin-configurable engine mode/sensitivity (`/admin/wakeword/status`, `SettingsPage.tsx`) — `JARVIS_WAKEWORD_ENGINE` is not env-var-only. A detection now signals the frontend end-to-end: `JarvisStatusHub.notify("wakeword")` → `/ws/status`'s `last_event` field → `OrbScreen.tsx` auto-starts recording when idle. What's left is purely hardware-side: `openwakeword`/`pyaudio` are optional deps (need `portaudio19-dev` first) that must be installed and sensitivity-tuned on the actual target machine + mic — that validation can't be done by an agent. The default engine mode (`software`) remains post-transcription string-stripping only; real detection requires switching to `openwakeword` mode.
 
 2. **Voice quality sign-off on target hardware** — STT/TTS pipeline needs formal validation on lower-end hardware (Raspberry Pi 5, mini PC). Latency measurements required (P50/P95).
 

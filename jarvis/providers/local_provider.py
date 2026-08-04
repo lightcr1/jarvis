@@ -41,7 +41,10 @@ class LocalProvider(BaseProvider):
         max_tokens: int,
         tier: Tier,
         stream: bool,
+        tools: list[dict] | None = None,
     ) -> ChatResult:
+        # Tool-calling not wired up for the local backend yet — accepted for
+        # signature compatibility with AIRouter.run_with_tools, silently ignored.
         chat_fn = self._get_chat_fn()
         text = chat_fn(messages, system_prompt)
         chars = len(text)

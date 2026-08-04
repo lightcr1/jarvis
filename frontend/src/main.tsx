@@ -1,6 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
-import { createBrowserRouter, Navigate, RouterProvider } from "react-router-dom";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
 
 // Apply stored theme synchronously before first render to avoid flash
 try {
@@ -30,9 +30,11 @@ import { UsagePage } from "./routes/admin/pages/UsagePage";
 import { AdminDocsPage } from "./routes/admin/pages/AdminDocsPage";
 import { IntegrationsPage } from "./routes/admin/pages/IntegrationsPage";
 import { WorkspaceShell } from "./shared/layout/WorkspaceShell";
+import { OverviewScreen } from "./screens/OverviewScreen";
 import { FilesScreen } from "./screens/FilesScreen";
 import { CommunicationScreen } from "./screens/CommunicationScreen";
 import { DesktopScreen } from "./screens/DesktopScreen";
+import { SharedFilePage } from "./routes/public/SharedFilePage";
 import "./styles.css";
 
 const router = createBrowserRouter([
@@ -60,12 +62,14 @@ const router = createBrowserRouter([
     path: "/workspace",
     element: <WorkspaceShell />,
     children: [
-      { index: true,          element: <Navigate to="files" replace /> },
+      { index: true,          element: <OverviewScreen /> },
+      { path: "overview",     element: <OverviewScreen /> },
       { path: "files",        element: <FilesScreen /> },
       { path: "communication", element: <CommunicationScreen /> },
       { path: "desktop",      element: <DesktopScreen /> },
     ],
   },
+  { path: "/s/:token", element: <SharedFilePage /> },
   { path: "*", element: <JarvisApp /> },
 ]);
 

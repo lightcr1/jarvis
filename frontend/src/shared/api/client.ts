@@ -26,6 +26,7 @@ export type UserPreferences = {
   quick_actions?: string[];
   notifications_enabled?: boolean;
   persona_tone?: "formal" | "casual";
+  response_language?: "en" | "de";
   quiet_hours_enabled?: boolean;
   quiet_hours_start?: string;
   quiet_hours_end?: string;
@@ -236,9 +237,18 @@ export async function apiRequest<T>(path: string, options: RequestOptions = {}):
   }
   const text = await response.text();
   const data = text ? JSON.parse(text) : {};
-  if (response.status === 401 && getSessionToken()) {
-    clearStoredIdentity();
-    window.dispatchEvent(new CustomEvent("jarvis:session-expired"));
+  if (response.status === 401) {
+    if (options.includeAdmin) {
+      // The short-lived admin bearer token (JARVIS_TOKEN_TTL_MIN, default 60min)
+      // expired — this is unrelated to the long-lived user identity session, so
+      // only clear the admin token. Wiping the full identity here used to force
+      // a re-login on the main app just because a dashboard-scoped call timed out.
+      clearAdminToken();
+      window.dispatchEvent(new CustomEvent("jarvis:admin-session-expired"));
+    } else if (getSessionToken()) {
+      clearStoredIdentity();
+      window.dispatchEvent(new CustomEvent("jarvis:session-expired"));
+    }
   }
   if (!response.ok) throw new Error(data.detail || text || `HTTP ${response.status}`);
   return data as T;

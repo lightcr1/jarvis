@@ -302,6 +302,34 @@ class AIRouter:
         )
         return getattr(result, "text", str(result))
 
+    # Providers that can be handed a tool schema today — see the tool-calling
+    # non-goals in jarvis/tool_registry_tools.py: Gemini/local/OpenAI-compatible
+    # (OpenRouter, Mistral, DeepSeek) accept-but-ignore `tools` for now.
+    TOOL_CAPABLE_PROVIDERS = {"openai", "anthropic"}
+
+    def run_with_tools(
+        self,
+        decision: RoutingDecision,
+        *,
+        messages: list[dict],
+        system_prompt: str,
+        tools: list,
+        max_tokens: int | None = None,
+    ):
+        from .tool_registry import to_anthropic_schema, to_openai_schema
+        max_tok = decision.clamped_max_tokens or max_tokens or max_tokens_for(decision.tier)
+        provider = self._get_provider(decision.provider, decision.api_key)
+        schema = to_anthropic_schema(tools) if decision.provider == "anthropic" else to_openai_schema(tools)
+        return provider.create_chat_completion(
+            model=decision.model,
+            messages=messages,
+            system_prompt=system_prompt,
+            max_tokens=max_tok,
+            tier=decision.tier,
+            stream=False,
+            tools=schema,
+        )
+
     def finalize(
         self,
         decision: RoutingDecision,

@@ -383,3 +383,98 @@ pin down further — see `assistant_domain.py::try_skill()` and
 - Immediate next step: get concrete repro messages for the chat reliability issue, then
   scope File sharing links and the Plugin System (the latter needs its own design pass
   per the roadmap's existing note — user asked specifically what it would even be for).
+
+### 2026-08-03 — Verified and closed out prior session's uncommitted WIP
+- Found a prior session had already left substantial uncommitted work in the tree
+  addressing the 2026-07-31 "known open issue" above: `tool_registry.py` /
+  `tool_registry_tools.py` / `tool_orchestrator.py` (a real LLM tool-calling bridge —
+  OpenAI + Anthropic function/tool-use, permission + emergency-stop gated, audited,
+  falling back to plain `run_once()` for non-tool-capable providers or callers with no
+  available tools) plus a pilot registry of four read-only tools (`list_folder`,
+  `read_file`, `save_memory_note`, `proxmox_status`). Also uncommitted: File sharing
+  links (`link_share_store.py`, PBKDF2-hashed optional password, expiry, public
+  token-based download at `/s/:token`) and a new Workspace `OverviewScreen` +
+  `CalendarGrid` extraction from `CalendarScreen`.
+- This session's job was verification and finishing, not building from scratch: read
+  every new/changed file end to end, confirmed wiring (both `/chat` and `/chat/stream`
+  call the tool orchestrator; `files.share` permission was already registered via
+  `FILES_PERMISSIONS`; frontend routes/icons all resolve), and ran the full suite.
+- Found and fixed one real gap: the public share-link download endpoint
+  (`POST /public/files/shared/{token}/download`) had no rate limiting, so a
+  password-protected link's password was brute-forceable over the network with no
+  throttle beyond PBKDF2's own cost. Added the same `_rate.allow(...)` pattern used for
+  login attempts (10 attempts / 5 min, keyed by token) — `jarvis/api_files.py`.
+- Found and fixed one pre-existing flaky test (not part of the uncommitted WIP):
+  `test_block_hours_reports_conflict_without_double_booking` built its conflicting
+  fake event as `[now, now+999999s]`, but the skill under test defaults to a fixed
+  09:00–10:00 local block for "today" with no daypart — so the test only caught the
+  conflict when run before ~10am local time. Fixed to span the full local day instead
+  of a `now`-relative window, matching how `_handle_calendar_block` actually resolves
+  "today". This was the one recurring failure noted in every prior session's suite run.
+- Full suite after fixes: **2152 passed, 0 failed** (backend, `pytest tests/ -q`);
+  frontend `tsc --noEmit` clean; Vitest 38/38 passed including the new
+  `CalendarGrid.test.ts` and `files.test.ts`.
+- Not yet committed — left for the user to review/commit.
+
+### 2026-08-03 (continued) — "Real JARVIS" plan: brand mark, memory, tool write-actions, wakeword signal
+- User asked for a from-scratch look at what it'd take to make JARVIS feel like the
+  actual Iron-Man JARVIS (not just the tracked V1/V2 checklist), then approved a
+  4-phase plan built from direct code verification. All 4 landed this session.
+- **Phase 1 — brand mark.** The user pointed at two previously-published design
+  artifacts ("J.A.R.V.I.S. — Mark Concepts", "Workspace — Round 2") as the decided
+  identity — a Hex Core monogram SVG, not something to invent fresh. Replaced the
+  flat-orange placeholder PWA icons and the dead `/favicon.svg` manifest reference
+  with the real mark (rendered via `cairosvg`, pixel-exact from the same SVG paths),
+  and swapped the plain text "J" badges in `JarvisApp.tsx`/`WorkspaceShell.tsx`/
+  `AdminShell.tsx` for the same glyph (`IconJarvisMark` in `jarvis-shared.tsx`).
+- **Phase 2 — memory woven into every turn.** `build_system_prompt()` already accepted
+  a `notes` param that no caller ever passed — wired `MemoryStore` notes into both
+  `/chat` and `/chat/stream` system prompts. Also found `llm_utils.trim_to_budget` was
+  defined but never called anywhere — wired it onto the message history sent to the
+  LLM (the real unbounded-growth risk, not the already-capped notes list).
+- **Phase 3 — tool-calling confirmation gate + first write-capable tools.** Added a
+  `confirm` kwarg to `execute_tool()` so WRITE/CRITICAL-risk tools return a
+  confirmation-required reply instead of executing immediately; wired the
+  already-scaffolded-but-unused `pending_tool_call` columns in `ChatHistoryStore` to
+  persist it turn-to-turn. Added `restart_service`, `list_devices`, `control_device`
+  to the tool registry (previously 4 read-only pilot tools only).
+  - **Found and fixed a real bug while testing this, not reported by the user:** the
+    legacy `JarvisEngine` fuzzy-matcher (`jarvis_engine.py`, `engine.process()`) is
+    *not* dead code as a prior session's notes assumed — it's still wired into both
+    `/chat` and `/chat/stream` as a routing layer, and its fuzzy skill-matching has no
+    minimum-score floor, so short/generic replies like bare "yes" get swallowed as an
+    unrelated hardcoded skill match (`missing_token` error) instead of ever reaching
+    the LLM. This directly breaks a plain "yes" reply to *any* confirmation prompt —
+    including the one this phase's own confirmation gate generates — and is very
+    likely a major contributor to the still-open 2026-07-31 "certain words reliably
+    trigger a canned reply" issue. Root-caused via a manual repro
+    (`engine.process("yes", ...)` → non-"cloud" route with no LLM call), not yet
+    fixed at the source (that's a separate, larger investigation into
+    `registry.match()`'s scoring). Worked around it narrowly for this phase by moving
+    the pending-tool-call check to resolve *before* skill/RAG/engine routing runs at
+    all, mirroring how `pending_home_assistant_action` was already structured — so
+    tool confirmations now bypass the legacy engine entirely, but the engine itself is
+    still live and still capable of intercepting other unrelated short phrases.
+    **Flagging for the user:** the concrete next step on the long-standing chat
+    reliability complaint is almost certainly `jarvis_engine.py::JarvisRegistry.match()`
+    needing a minimum-confidence floor before accepting a match, not a "missing
+    function-calling bridge" (that bridge — this session's tool-calling work — is now
+    built and working; the legacy engine sits in front of it and can still shadow it).
+- **Phase 4 — wakeword detection signal, end to end.** Discovered mid-plan (via direct
+  code reads, correcting a stale research pass) that the wakeword engine is much
+  further along than CLAUDE.md's P0 list said: `OpenWakeWordEngine` is real, started
+  at boot, and admin-configurable — only `_on_wakeword_detected()` was a no-op with
+  nothing downstream. Added `JarvisStatusHub.notify()` (a one-shot edge-event slot,
+  additive to the existing sustained recording/processing/speaking state model),
+  wired the callback to call it, threaded the new `last_event` field through
+  `/ws/status` → `status.ts` → `OrbScreen.tsx`, which now auto-starts recording on a
+  wakeword event when idle (extracted the decision logic into a pure
+  `shouldAutoStartOnWakeword()` for unit testing, matching this repo's existing
+  pattern of testing extracted pure functions over full component rendering).
+  Documented the optional `openwakeword`/`pyaudio` deps in `requirements.txt` and
+  updated CLAUDE.md's stale P0 entry — remaining gap is hardware-only (mic + tuning
+  on the real target machine, can't be done by an agent).
+- Full suite after all 4 phases: **2177 passed, 0 failed** (backend); frontend
+  `tsc --noEmit` clean, Vitest 44/44 passed, `npm run build` succeeds and the new
+  static assets (`favicon.svg`, regenerated icons) resolve correctly in `dist/`.
+- Not yet committed — left for the user to review/commit.

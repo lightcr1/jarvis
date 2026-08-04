@@ -11,5 +11,8 @@ edge-tts
 psutil
 pywebpush
 icalendar
-# optional: pip install openwakeword for hardware wakeword detection (always-on mic keyword spotting)
+# optional: real always-on wakeword detection (JARVIS_WAKEWORD_ENGINE=openwakeword).
+# Needs system audio libs first — on Debian/Ubuntu: apt-get install portaudio19-dev
+#   pip install openwakeword pyaudio
 # openwakeword
+# pyaudio

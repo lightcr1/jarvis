@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 import { NavLink, Outlet, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 import { getStoredPreferences } from "../api/client";
-import { J, useJ, IconMoon, IconSun, applyTheme, applyAccent, applyCompact, ToastContainer } from "../../screens/jarvis-shared";
+import { J, useJ, IconMoon, IconSun, IconJarvisMark, applyTheme, applyAccent, applyCompact, ToastContainer } from "../../screens/jarvis-shared";
 import { AppSwitcher } from "./AppSwitcher";
 import { AppearancePanel } from "../ui/AppearancePanel";
 import { OverlayDialog } from "../ui/OverlayDialog";
@@ -48,6 +48,19 @@ export function AdminShell() {
       .catch((err: Error) => { setError(err.message); navigate("/dashboard/login", { replace: true }); });
   }, [ensureAdminAccess, isAdmin, loading, navigate]);
 
+  // The admin bearer token is short-lived (default 60min) and independent of the
+  // 7-day user identity session. When it lapses mid-session, silently re-mint it
+  // instead of leaving whatever page was mid-fetch stuck — only fall back to a
+  // full re-login if the identity session itself turns out to be gone too.
+  useEffect(() => {
+    const handleAdminExpired = () => {
+      if (!isAdmin) return;
+      ensureAdminAccess().catch(() => navigate("/dashboard/login", { replace: true }));
+    };
+    window.addEventListener("jarvis:admin-session-expired", handleAdminExpired);
+    return () => window.removeEventListener("jarvis:admin-session-expired", handleAdminExpired);
+  }, [ensureAdminAccess, isAdmin, navigate]);
+
   if (loading || booting) {
     return (
       <div style={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", background: J.bg0, color: J.textSec, fontSize: 13 }}>
@@ -72,8 +85,8 @@ export function AdminShell() {
             <div style={{
               width: 32, height: 32, borderRadius: 8, background: J.amberDim,
               border: `1px solid ${J.borderAccent}`, display: "flex", alignItems: "center",
-              justifyContent: "center", fontSize: 14, fontWeight: 700, color: J.amber, flexShrink: 0,
-            }}>J</div>
+              justifyContent: "center", color: J.amber, flexShrink: 0,
+            }}><IconJarvisMark size={17} /></div>
             <div>
               <div style={{ fontSize: 13, fontWeight: 700, color: J.text }}>Jarvis Admin</div>
               <div style={{ fontSize: 10, color: J.textMuted }}>Operator Dashboard</div>

@@ -13,7 +13,7 @@ class FrontendRouteModuleTests(unittest.TestCase):
 
     def test_workspace_spa_paths_are_registered(self):
         registered = {route.path for route in frontend_router.routes}
-        for path in ("/workspace", "/workspace/files", "/workspace/communication", "/workspace/desktop"):
+        for path in ("/workspace", "/workspace/overview", "/workspace/files", "/workspace/communication", "/workspace/desktop"):
             self.assertIn(path, registered)
 
     def test_workspace_spa_route_is_not_a_wildcard(self):
@@ -24,6 +24,10 @@ class FrontendRouteModuleTests(unittest.TestCase):
         # frontend_routes.py above these routes.
         registered = {route.path for route in frontend_router.routes}
         self.assertNotIn("/workspace/{path:path}", registered)
+
+    def test_public_share_link_spa_route_is_registered(self):
+        registered = {route.path for route in frontend_router.routes}
+        self.assertIn("/s/{token}", registered)
 
     def test_legacy_routes_redirect_to_spa_paths(self):
         orb_response = orb_legacy_redirect()

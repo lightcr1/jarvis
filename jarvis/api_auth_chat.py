@@ -14,6 +14,7 @@ from fastapi.responses import StreamingResponse
 from .rate_limiter import _rate
 
 from .ai_clients import build_system_prompt
+from .llm_utils import trim_to_budget
 from .user_preferences_store import is_within_quiet_hours, time_of_day_bucket
 from .ai_router import AIRouter
 from .plan_service import ensure_monthly_grant
@@ -46,6 +47,11 @@ from .pending_signup_store import (
 )
 from .home_assistant.chat_intents import execute_home_assistant_chat_intent
 from .router_dependencies import LiveRef
+from .tool_orchestrator import run_chat_with_tools
+from .tool_registry import ToolExecutionContext, execute_tool
+from .tool_registry_tools import build_pilot_tool_registry
+
+_TOOL_REGISTRY = build_pilot_tool_registry()
 
 
 _HISTORY_STOPWORDS = {
@@ -85,6 +91,13 @@ def _find_related_history(chat_history, owner_key: str, current_session_id: str,
         when = datetime.fromtimestamp(hit["ts"]).strftime("%b %d") if hit.get("ts") else "previously"
         formatted.append(f'On {when} you discussed: "{hit["snippet"]}"')
     return formatted
+
+
+_CONFIRMATION_PHRASES = {"yes", "y", "yeah", "yep", "confirm", "confirmed", "do it", "go ahead", "proceed"}
+
+
+def _looks_like_confirmation(text: str) -> bool:
+    return (text or "").strip().lower().rstrip(".!") in _CONFIRMATION_PHRASES
 
 
 def _context_mode_for_prefs(prefs: dict) -> tuple[str, bool]:
@@ -543,6 +556,34 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         status_token = current("status_hub").begin("processing", source=source, mode=mode or "chat")
 
         try:
+            # Resolve a pending tool confirmation before any skill/RAG/legacy-engine
+            # routing gets a chance to intercept the reply — those layers can otherwise
+            # swallow short affirmatives like "yes" as an unrelated fuzzy skill match.
+            pending_tool_call = current("chat_history").get_pending_tool_call(session_id, owner_key=owner_key)
+            if pending_tool_call and _looks_like_confirmation(text):
+                pending_tool = _TOOL_REGISTRY.get(pending_tool_call["tool"])
+                if pending_tool is not None:
+                    tool_ctx = ToolExecutionContext(
+                        user_id=effective_user_id, role=role,
+                        deps={
+                            "file_service": current("file_service"),
+                            "memory_store": current("memory_store"),
+                            "proxmox_health": current("proxmox_health"),
+                            "home_assistant_service": current("home_assistant_service"),
+                            "run_cmd": current("run_cmd"),
+                            "ensure_service_allowed": current("ensure_service_allowed"),
+                        },
+                    )
+                    tool_result = execute_tool(
+                        pending_tool, tool_ctx, pending_tool_call["args"], confirm=True,
+                        audit_log=current("audit_log"), membership_store=current("membership_store"), permission_store=current("permission_store"),
+                    )
+                    current("chat_history").clear_pending_tool_call(session_id, owner_key=owner_key, owner_user_id=effective_user_id)
+                    current("chat_history").append_message(session_id, "jarvis", tool_result["reply"], owner_key=owner_key, owner_user_id=effective_user_id)
+                    return {"reply": tool_result["reply"], "data": tool_result["data"], "session_id": session_id}
+            elif pending_tool_call:
+                current("chat_history").clear_pending_tool_call(session_id, owner_key=owner_key, owner_user_id=effective_user_id)
+
             home_assistant_service = current("home_assistant_service")
             pending_home_assistant_action = current("chat_history").get_pending_home_assistant_action(session_id, owner_key=owner_key)
             ha_intent = (
@@ -651,15 +692,45 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                 user_prefs = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
                 display_name = (user_prefs or {}).get("display_name")
                 persona_tone = (user_prefs or {}).get("persona_tone", "formal")
+                response_language = (user_prefs or {}).get("response_language", "en")
                 time_of_day, quiet_hours_active = _context_mode_for_prefs(user_prefs or {})
                 related_history = _find_related_history(current("chat_history"), owner_key, session_id, text)
+                memory_notes = [n["text"] for n in current("memory_store").get_notes(effective_user_id)] if effective_user_id else []
                 sys_prompt = build_system_prompt(
                     display_name, voice_mode=is_voice, persona_tone=persona_tone,
                     time_of_day=time_of_day, quiet_hours_active=quiet_hours_active,
-                    related_history=related_history,
+                    related_history=related_history, language=response_language,
+                    notes=memory_notes,
                 )
-                messages = history + [{"role": "user", "content": text}]
+                messages = trim_to_budget(history + [{"role": "user", "content": text}])
                 try:
+                    tool_ctx = ToolExecutionContext(
+                        user_id=effective_user_id, role=role,
+                        deps={
+                            "file_service": current("file_service"),
+                            "memory_store": current("memory_store"),
+                            "proxmox_health": current("proxmox_health"),
+                            "home_assistant_service": current("home_assistant_service"),
+                            "run_cmd": current("run_cmd"),
+                            "ensure_service_allowed": current("ensure_service_allowed"),
+                        },
+                    )
+                    tool_result = run_chat_with_tools(
+                        router_obj, decision, messages=messages, system_prompt=sys_prompt,
+                        registry=_TOOL_REGISTRY, ctx=tool_ctx, audit_log=current("audit_log"),
+                        membership_store=current("membership_store"), permission_store=current("permission_store"),
+                        max_tokens=pf.clamped_max_tokens,
+                    )
+                    if tool_result is not None:
+                        reply_text = tool_result["reply"]
+                        if (tool_result.get("data") or {}).get("route") == "tool_confirmation_required":
+                            current("chat_history").set_pending_tool_call(
+                                session_id, {"tool": tool_result["data"]["tool"], "args": tool_result["data"]["args"]},
+                                owner_key=owner_key, owner_user_id=effective_user_id,
+                            )
+                        current("chat_history").append_message(session_id, "jarvis", reply_text, owner_key=owner_key, owner_user_id=effective_user_id)
+                        router_obj.finalize(decision, user_id=effective_user_id, conversation_id=session_id, input_tokens=tool_result["input_tokens"], output_tokens=tool_result["output_tokens"])
+                        return {"reply": reply_text, "data": {"model_tier": decision.tier.value, "provider": decision.provider, **tool_result["data"]}, "session_id": session_id}
                     reply_text = router_obj.run_once(decision, messages=messages, system_prompt=sys_prompt, max_tokens=pf.clamped_max_tokens)
                     current("chat_history").append_message(session_id, "jarvis", reply_text, owner_key=owner_key, owner_user_id=effective_user_id)
                     router_obj.finalize(decision, user_id=effective_user_id, conversation_id=session_id, input_tokens=len(text) // 4, output_tokens=len(reply_text) // 4)
@@ -743,6 +814,36 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         status_token = current("status_hub").begin("processing", source=source, mode=mode or "chat")
 
         try:
+            # Resolve a pending tool confirmation before any skill/RAG/legacy-engine
+            # routing gets a chance to intercept the reply — those layers can otherwise
+            # swallow short affirmatives like "yes" as an unrelated fuzzy skill match.
+            pending_tool_call = current("chat_history").get_pending_tool_call(session_id, owner_key=owner_key)
+            if pending_tool_call and _looks_like_confirmation(text):
+                pending_tool = _TOOL_REGISTRY.get(pending_tool_call["tool"])
+                if pending_tool is not None:
+                    tool_ctx = ToolExecutionContext(
+                        user_id=effective_user_id, role=role,
+                        deps={
+                            "file_service": current("file_service"),
+                            "memory_store": current("memory_store"),
+                            "proxmox_health": current("proxmox_health"),
+                            "home_assistant_service": current("home_assistant_service"),
+                            "run_cmd": current("run_cmd"),
+                            "ensure_service_allowed": current("ensure_service_allowed"),
+                        },
+                    )
+                    tool_result = execute_tool(
+                        pending_tool, tool_ctx, pending_tool_call["args"], confirm=True,
+                        audit_log=current("audit_log"), membership_store=current("membership_store"), permission_store=current("permission_store"),
+                    )
+                    current("chat_history").clear_pending_tool_call(session_id, owner_key=owner_key, owner_user_id=effective_user_id)
+                    current("chat_history").append_message(session_id, "jarvis", tool_result["reply"], owner_key=owner_key, owner_user_id=effective_user_id)
+                    def _confirmed_tool(r=tool_result["reply"], d=tool_result["data"], sid=session_id):
+                        yield f"data: {_json.dumps({'type': 'done', 'reply': r, 'session_id': sid, 'data': d})}\n\n"
+                    return StreamingResponse(_confirmed_tool(), media_type="text/event-stream")
+            elif pending_tool_call:
+                current("chat_history").clear_pending_tool_call(session_id, owner_key=owner_key, owner_user_id=effective_user_id)
+
             home_assistant_service = current("home_assistant_service")
             pending_home_assistant_action = current("chat_history").get_pending_home_assistant_action(session_id, owner_key=owner_key)
             ha_intent = (
@@ -868,19 +969,55 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                 user_prefs_r = current("user_preferences_store").get(effective_user_id) if effective_user_id else {}
                 display_name_r = (user_prefs_r or {}).get("display_name")
                 persona_tone_r = (user_prefs_r or {}).get("persona_tone", "formal")
+                response_language_r = (user_prefs_r or {}).get("response_language", "en")
                 time_of_day_r, quiet_hours_active_r = _context_mode_for_prefs(user_prefs_r or {})
                 related_history_r = _find_related_history(current("chat_history"), owner_key, session_id, text)
+                memory_notes_r = [n["text"] for n in current("memory_store").get_notes(effective_user_id)] if effective_user_id else []
                 sys_prompt_r = build_system_prompt(
                     display_name_r, voice_mode=is_voice_r, persona_tone=persona_tone_r,
                     time_of_day=time_of_day_r, quiet_hours_active=quiet_hours_active_r,
-                    related_history=related_history_r,
+                    related_history=related_history_r, language=response_language_r,
+                    notes=memory_notes_r,
                 )
-                messages_r = history_r + [{"role": "user", "content": text}]
+                messages_r = trim_to_budget(history_r + [{"role": "user", "content": text}])
                 stream_status_token_r = status_token
                 status_token = None
 
-                def router_stream(txt=text, sid=session_id, ok=owner_key, ouid=effective_user_id, dec=decision_r, ro=router_obj, msgs=messages_r, sp=sys_prompt_r, mt=pf_r.clamped_max_tokens, stk=stream_status_token_r):
+                def router_stream(txt=text, sid=session_id, ok=owner_key, ouid=effective_user_id, dec=decision_r, ro=router_obj, msgs=messages_r, sp=sys_prompt_r, mt=pf_r.clamped_max_tokens, stk=stream_status_token_r, role_r=role):
                     try:
+                        # Tool-calling doesn't support token streaming yet — run it
+                        # non-streaming first and, if a tool actually fired, emit the
+                        # synthesized reply as a single chunk instead of the normal
+                        # token-by-token loop below.
+                        tool_ctx = ToolExecutionContext(
+                            user_id=ouid, role=role_r,
+                            deps={
+                                "file_service": current("file_service"),
+                                "memory_store": current("memory_store"),
+                                "proxmox_health": current("proxmox_health"),
+                                "home_assistant_service": current("home_assistant_service"),
+                                "run_cmd": current("run_cmd"),
+                                "ensure_service_allowed": current("ensure_service_allowed"),
+                            },
+                        )
+                        tool_result = run_chat_with_tools(
+                            ro, dec, messages=msgs, system_prompt=sp,
+                            registry=_TOOL_REGISTRY, ctx=tool_ctx, audit_log=current("audit_log"),
+                            membership_store=current("membership_store"), permission_store=current("permission_store"),
+                            max_tokens=mt,
+                        )
+                        if tool_result is not None:
+                            reply_text = tool_result["reply"]
+                            if (tool_result.get("data") or {}).get("route") == "tool_confirmation_required":
+                                current("chat_history").set_pending_tool_call(
+                                    sid, {"tool": tool_result["data"]["tool"], "args": tool_result["data"]["args"]},
+                                    owner_key=ok, owner_user_id=ouid,
+                                )
+                            current("chat_history").append_message(sid, "jarvis", reply_text, owner_key=ok, owner_user_id=ouid)
+                            ro.finalize(dec, user_id=ouid, conversation_id=sid, input_tokens=tool_result["input_tokens"], output_tokens=tool_result["output_tokens"])
+                            yield f"data: {_json.dumps({'type': 'token', 'token': reply_text})}\n\n"
+                            yield f"data: {_json.dumps({'type': 'done', 'reply': reply_text, 'session_id': sid, 'data': {'model_tier': dec.tier.value, 'provider': dec.provider, **tool_result['data']}})}\n\n"
+                            return
                         full = ""
                         for chunk in ro.run_stream(dec, messages=msgs, system_prompt=sp, max_tokens=mt):
                             full += chunk

@@ -17,6 +17,8 @@ def live_attr(state: object, name: str) -> LiveRef[object]:
 
 
 def build_auth_chat_deps(state: object) -> dict:
+    from .proxmox_module import proxmox_health
+
     return {
         "ensure_default_admin_seeded": state.ensure_default_admin_seeded,
         "user_store": live_attr(state, "user_store"),
@@ -63,6 +65,10 @@ def build_auth_chat_deps(state: object) -> dict:
         "plan_store": live_attr(state, "plan_store"),
         "admin_settings_store": live_attr(state, "admin_settings_store"),
         "file_service": live_attr(state, "file_service"),
+        "memory_store": live_attr(state, "memory_store"),
+        "proxmox_health": proxmox_health,
+        "run_cmd": live_attr(state, "run_cmd"),
+        "ensure_service_allowed": live_attr(state, "ensure_service_allowed"),
         "get_anthropic": state.get_anthropic,
         "get_gemini": state.get_gemini,
         "get_openai": state.get_openai,

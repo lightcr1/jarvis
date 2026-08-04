@@ -132,9 +132,15 @@ def test_block_hours_creates_event():
 
 def test_block_hours_reports_conflict_without_double_booking():
     cal = FakeCalendarService()
-    import time
-    now = int(time.time())
-    cal.events.append({"id": "cal-1", "title": "Existing", "start": now, "end": now + 999_999})
+    from datetime import datetime, timedelta
+    # "block ... today" with no daypart defaults to 09:00-10:00 local time in
+    # _handle_calendar_block. Span the whole local day (not just "now onward")
+    # so the conflict is deterministic regardless of the wall-clock time the
+    # test happens to run at — a "now to now+999999s" window used to miss the
+    # 09:00 slot whenever the suite ran after ~10am local time.
+    day_start = datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    day_end = day_start + timedelta(days=1)
+    cal.events.append({"id": "cal-1", "title": "Existing", "start": int(day_start.timestamp()), "end": int(day_end.timestamp())})
     result = _run_skill("block 1 hour today for New thing", calendar_service=cal)
     assert result["data"]["route"] == "calendar_conflict"
     assert len(cal.events) == 1  # not double-booked

@@ -56,6 +56,19 @@ class UserPreferencesStoreTests(unittest.TestCase):
         self.store.update("usr-1", {"theme": "invalid"})
         self.assertEqual("dark", self.store.get("usr-1")["theme"])
 
+    def test_response_language_defaults_to_en(self):
+        prefs = self.store.get("usr-new")
+        self.assertEqual("en", prefs["response_language"])
+
+    def test_update_response_language_allows_de(self):
+        self.store.update("usr-1", {"response_language": "de"})
+        self.assertEqual("de", self.store.get("usr-1")["response_language"])
+
+    def test_update_response_language_rejects_unknown_value(self):
+        self.store.update("usr-1", {"response_language": "de"})
+        self.store.update("usr-1", {"response_language": "fr"})
+        self.assertEqual("en", self.store.get("usr-1")["response_language"])
+
     def test_update_compact_mode(self):
         self.store.update("usr-1", {"compact_mode": True})
         self.assertTrue(self.store.get("usr-1")["compact_mode"])

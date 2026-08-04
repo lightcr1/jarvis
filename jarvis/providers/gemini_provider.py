@@ -48,7 +48,10 @@ class GeminiProvider(BaseProvider):
         max_tokens: int,
         tier: Tier,
         stream: bool,
+        tools: list[dict] | None = None,
     ) -> Iterator[ChatChunk] | ChatResult:
+        # Tool-calling not wired up for Gemini yet — accepted for signature
+        # compatibility with AIRouter.run_with_tools, silently ignored.
         from google.genai import types as _gtypes
         client = self._get_client()
         gemini_messages = [

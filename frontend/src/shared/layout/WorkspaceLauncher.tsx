@@ -1,15 +1,16 @@
 import { useNavigate } from "react-router-dom";
-import { J, IconFolder, IconMail, IconMonitor } from "../../screens/jarvis-shared";
+import { J, IconFolder, IconHome, IconMail, IconMonitor } from "../../screens/jarvis-shared";
 
-export type WorkspaceApp = "drive" | "communication" | "desktop";
+export type WorkspaceApp = "overview" | "drive" | "communication" | "desktop";
 
 const APPS: Record<WorkspaceApp, { label: string; sublabel: string; path: string; icon: (p: { size?: number }) => JSX.Element }> = {
+  overview: { label: "Overview", sublabel: "Summary of everything", path: "/workspace/overview", icon: IconHome },
   drive: { label: "Drive", sublabel: "Files & folders", path: "/workspace/files", icon: IconFolder },
   communication: { label: "Kommunikation", sublabel: "Email & Calendar", path: "/workspace/communication", icon: IconMail },
   desktop: { label: "Desktop", sublabel: "Remote PCs", path: "/workspace/desktop", icon: IconMonitor },
 };
 
-const ORDER: WorkspaceApp[] = ["drive", "communication", "desktop"];
+const ORDER: WorkspaceApp[] = ["overview", "drive", "communication", "desktop"];
 
 export function WorkspaceLauncher({ current, onClose }: { current: WorkspaceApp; onClose: () => void }) {
   const navigate = useNavigate();
@@ -93,5 +94,6 @@ export function WorkspaceLauncher({ current, onClose }: { current: WorkspaceApp;
 export function workspaceAppFromPath(pathname: string): WorkspaceApp {
   if (pathname.startsWith("/workspace/communication")) return "communication";
   if (pathname.startsWith("/workspace/desktop")) return "desktop";
-  return "drive";
+  if (pathname.startsWith("/workspace/files")) return "drive";
+  return "overview";
 }

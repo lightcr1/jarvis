@@ -1036,6 +1036,11 @@ export function SettingsScreen() {
           onChange={v => set('persona_tone', v as 'formal' | 'casual')}
           options={[{ v: 'formal', l: 'Formal — terse, precise' }, { v: 'casual', l: 'Casual — warmer, conversational' }]} />
       </Row>
+      <Row label="Response Language" desc="Language JARVIS replies in for free conversation">
+        <Sel value={prefs.response_language || 'en'}
+          onChange={v => set('response_language', v as 'en' | 'de')}
+          options={[{ v: 'en', l: 'English' }, { v: 'de', l: 'Deutsch' }]} />
+      </Row>
       <Field label="Location" value={prefs.location || ''}
         onChange={v => set('location', v)} placeholder="City for weather skill (e.g. Munich)" />
     </>),

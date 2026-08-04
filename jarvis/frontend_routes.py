@@ -61,8 +61,10 @@ def chat_legacy_redirect():
 # requests would get the SPA shell back instead of JSON). List each hub
 # sub-page explicitly instead.
 @frontend_router.get("/workspace")
+@frontend_router.get("/workspace/overview")
 @frontend_router.get("/workspace/files")
 @frontend_router.get("/workspace/communication")
 @frontend_router.get("/workspace/desktop")
-def frontend_routes(path: str | None = None):
+@frontend_router.get("/s/{token}")
+def frontend_routes(path: str | None = None, token: str | None = None):
     return frontend_index_response()

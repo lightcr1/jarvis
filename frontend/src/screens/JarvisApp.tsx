@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconAmbient } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconAmbient, IconJarvisMark } from './jarvis-shared';
 import { GreetingOverlay } from '../components/GreetingOverlay';
 import { OnboardingModal, shouldShowOnboarding } from '../components/OnboardingModal';
 import { LoginScreen } from './LoginScreen';
@@ -79,8 +79,8 @@ function NavRail({ current, onNav, onLogout, nav, isGuest, unreadCount }: { curr
     <nav className="nav-rail" aria-label="Main navigation" style={{ width: 60, flexShrink: 0, background: J.bg1, borderRight: `1px solid ${J.border}`, flexDirection: 'column', alignItems: 'center', padding: '14px 0', zIndex: 10, position: 'relative' }}>
       <div style={{ position: 'relative', marginBottom: 20 }}>
         <button onClick={() => setShowSwitcher(v => !v)} aria-label="Switch area"
-          style={{ width: 34, height: 34, borderRadius: 9, background: J.amberDim, border: `1px solid ${J.borderAccent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14, fontWeight: 700, color: J.amber, cursor: 'pointer', userSelect: 'none' }}>
-          J
+          style={{ width: 34, height: 34, borderRadius: 9, background: J.amberDim, border: `1px solid ${J.borderAccent}`, display: 'flex', alignItems: 'center', justifyContent: 'center', color: J.amber, cursor: 'pointer', userSelect: 'none' }}>
+          <IconJarvisMark size={18} />
         </button>
         {showSwitcher && <AppSwitcher current="jarvis" onClose={() => setShowSwitcher(false)} placement="right" />}
       </div>
@@ -416,7 +416,7 @@ export function JarvisApp() {
         )}
         <ErrorBoundary label={screen}>
           {screen === 'chat'     && <ChatScreen onNavigate={navigate} />}
-          {screen === 'orb'      && <OrbScreen onNavigate={navigate} liveState={liveStatus.state} />}
+          {screen === 'orb'      && <OrbScreen onNavigate={navigate} liveState={liveStatus.state} wakewordEvent={liveStatus.lastEvent} />}
           {screen === 'home'     && <HomeAssistantScreen onNavigate={navigate} />}
           {screen === 'proxmox'  && <ProxmoxScreen onNavigate={navigate} />}
           {screen === 'tasks'    && <TasksScreen onNavigate={navigate} />}

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react';
 import { J, useJ, stripMarkdown, StatusBadge, IconMic, IconSettings, IconChat, IconVolume, MarkdownText, showToast } from './jarvis-shared';
 import { streamChatMessage, transcribeAudio, synthesizeSpeech, SttError, getSystemMetrics } from '../shared/api/chat';
+import type { JarvisStatusEvent } from '../shared/api/status';
 
 export type HealthTier = 'good' | 'warn' | 'critical';
 
@@ -202,9 +203,19 @@ function remoteStateToOrbState(state: string) {
   return 'idle';
 }
 
+export function shouldAutoStartOnWakeword(
+  wakewordEvent: JarvisStatusEvent | null | undefined,
+  lastHandledTs: number | null,
+  orbState: string,
+): boolean {
+  if (!wakewordEvent || wakewordEvent.kind !== 'wakeword') return false;
+  if (lastHandledTs === wakewordEvent.ts) return false;
+  return orbState === 'idle';
+}
+
 type Exchange = { you: string; jarvis: string };
 
-export function OrbScreen({ onNavigate, liveState = 'idle' }: { onNavigate: (screen: string) => void; liveState?: string }) {
+export function OrbScreen({ onNavigate, liveState = 'idle', wakewordEvent = null }: { onNavigate: (screen: string) => void; liveState?: string; wakewordEvent?: JarvisStatusEvent | null }) {
   useJ();
   const [orbState, setOrbState]     = useState('idle');
   const [transcript, setTranscript] = useState('');
@@ -355,6 +366,18 @@ export function OrbScreen({ onNavigate, liveState = 'idle' }: { onNavigate: (scr
       mediaRecorderRef.current.stop();
     }
   };
+
+  // Auto-start recording when the always-on wakeword engine fires — only while this
+  // screen is already mounted and idle. A ref (not state) tracks the last-handled
+  // event timestamp so a WebSocket reconnect replaying the same snapshot doesn't
+  // re-trigger the mic. Auto-navigating here from another screen is deliberately out
+  // of scope for v1 — that's a bigger, separate UX decision (surprise mic activation).
+  const lastWakewordTsRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!shouldAutoStartOnWakeword(wakewordEvent, lastWakewordTsRef.current, orbState)) return;
+    lastWakewordTsRef.current = wakewordEvent!.ts;
+    void startRecording();
+  }, [wakewordEvent, orbState]);
 
   const handleMicToggle = () => {
     if (orbState === 'listening') {

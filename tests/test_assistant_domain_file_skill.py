@@ -181,6 +181,43 @@ class FileDriveSkillTests(unittest.TestCase):
             result["reply"],
         )
 
+    def test_conversational_prefix_still_matches_single_folder_listing(self):
+        # Real user report: "okey tell me whats in this Reports folder" — a
+        # conversational lead-in plus "this" instead of "my" — used to fall
+        # through to the LLM (which hallucinated), since the old patterns
+        # were anchored at the very start of the message.
+        user = self._rw_user()
+        folder = self.service.create_folder({"name": "Reports"}, user_id=user["id"], role=user["role"])["folder"]
+        self.service.grant_jarvis_folder_access(folder["id"], user_id=user["id"], role=user["role"])
+        self._upload(folder_id=folder["id"], filename="q1.txt", content=b"quarterly numbers", user=user)
+
+        result = _run_skill("okey tell me whats in this Reports folder", file_service=self.service, user_id=user["id"])
+        self.assertIsNotNone(result)
+        self.assertEqual("file_drive_list", result["data"]["route"])
+        self.assertIn("q1.txt", result["reply"])
+
+    def test_list_all_granted_folders(self):
+        user = self._rw_user()
+        reports = self.service.create_folder({"name": "Reports"}, user_id=user["id"], role=user["role"])["folder"]
+        photos = self.service.create_folder({"name": "Photos"}, user_id=user["id"], role=user["role"])["folder"]
+        self.service.grant_jarvis_folder_access(reports["id"], user_id=user["id"], role=user["role"])
+        self.service.grant_jarvis_folder_access(photos["id"], user_id=user["id"], role=user["role"])
+        self._upload(folder_id=reports["id"], filename="q1.txt", content=b"numbers", user=user)
+
+        result = _run_skill("tell me whats in this folders", file_service=self.service, user_id=user["id"])
+        self.assertIsNotNone(result)
+        self.assertEqual("file_drive_list_all", result["data"]["route"])
+        self.assertIn("Reports", result["reply"])
+        self.assertIn("Photos", result["reply"])
+
+    def test_list_all_granted_folders_when_none_granted(self):
+        user = self._rw_user()
+        self.service.create_folder({"name": "Private"}, user_id=user["id"], role=user["role"])
+
+        result = _run_skill("what folders do i have", file_service=self.service, user_id=user["id"])
+        self.assertIsNotNone(result)
+        self.assertEqual([], result["data"]["folders"])
+
     def test_binary_file_content_refused_but_listed(self):
         user = self._rw_user()
         folder = self.service.create_folder({"name": "Media"}, user_id=user["id"], role=user["role"])["folder"]

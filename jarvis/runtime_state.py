@@ -33,7 +33,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     owner_user_id TEXT,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL,
-    pending_ha_action TEXT
+    pending_ha_action TEXT,
+    pending_tool_call TEXT
 );
 CREATE TABLE IF NOT EXISTS messages (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -64,7 +65,14 @@ class ChatHistoryStore:
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        self._migrate_schema()
         self._migrate_json(configured)
+
+    def _migrate_schema(self) -> None:
+        cols = {row[1] for row in self._conn.execute("PRAGMA table_info(sessions)")}
+        if "pending_tool_call" not in cols:
+            self._conn.execute("ALTER TABLE sessions ADD COLUMN pending_tool_call TEXT")
+            self._conn.commit()
 
     def _migrate_json(self, configured: str | None) -> None:
         if configured:
@@ -109,6 +117,12 @@ class ChatHistoryStore:
                 pending = json.loads(row["pending_ha_action"])
             except (json.JSONDecodeError, TypeError):
                 pending = None
+        pending_tool = None
+        if row["pending_tool_call"]:
+            try:
+                pending_tool = json.loads(row["pending_tool_call"])
+            except (json.JSONDecodeError, TypeError):
+                pending_tool = None
         return {
             "id": row["id"],
             "title": row["title"],
@@ -118,6 +132,7 @@ class ChatHistoryStore:
             "updated_at": row["updated_at"],
             "messages": messages if messages is not None else [],
             "pending_home_assistant_action": pending,
+            "pending_tool_call": pending_tool,
         }
 
     def create_session(self, title: str | None = None, owner_key: str = "guest:anonymous", owner_user_id: str | None = None) -> dict:
@@ -132,7 +147,7 @@ class ChatHistoryStore:
             self._conn.commit()
         return {"id": session_id, "title": clean_title, "owner_key": owner_key,
                 "owner_user_id": owner_user_id, "created_at": now, "updated_at": now,
-                "messages": [], "pending_home_assistant_action": None}
+                "messages": [], "pending_home_assistant_action": None, "pending_tool_call": None}
 
     def ensure_session(self, session_id: str | None, owner_key: str = "guest:anonymous", owner_user_id: str | None = None) -> dict:
         if session_id:
@@ -178,6 +193,28 @@ class ChatHistoryStore:
 
     def clear_pending_home_assistant_action(self, session_id: str, owner_key: str = "guest:anonymous", owner_user_id: str | None = None) -> None:
         self.set_pending_home_assistant_action(session_id, None, owner_key=owner_key, owner_user_id=owner_user_id)
+
+    def get_pending_tool_call(self, session_id: str, owner_key: str = "guest:anonymous") -> dict | None:
+        row = self._ex("SELECT pending_tool_call FROM sessions WHERE id=? AND owner_key=?", (session_id, owner_key)).fetchone()
+        if not row or not row["pending_tool_call"]:
+            return None
+        try:
+            val = json.loads(row["pending_tool_call"])
+            return val if isinstance(val, dict) else None
+        except (json.JSONDecodeError, TypeError):
+            return None
+
+    def set_pending_tool_call(self, session_id: str, pending: dict | None, owner_key: str = "guest:anonymous", owner_user_id: str | None = None) -> None:
+        session = self.ensure_session(session_id, owner_key=owner_key, owner_user_id=owner_user_id)
+        sid = session["id"]
+        now = int(time.time())
+        encoded = json.dumps(pending) if isinstance(pending, dict) else None
+        with self._lock:
+            self._ex("UPDATE sessions SET pending_tool_call=?,updated_at=? WHERE id=?", (encoded, now, sid))
+            self._conn.commit()
+
+    def clear_pending_tool_call(self, session_id: str, owner_key: str = "guest:anonymous", owner_user_id: str | None = None) -> None:
+        self.set_pending_tool_call(session_id, None, owner_key=owner_key, owner_user_id=owner_user_id)
 
     def list_sessions(self, owner_key: str = "guest:anonymous") -> list[dict]:
         rows = self._ex(
@@ -250,6 +287,7 @@ class JarvisStatusHub:
         self._version = 0
         self._states: dict[str, dict[str, object]] = {}
         self._priority = ["recording", "processing", "speaking"]
+        self._last_event: dict[str, object] | None = None
 
     def begin(self, state: str, *, source: str = "", mode: str = "") -> str:
         token = uuid.uuid4().hex
@@ -271,6 +309,14 @@ class JarvisStatusHub:
                 self._states.pop(token, None)
                 self._version += 1
 
+    def notify(self, kind: str) -> None:
+        """Record a one-shot edge event (e.g. "wakeword") alongside the sustained
+        recording/processing/speaking state — distinct from begin/end because a
+        detection fires instantly rather than spanning a duration."""
+        with self._lock:
+            self._last_event = {"kind": kind, "ts": time.time()}
+            self._version += 1
+
     def snapshot(self) -> dict[str, object]:
         with self._lock:
             active = list(self._states.values())
@@ -289,6 +335,7 @@ class JarvisStatusHub:
                 "updated_at": time.time(),
                 "active": len(active),
                 "counts": counts,
+                "last_event": self._last_event,
             }
 
 

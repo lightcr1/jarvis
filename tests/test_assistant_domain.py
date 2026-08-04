@@ -5,6 +5,7 @@ from fastapi import HTTPException
 
 from jarvis.assistant_domain import (
     _do_convert,
+    _extract_city,
     _resolve_event_date,
     _safe_eval,
     block_write_if_unauthorized,
@@ -217,6 +218,23 @@ class CalculatorSkillTests(unittest.TestCase):
         self.assertIsNotNone(result)
         route = (result.get("data") or {}).get("route", "")
         self.assertEqual("weather", route)
+
+
+class ExtractCitySkillTests(unittest.TestCase):
+    def test_strips_right_now_filler(self):
+        self.assertEqual("Aarau", _extract_city("Can you tell me the weather in Aarau right now"))
+
+    def test_strips_currently_filler(self):
+        self.assertEqual("Zurich", _extract_city("weather in Zurich currently"))
+
+    def test_german_gerade_filler(self):
+        self.assertEqual("München", _extract_city("wie ist das wetter in München gerade"))
+
+    def test_plain_trailing_city_still_works(self):
+        self.assertEqual("Berlin", _extract_city("weather in Berlin"))
+
+    def test_stops_before_today(self):
+        self.assertEqual("Aarau", _extract_city("forecast for Aarau today"))
 
 
 class UnitConverterSkillTests(unittest.TestCase):

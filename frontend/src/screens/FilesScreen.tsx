@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { J, useJ, Spinner, showToast, IconPlus, IconUpload, IconFolder, IconFile, IconTrash, IconPencil, IconX, IconZap, IconDownload, IconChevRight, IconShare } from './jarvis-shared';
+import { J, useJ, Spinner, showToast, IconPlus, IconUpload, IconFolder, IconFile, IconTrash, IconPencil, IconX, IconZap, IconDownload, IconChevRight, IconShare, IconLink, IconCopy, IconLock } from './jarvis-shared';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 import {
-  BreadcrumbItem, FileEntry, FileFolder, FolderAccess, MyGroup, ShareGrant, SharedWithMeEntry,
-  browseFiles, createFolder, deleteFile, deleteFolder, downloadFile, fetchMyGroups, fetchQuotaStatus,
-  fetchSharedWithMe, formatBytes, listFolderShares, moveFile, moveFolder, renameFile, renameFolder,
-  setJarvisFolderAccess, shareFolder, unshareFolder, uploadFile,
+  BreadcrumbItem, FileEntry, FileFolder, FolderAccess, MyGroup, ShareGrant, ShareLink, SharedWithMeEntry,
+  browseFiles, createFolder, createShareLink, deleteFile, deleteFolder, downloadFile, fetchMyGroups, fetchQuotaStatus,
+  fetchSharedWithMe, formatBytes, listFolderShares, listShareLinks, moveFile, moveFolder, renameFile, renameFolder,
+  revokeShareLink, setJarvisFolderAccess, shareFolder, shareLinkUrl, unshareFolder, uploadFile,
 } from '../shared/api/files';
 
 function errMsg(err: unknown, fallback: string): string {
@@ -275,6 +275,117 @@ function ShareFolderDialog({ folder, onClose }: { folder: FileFolder; onClose: (
   );
 }
 
+function ShareLinkDialog({ file, onClose }: { file: FileEntry; onClose: () => void }) {
+  const [links, setLinks] = useState<ShareLink[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [creating, setCreating] = useState(false);
+  const [password, setPassword] = useState('');
+  const [expiresInDays, setExpiresInDays] = useState('');
+
+  const load = useCallback(() => {
+    setLoading(true);
+    listShareLinks(file.id)
+      .then(res => setLinks(res.shares))
+      .catch(err => showToast(errMsg(err, 'Failed to load share links'), 'error'))
+      .finally(() => setLoading(false));
+  }, [file.id]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const create = async () => {
+    if (creating) return;
+    setCreating(true);
+    try {
+      const days = Number(expiresInDays);
+      const expiresAt = days > 0 ? Math.floor(Date.now() / 1000) + days * 86400 : null;
+      await createShareLink(file.id, { expiresAt, password: password.trim() || undefined });
+      setPassword('');
+      setExpiresInDays('');
+      showToast('Share link created', 'success');
+      load();
+    } catch (err) {
+      showToast(errMsg(err, 'Failed to create share link'), 'error');
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const revoke = async (shareId: string) => {
+    try {
+      await revokeShareLink(shareId);
+      setLinks(prev => prev.filter(l => l.id !== shareId));
+      showToast('Share link revoked', 'info');
+    } catch (err) {
+      showToast(errMsg(err, 'Failed to revoke share link'), 'error');
+    }
+  };
+
+  const copyLink = async (token: string) => {
+    try {
+      await navigator.clipboard.writeText(shareLinkUrl(token));
+      showToast('Link copied', 'success');
+    } catch {
+      showToast('Could not copy link', 'error');
+    }
+  };
+
+  return (
+    <OverlayDialog
+      title={`Share link for "${file.filename}"`}
+      onClose={onClose}
+      actions={
+        <button onClick={onClose} className="j-btn" style={{ background: J.bg3, border: `1px solid ${J.border}`, color: J.textSec, borderRadius: 8, padding: '8px 16px', fontSize: 13 }}>Done</button>
+      }
+    >
+      <div style={{ fontSize: 12.5, color: J.textMuted, marginBottom: 14, lineHeight: 1.6 }}>
+        Anyone with the link can download this file — no JARVIS account required.
+      </div>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+        <input value={password} onChange={e => setPassword(e.target.value)} placeholder="Optional password" className="j-input"
+          style={{ flex: 1, borderRadius: 8, padding: '8px 10px', fontSize: 13 }} />
+        <input value={expiresInDays} onChange={e => setExpiresInDays(e.target.value.replace(/\D/g, ''))} placeholder="Expires in days" className="j-input"
+          style={{ width: 130, borderRadius: 8, padding: '8px 10px', fontSize: 13 }} />
+        <button onClick={create} disabled={creating} className="j-btn"
+          style={{ background: J.amber, color: J.bg0, borderRadius: 8, padding: '8px 16px', fontSize: 13, fontWeight: 600 }}>
+          {creating ? <Spinner size={13} color={J.bg0} /> : 'Create'}
+        </button>
+      </div>
+
+      <div style={{ fontSize: 11, color: J.textMuted, fontWeight: 600, textTransform: 'uppercase', letterSpacing: '.04em', marginBottom: 8 }}>Active links</div>
+      {loading ? (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: J.textMuted, fontSize: 13 }}><Spinner size={13} /> Loading...</div>
+      ) : links.length === 0 ? (
+        <div style={{ fontSize: 12.5, color: J.textMuted }}>No active share links.</div>
+      ) : (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+          {links.map(link => (
+            <div key={link.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: J.bg3, borderRadius: 8, padding: '8px 12px', gap: 8 }}>
+              <div style={{ fontSize: 12.5, color: J.text, display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                {link.has_password && <IconLock size={11} />}
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{shareLinkUrl(link.token)}</span>
+                <span style={{ color: J.textMuted, fontSize: 11, flexShrink: 0 }}>· {link.download_count} downloads</span>
+                {link.expires_at && (
+                  <span style={{ color: J.textMuted, fontSize: 11, flexShrink: 0 }}>· expires {new Date(link.expires_at * 1000).toLocaleDateString()}</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+                <button onClick={() => copyLink(link.token)} title="Copy link" aria-label="Copy link"
+                  style={{ background: 'none', border: 'none', color: J.textSec, cursor: 'pointer', display: 'flex' }}>
+                  <IconCopy size={13} />
+                </button>
+                <button onClick={() => revoke(link.id)} title="Revoke" aria-label="Revoke"
+                  style={{ background: 'none', border: 'none', color: J.error, cursor: 'pointer', display: 'flex' }}>
+                  <IconTrash size={13} />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </OverlayDialog>
+  );
+}
+
 function QuotaBar({ used, total }: { used: number; total: number }) {
   const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0;
   const color = pct > 90 ? J.error : pct > 70 ? J.warn : J.success;
@@ -304,6 +415,91 @@ function SidebarNavItem({ icon, label, active, onClick }: { icon: React.ReactNod
   );
 }
 
+function timeAgo(epochSec: number): string {
+  const diffSec = Math.max(0, Math.floor(Date.now() / 1000) - epochSec);
+  if (diffSec < 60) return 'just now';
+  if (diffSec < 3600) return `${Math.floor(diffSec / 60)}m ago`;
+  if (diffSec < 86400) return `${Math.floor(diffSec / 3600)}h ago`;
+  if (diffSec < 2592000) return `${Math.floor(diffSec / 86400)}d ago`;
+  return new Date(epochSec * 1000).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+const LIST_ROW_STYLE: React.CSSProperties = {
+  display: 'grid', gridTemplateColumns: '1fr 120px 84px 190px', alignItems: 'center', gap: 8,
+  padding: '9px 14px', borderBottom: `1px solid ${J.border}`, fontSize: 12.5,
+};
+
+function ListHeader() {
+  const cell: React.CSSProperties = { fontFamily: 'ui-monospace, monospace', fontSize: 10, letterSpacing: '0.06em', textTransform: 'uppercase', color: J.textMuted, fontWeight: 500 };
+  return (
+    <div style={{ ...LIST_ROW_STYLE, background: J.bg1, borderBottom: `1px solid ${J.border}` }}>
+      <div style={cell}>Name</div>
+      <div style={cell}>Modified</div>
+      <div style={{ ...cell, textAlign: 'right' }}>Size</div>
+      <div />
+    </div>
+  );
+}
+
+function FolderRow({ folder, access, onOpen, onToggleJarvis, onShare, onRename, onMove, onDelete }: {
+  folder: FileFolder; access: FolderAccess; onOpen: () => void; onToggleJarvis: () => void;
+  onShare: () => void; onRename: () => void; onMove: () => void; onDelete: () => void;
+}) {
+  return (
+    <div style={LIST_ROW_STYLE}>
+      <div onClick={onOpen} style={{ display: 'flex', alignItems: 'center', gap: 9, cursor: 'pointer', overflow: 'hidden', color: J.text, fontWeight: 500 }}>
+        <IconFolder size={15} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{folder.name}</span>
+      </div>
+      <div style={{ color: J.textMuted }}>{timeAgo(folder.updated_at)}</div>
+      <div style={{ color: J.textMuted, textAlign: 'right' }}>—</div>
+      {access === 'owner' ? (
+        <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end' }}>
+          <button onClick={onToggleJarvis} title={folder.jarvis_access_granted ? 'JARVIS can access this folder — click to revoke' : 'Give JARVIS access to this folder'}
+            style={{
+              display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 5, padding: '2px 7px', fontSize: 10.5, fontWeight: 500, cursor: 'pointer',
+              border: `1px solid ${folder.jarvis_access_granted ? J.borderAccent : J.border}`,
+              background: folder.jarvis_access_granted ? J.amberDim : 'transparent', color: folder.jarvis_access_granted ? J.amber : J.textMuted,
+            }}>
+            <IconZap size={10} />
+          </button>
+          <IconButton onClick={onShare} title="Share with a group"><IconShare size={12} /></IconButton>
+          <IconButton onClick={onRename} title="Rename"><IconPencil size={12} /></IconButton>
+          <IconButton onClick={onMove} title="Move"><IconFolder size={12} /></IconButton>
+          <IconButton onClick={onDelete} title="Delete" danger><IconTrash size={12} /></IconButton>
+        </div>
+      ) : <div />}
+    </div>
+  );
+}
+
+function FileRow({ file, access, onDownload, onShareLink, onRename, onMove, onDelete }: {
+  file: FileEntry; access: FolderAccess; onDownload: () => void; onShareLink: () => void;
+  onRename: () => void; onMove: () => void; onDelete: () => void;
+}) {
+  return (
+    <div style={LIST_ROW_STYLE}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 9, overflow: 'hidden' }}>
+        <IconFile size={15} />
+        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: J.text }}>{file.filename}</span>
+      </div>
+      <div style={{ color: J.textMuted }}>{timeAgo(file.updated_at)}</div>
+      <div style={{ color: J.textMuted, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatBytes(file.size_bytes)}</div>
+      <div style={{ display: 'flex', gap: 5, justifyContent: 'flex-end' }}>
+        <IconButton onClick={onDownload} title="Download"><IconDownload size={12} /></IconButton>
+        {access === 'owner' && (
+          <>
+            <IconButton onClick={onShareLink} title="Copy public link — anyone with the link can download this file"><IconLink size={12} /></IconButton>
+            <IconButton onClick={onRename} title="Rename"><IconPencil size={12} /></IconButton>
+            <IconButton onClick={onMove} title="Move"><IconFolder size={12} /></IconButton>
+            <IconButton onClick={onDelete} title="Delete" danger><IconTrash size={12} /></IconButton>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
   useJ();
   const [view, setView] = useState<'mine' | 'shared'>('mine');
@@ -323,6 +519,7 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
   const [renameTarget, setRenameTarget] = useState<{ kind: 'folder' | 'file'; id: string; name: string } | null>(null);
   const [moveTarget, setMoveTarget] = useState<{ kind: 'folder' | 'file'; id: string } | null>(null);
   const [shareTarget, setShareTarget] = useState<FileFolder | null>(null);
+  const [shareLinkTarget, setShareLinkTarget] = useState<FileEntry | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const onSharedTopLevel = view === 'shared' && parentId === null;
@@ -524,58 +721,29 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
           </div>
         )}
 
-        {!onSharedTopLevel && !loading && !error && folders.length > 0 && (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(220px,1fr))', gap: 10, marginBottom: files.length > 0 ? 18 : 0 }}>
+        {!onSharedTopLevel && !loading && !error && (folders.length > 0 || files.length > 0) && (
+          <div style={{ border: `1px solid ${J.border}`, borderRadius: 10, overflow: 'hidden', background: J.bg0 }}>
+            <ListHeader />
             {folders.map(folder => (
-              <div key={folder.id} style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 12, padding: '12px 14px', display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 8 }}>
-                  <div onClick={() => navigateTo(folder.id)} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', overflow: 'hidden' }}>
-                    <IconFolder size={17} />
-                    <span style={{ fontSize: 13, fontWeight: 500, color: J.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{folder.name}</span>
-                  </div>
-                </div>
-                {access === 'owner' && (
-                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                    <button onClick={() => handleToggleJarvis(folder)} title={folder.jarvis_access_granted ? 'JARVIS can access this folder — click to revoke' : 'Give JARVIS access to this folder'}
-                      style={{
-                        display: 'inline-flex', alignItems: 'center', gap: 4, borderRadius: 5, padding: '2px 8px', fontSize: 10.5, fontWeight: 500, cursor: 'pointer', border: `1px solid ${folder.jarvis_access_granted ? J.borderAccent : J.border}`,
-                        background: folder.jarvis_access_granted ? J.amberDim : 'transparent', color: folder.jarvis_access_granted ? J.amber : J.textMuted,
-                      }}>
-                      <IconZap size={10} /> {folder.jarvis_access_granted ? 'JARVIS' : 'Private'}
-                    </button>
-                    <div style={{ display: 'flex', gap: 5, marginLeft: 'auto' }}>
-                      <IconButton onClick={() => setShareTarget(folder)} title="Share"><IconShare size={12} /></IconButton>
-                      <IconButton onClick={() => setRenameTarget({ kind: 'folder', id: folder.id, name: folder.name })} title="Rename"><IconPencil size={12} /></IconButton>
-                      <IconButton onClick={() => setMoveTarget({ kind: 'folder', id: folder.id })} title="Move"><IconFolder size={12} /></IconButton>
-                      <IconButton onClick={() => handleDeleteFolder(folder)} title="Delete" danger><IconTrash size={12} /></IconButton>
-                    </div>
-                  </div>
-                )}
-              </div>
+              <FolderRow
+                key={folder.id} folder={folder} access={access}
+                onOpen={() => navigateTo(folder.id)}
+                onToggleJarvis={() => handleToggleJarvis(folder)}
+                onShare={() => setShareTarget(folder)}
+                onRename={() => setRenameTarget({ kind: 'folder', id: folder.id, name: folder.name })}
+                onMove={() => setMoveTarget({ kind: 'folder', id: folder.id })}
+                onDelete={() => handleDeleteFolder(folder)}
+              />
             ))}
-          </div>
-        )}
-
-        {!onSharedTopLevel && !loading && !error && files.length > 0 && (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
             {files.map(file => (
-              <div key={file.id} style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 10, padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 10 }}>
-                <IconFile size={16} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, color: J.text, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{file.filename}</div>
-                  <div style={{ fontSize: 11, color: J.textMuted }}>{formatBytes(file.size_bytes)}</div>
-                </div>
-                <div style={{ display: 'flex', gap: 5, flexShrink: 0 }}>
-                  <IconButton onClick={() => handleDownload(file)} title="Download"><IconDownload size={12} /></IconButton>
-                  {access === 'owner' && (
-                    <>
-                      <IconButton onClick={() => setRenameTarget({ kind: 'file', id: file.id, name: file.filename })} title="Rename"><IconPencil size={12} /></IconButton>
-                      <IconButton onClick={() => setMoveTarget({ kind: 'file', id: file.id })} title="Move"><IconFolder size={12} /></IconButton>
-                      <IconButton onClick={() => handleDeleteFile(file)} title="Delete" danger><IconTrash size={12} /></IconButton>
-                    </>
-                  )}
-                </div>
-              </div>
+              <FileRow
+                key={file.id} file={file} access={access}
+                onDownload={() => handleDownload(file)}
+                onShareLink={() => setShareLinkTarget(file)}
+                onRename={() => setRenameTarget({ kind: 'file', id: file.id, name: file.filename })}
+                onMove={() => setMoveTarget({ kind: 'file', id: file.id })}
+                onDelete={() => handleDeleteFile(file)}
+              />
             ))}
           </div>
         )}
@@ -634,6 +802,10 @@ export function FilesScreen(_props: { onNavigate?: (screen: string) => void }) {
 
       {shareTarget && (
         <ShareFolderDialog folder={shareTarget} onClose={() => setShareTarget(null)} />
+      )}
+
+      {shareLinkTarget && (
+        <ShareLinkDialog file={shareLinkTarget} onClose={() => setShareLinkTarget(null)} />
       )}
     </div>
   );

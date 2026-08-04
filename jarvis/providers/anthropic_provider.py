@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from typing import Iterator
 
-from .base import BaseProvider, ChatChunk, ChatResult, ModelInfo
+from .base import BaseProvider, ChatChunk, ChatResult, ModelInfo, ToolCall
 from ..model_router import Tier, select_model, max_tokens_for
 
 _MODELS = [
@@ -48,12 +48,13 @@ class AnthropicProvider(BaseProvider):
         max_tokens: int,
         tier: Tier,
         stream: bool,
+        tools: list[dict] | None = None,
     ) -> Iterator[ChatChunk] | ChatResult:
         if stream:
             return self._stream(model=model, messages=messages, system_prompt=system_prompt, max_tokens=max_tokens, tier=tier)
-        return self._once(model=model, messages=messages, system_prompt=system_prompt, max_tokens=max_tokens, tier=tier)
+        return self._once(model=model, messages=messages, system_prompt=system_prompt, max_tokens=max_tokens, tier=tier, tools=tools)
 
-    def _build_kwargs(self, *, model: str, messages: list[dict], system_prompt: str, max_tokens: int, tier: Tier) -> dict:
+    def _build_kwargs(self, *, model: str, messages: list[dict], system_prompt: str, max_tokens: int, tier: Tier, tools: list[dict] | None = None) -> dict:
         kwargs: dict = {
             "model": model,
             "max_tokens": max_tokens,
@@ -66,6 +67,8 @@ class AnthropicProvider(BaseProvider):
         elif tier == Tier.MEDIUM:
             kwargs["output_config"] = {"effort": "medium"}
         # Haiku (SIMPLE): no extra params — effort errors on Haiku 4.5
+        if tools:
+            kwargs["tools"] = tools
         return kwargs
 
     def _stream(self, **kwargs) -> Iterator[ChatChunk]:
@@ -81,8 +84,11 @@ class AnthropicProvider(BaseProvider):
         # Non-streaming: remove stream kwarg if present, call create
         resp = client.messages.create(**build_kw)
         text = ""
+        tool_calls = []
         for block in resp.content:
-            if hasattr(block, "text"):
+            if getattr(block, "type", None) == "tool_use":
+                tool_calls.append(ToolCall(id=block.id, name=block.name, arguments=dict(block.input or {})))
+            elif hasattr(block, "text"):
                 text += block.text
         return ChatResult(
             text=text,
@@ -90,4 +96,5 @@ class AnthropicProvider(BaseProvider):
             output_tokens=getattr(resp.usage, "output_tokens", 0),
             model=kwargs["model"],
             provider=self.name,
+            tool_calls=tool_calls,
         )

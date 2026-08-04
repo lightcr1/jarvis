@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../features/auth/AuthProvider";
 import { getStoredPreferences } from "../api/client";
-import { J, useJ, IconMoon, IconSun, IconGrid, applyTheme, applyAccent, applyCompact, ToastContainer } from "../../screens/jarvis-shared";
+import { J, useJ, IconMoon, IconSun, IconGrid, IconJarvisMark, applyTheme, applyAccent, applyCompact, ToastContainer } from "../../screens/jarvis-shared";
 import { AppSwitcher } from "./AppSwitcher";
 import { WorkspaceLauncher, workspaceAppFromPath } from "./WorkspaceLauncher";
 import { AppearancePanel } from "../ui/AppearancePanel";
 import { OverlayDialog } from "../ui/OverlayDialog";
 
 const APP_TITLES: Record<string, string> = {
+  overview: "Overview",
   drive: "Drive",
   communication: "Kommunikation",
   desktop: "Desktop",
@@ -64,9 +65,9 @@ export function WorkspaceShell() {
             <button
               onClick={() => setShowSwitcher(v => !v)}
               aria-label="Switch area"
-              style={{ width: 32, height: 32, borderRadius: 8, background: J.amberDim, border: `1px solid ${J.borderAccent}`, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13, fontWeight: 700, color: J.amber, cursor: "pointer" }}
+              style={{ width: 32, height: 32, borderRadius: 8, background: J.amberDim, border: `1px solid ${J.borderAccent}`, display: "flex", alignItems: "center", justifyContent: "center", color: J.amber, cursor: "pointer" }}
             >
-              J
+              <IconJarvisMark size={17} />
             </button>
             {showSwitcher && <AppSwitcher current="workspace" onClose={() => setShowSwitcher(false)} placement="below" />}
           </div>

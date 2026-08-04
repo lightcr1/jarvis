@@ -26,7 +26,7 @@ DEFAULT_ROLE = "standard_user"
 VALID_ROLES = {"admin", "standard_user", "guest_restricted", "service_system"}
 ROLE_PERMISSIONS = {
     "admin": {"voice.use", "actions.write.execute", "actions.dangerous.execute"},
-    "standard_user": {"voice.use"},
+    "standard_user": {"voice.use", "assistant.chat"},
     "guest_restricted": {"voice.use"},
     "service_system": set(),
 }

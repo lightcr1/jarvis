@@ -897,6 +897,7 @@ class FileApiTests(unittest.TestCase):
         os.environ["JARVIS_USER_LIMITS_STORE_PATH"] = os.path.join(base, "user_limits.json")
         os.environ["JARVIS_ADMIN_SETTINGS_PATH"] = os.path.join(base, "admin_settings.json")
         os.environ["JARVIS_FILES_SHARE_STORE_PATH"] = os.path.join(base, "files_shares.json")
+        os.environ["JARVIS_FILES_LINK_SHARE_STORE_PATH"] = os.path.join(base, "files_link_shares.json")
 
         jarvisappv4.user_store = jarvisappv4.UserStore()
         jarvisappv4.group_store = jarvisappv4.GroupStore()
@@ -908,6 +909,7 @@ class FileApiTests(unittest.TestCase):
         jarvisappv4.admin_settings_store = jarvisappv4.AdminSettingsStore()
         jarvisappv4.file_store = jarvisappv4.FileStore()
         jarvisappv4.folder_share_store = jarvisappv4.FolderShareStore()
+        jarvisappv4.file_link_share_store = jarvisappv4.FileLinkShareStore()
         jarvisappv4.file_service = jarvisappv4.FileService(
             store=jarvisappv4.file_store,
             user_store=jarvisappv4.user_store,
@@ -919,6 +921,7 @@ class FileApiTests(unittest.TestCase):
             admin_settings_store=jarvisappv4.admin_settings_store,
             share_store=jarvisappv4.folder_share_store,
             group_store=jarvisappv4.group_store,
+            link_share_store=jarvisappv4.file_link_share_store,
             audit_log=jarvisappv4.audit_log,
         )
         jarvisappv4._identity_tokens.clear()
@@ -926,6 +929,7 @@ class FileApiTests(unittest.TestCase):
 
     def tearDown(self):
         os.environ.pop("JARVIS_FILES_SHARE_STORE_PATH", None)
+        os.environ.pop("JARVIS_FILES_LINK_SHARE_STORE_PATH", None)
         self.tmpdir.cleanup()
 
     def _create_user_with_permissions(self, admin_token, admin_id, username, permissions):
@@ -1181,6 +1185,100 @@ class FileApiTests(unittest.TestCase):
         resp = self.client.post(
             f"/files/folders/{folder['id']}/shares", headers={"X-Jarvis-Session": outsider_token},
             json={"group_id": group_id, "permission": "read"},
+        )
+        self.assertEqual(404, resp.status_code)
+
+    def _upload_via_api(self, session_token, folder_id, filename="notes.txt", content=b"share me"):
+        headers = {"X-Jarvis-Session": session_token}
+        upload = self.client.post(
+            "/files/upload", headers=headers,
+            files={"file": (filename, content, "text/plain")},
+            data={"folder_id": folder_id},
+        )
+        self.assertEqual(200, upload.status_code)
+        return upload.json()["file"]
+
+    def test_public_share_link_lifecycle_via_api(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        _, session_token = self._create_user_with_permissions(
+            admin["token"], admin["user_id"], "linkuser", ["files.read", "files.write", "files.share"]
+        )
+        headers = {"X-Jarvis-Session": session_token}
+        folder = self.client.post("/files/folders", headers=headers, json={"name": "Reports"}).json()["folder"]
+        file_meta = self._upload_via_api(session_token, folder["id"])
+
+        created = self.client.post(f"/files/{file_meta['id']}/share-links", headers=headers, json={})
+        self.assertEqual(200, created.status_code)
+        share = created.json()["share"]
+        self.assertNotIn("password_hash", share)
+        token = share["token"]
+
+        listed = self.client.get(f"/files/{file_meta['id']}/share-links", headers=headers)
+        self.assertEqual(1, len(listed.json()["shares"]))
+
+        info = self.client.get(f"/public/files/shared/{token}")
+        self.assertEqual(200, info.status_code)
+        self.assertEqual("notes.txt", info.json()["filename"])
+        self.assertFalse(info.json()["requires_password"])
+
+        download = self.client.post(f"/public/files/shared/{token}/download", json={})
+        self.assertEqual(200, download.status_code)
+        self.assertEqual(b"share me", download.content)
+
+        revoked = self.client.delete(f"/files/share-links/{share['id']}", headers=headers)
+        self.assertEqual(200, revoked.status_code)
+        self.assertTrue(revoked.json()["deleted"])
+
+        gone = self.client.get(f"/public/files/shared/{token}")
+        self.assertEqual(404, gone.status_code)
+
+    def test_public_share_link_password_protection_via_api(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        _, session_token = self._create_user_with_permissions(
+            admin["token"], admin["user_id"], "pwuser", ["files.read", "files.write", "files.share"]
+        )
+        headers = {"X-Jarvis-Session": session_token}
+        folder = self.client.post("/files/folders", headers=headers, json={"name": "Secret"}).json()["folder"]
+        file_meta = self._upload_via_api(session_token, folder["id"])
+
+        created = self.client.post(f"/files/{file_meta['id']}/share-links", headers=headers, json={"password": "hunter2"})
+        token = created.json()["share"]["token"]
+
+        info = self.client.get(f"/public/files/shared/{token}")
+        self.assertTrue(info.json()["requires_password"])
+
+        wrong = self.client.post(f"/public/files/shared/{token}/download", json={"password": "nope"})
+        self.assertEqual(403, wrong.status_code)
+
+        right = self.client.post(f"/public/files/shared/{token}/download", json={"password": "hunter2"})
+        self.assertEqual(200, right.status_code)
+
+    def test_share_link_endpoints_require_files_share_permission(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        _, session_token = self._create_user_with_permissions(
+            admin["token"], admin["user_id"], "noshareperm", ["files.read", "files.write"]
+        )
+        headers = {"X-Jarvis-Session": session_token}
+        folder = self.client.post("/files/folders", headers=headers, json={"name": "F"}).json()["folder"]
+        file_meta = self._upload_via_api(session_token, folder["id"])
+
+        resp = self.client.post(f"/files/{file_meta['id']}/share-links", headers=headers, json={})
+        self.assertEqual(403, resp.status_code)
+
+    def test_non_owner_cannot_manage_share_links_via_api(self):
+        admin = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"}).json()
+        admin_token, admin_id = admin["token"], admin["user_id"]
+        owner_id, owner_token = self._create_user_with_permissions(
+            admin_token, admin_id, "link-owner", ["files.read", "files.write", "files.share"]
+        )
+        _, outsider_token = self._create_user_with_permissions(
+            admin_token, admin_id, "link-outsider", ["files.read", "files.write", "files.share"]
+        )
+        folder = self.client.post("/files/folders", headers={"X-Jarvis-Session": owner_token}, json={"name": "Own"}).json()["folder"]
+        file_meta = self._upload_via_api(owner_token, folder["id"])
+
+        resp = self.client.post(
+            f"/files/{file_meta['id']}/share-links", headers={"X-Jarvis-Session": outsider_token}, json={},
         )
         self.assertEqual(404, resp.status_code)
 
