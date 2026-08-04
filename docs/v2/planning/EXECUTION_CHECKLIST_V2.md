@@ -477,4 +477,57 @@ pin down further — see `assistant_domain.py::try_skill()` and
 - Full suite after all 4 phases: **2177 passed, 0 failed** (backend); frontend
   `tsc --noEmit` clean, Vitest 44/44 passed, `npm run build` succeeds and the new
   static assets (`favicon.svg`, regenerated icons) resolve correctly in `dist/`.
+- Committed (two commits: the 4-phase build, then a separate fix for the legacy
+  JarvisEngine routing bug found while verifying it — see below).
+
+### 2026-08-04 — "Real JARVIS" plan round 2: legacy engine retired, more tools,
+### proactive correlation engine, auto-stop-on-silence
+- User asked for a follow-up plan covering what was still missing after round 1
+  (ambient listening, proactive intelligence, real agency breadth, the legacy
+  engine cleanup flagged as a "concrete next step" in the prior session). Four
+  phases scoped from direct code research and built in one pass, in order:
+- **Phase A — retired the legacy JarvisEngine from live chat routing entirely**
+  (`api_auth_chat.py`, both `/chat` and `/chat/stream`), rather than continuing
+  to patch its symptoms. Audit confirmed 9 of its 13 registered skills were pure
+  duplicates of a real `try_skill()`/tool capability, and 6 of those 9 were
+  already non-functional stubs (e.g. its "service restart" skill never restarted
+  anything — always returned "not configured"). Ported the two genuinely unique,
+  real skills (`diagnose jarvis`, `config show`) into `try_skill()` first. The
+  legacy engine itself (`jarvis_engine.py`) is untouched, not deleted — still
+  used by `_suggestions_loop`'s background "learned replies" feature, which now
+  quietly stops receiving new data (accepted tradeoff, confirmed with the user —
+  that feature has no UI/docs exposure and only ever fired when the legacy
+  engine did). Manually re-verified every phrase from the prior session's
+  legacy-engine bug report ("yes", "confirm", "yep", "hello there", etc.) now
+  correctly reaches the LLM instead of a canned reply.
+- **Phase B — ~10 new real tools** on the confirmation-gate infrastructure from
+  the prior session: `list_tasks`/`create_task`/`complete_task`,
+  `list_calendar_events`/`create_calendar_event`, `list_emails`/
+  `create_email_draft`/`send_email_draft`, `proxmox_vm_action`/
+  `proxmox_lxc_action` — all thin wrappers over already-permission-checked
+  service methods, same pattern as `restart_service` from Phase 3. Found and
+  fixed a real test-isolation bug while adding the round-trip test: `jarvisappv4.
+  task_service`/`calendar_service`/`email_service` are constructed once at
+  import time and never rebuilt per-test (unlike `file_service`, which already
+  was) — a test granting permissions via the live admin API was checking them
+  against a stale, empty `permission_store` instance bound at import. Fixed by
+  rebuilding `task_service` in the test fixture, mirroring `file_service`'s
+  existing pattern.
+- **Phase C — proactive correlation engine**: `AlertRulesStore`/`AlertEngine`
+  now support an optional compound `conditions: [...]` + `combinator: and|or`
+  shape alongside the existing single-condition rules (fully backward
+  compatible — every existing rule and the REST/store contract for it is
+  unchanged). Added two new signal sources: `presence_idle_minutes` (needs
+  `UserStore.touch_last_seen`, which existed with zero live callers — now wired
+  into both chat endpoints) and `calendar_upcoming_minutes` (polls the rule
+  owner's next event). Extended the admin `AlertRulesSection` (`SettingsPage.tsx`)
+  with a simple/compound mode toggle and a repeatable clause editor.
+- **Phase D — auto-stop-on-silence after wakeword**: `OrbScreen.tsx` now runs a
+  lightweight `AnalyserNode`-based energy check on the same mic stream `MediaRecorder`
+  already has open, and auto-stops recording after ~1.3s of silence (with a
+  500ms minimum-recording guard) — closing the gap where a wakeword-triggered
+  utterance still needed a manual second tap to send. Purely additive; manual
+  tap-to-stop still works if the noise floor is wrong for a given room/mic.
+- Full suite after all 4 phases: **2206 passed, 0 failed** (backend); frontend
+  `tsc --noEmit` clean, Vitest 48/48 passed, `npm run build` succeeds.
 - Not yet committed — left for the user to review/commit.

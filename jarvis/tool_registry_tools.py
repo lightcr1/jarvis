@@ -94,6 +94,114 @@ def _control_device_handler(ctx: ToolExecutionContext, args: dict) -> dict:
     return {"reply": reply, "data": {"route": "device_action", **result}}
 
 
+def _list_tasks_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    task_service = ctx.deps["task_service"]
+    status = str(args.get("status") or "").strip().lower() or None
+    result = task_service.list_tasks(user_id=ctx.user_id, role=ctx.role, status=status)
+    tasks = result.get("tasks") or []
+    reply = f"You have {len(tasks)} task(s)." if tasks else "Nothing on your task list."
+    return {"reply": reply, "data": {"route": "task_list", "tasks": tasks}}
+
+
+def _create_task_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    task_service = ctx.deps["task_service"]
+    title = str(args.get("title") or "").strip()
+    if not title:
+        return {"reply": "What should the task be called?", "data": {"route": "tool_error", "error": "missing_title"}}
+    payload = {"title": title}
+    if args.get("due_at") is not None:
+        payload["due_at"] = args["due_at"]
+    result = task_service.create_task(payload, user_id=ctx.user_id, role=ctx.role)
+    return {"reply": f'Done. Added "{title}" to your tasks.', "data": {"route": "task_created", "task": result["task"]}}
+
+
+def _complete_task_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    task_service = ctx.deps["task_service"]
+    task_id = str(args.get("task_id") or "").strip()
+    if not task_id:
+        return {"reply": "Which task, sir?", "data": {"route": "tool_error", "error": "missing_task_id"}}
+    result = task_service.complete_task(task_id, user_id=ctx.user_id, role=ctx.role)
+    return {"reply": "Done. Marked as complete.", "data": {"route": "task_completed", "task": result["task"]}}
+
+
+def _list_calendar_events_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    calendar_service = ctx.deps["calendar_service"]
+    result = calendar_service.list_events(user_id=ctx.user_id, role=ctx.role)
+    events = result.get("events") or []
+    reply = f"You have {len(events)} upcoming event(s)." if events else "Nothing on your calendar."
+    return {"reply": reply, "data": {"route": "calendar_event_list", "events": events}}
+
+
+def _create_calendar_event_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    calendar_service = ctx.deps["calendar_service"]
+    title = str(args.get("title") or "").strip()
+    start = args.get("start")
+    end = args.get("end")
+    if not title or start is None or end is None:
+        return {"reply": "I need a title, start, and end time for the event.", "data": {"route": "tool_error", "error": "missing_args"}}
+    result = calendar_service.create_event({"title": title, "start": start, "end": end}, user_id=ctx.user_id, role=ctx.role)
+    if not result.get("created"):
+        names = ", ".join(c["title"] for c in (result.get("conflicts") or [])[:3])
+        return {"reply": f"That overlaps with {names}. Pick another time.", "data": {"route": "calendar_conflict", **result}}
+    return {"reply": f'Done. "{title}" is on your calendar.', "data": {"route": "calendar_event_created", **result}}
+
+
+def _list_emails_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    email_service = ctx.deps["email_service"]
+    unread_only = bool(args.get("unread_only"))
+    result = email_service.list_messages(user_id=ctx.user_id, role=ctx.role, unread_only=unread_only)
+    messages = result.get("messages") or []
+    reply = f"You have {len(messages)} message(s)." if messages else "Inbox is clear."
+    return {"reply": reply, "data": {"route": "email_list", "messages": messages}}
+
+
+def _create_email_draft_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    email_service = ctx.deps["email_service"]
+    to = str(args.get("to") or "").strip()
+    body = str(args.get("body") or "").strip()
+    if not to or not body:
+        return {"reply": "I need a recipient and a message body for the draft.", "data": {"route": "tool_error", "error": "missing_args"}}
+    payload = {"to": to, "body": body, "subject": str(args.get("subject") or "").strip()}
+    result = email_service.create_draft(payload, user_id=ctx.user_id, role=ctx.role)
+    return {"reply": f"Draft ready for {to}, held for your approval.", "data": {"route": "email_draft_created", "draft": result["draft"]}}
+
+
+def _send_email_draft_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    email_service = ctx.deps["email_service"]
+    draft_id = str(args.get("draft_id") or "").strip()
+    if not draft_id:
+        return {"reply": "Which draft, sir?", "data": {"route": "tool_error", "error": "missing_draft_id"}}
+    # Our own WRITE-risk confirmation gate already served as the one confirmation
+    # step for this tool call — pass confirm=True straight through rather than
+    # making the user confirm a second time against send_draft's own internal gate.
+    result = email_service.send_draft(draft_id, user_id=ctx.user_id, role=ctx.role, confirm=True)
+    return {"reply": "Done. Message sent.", "data": {"route": "email_sent", **result}}
+
+
+def _proxmox_vm_action_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    host_id, node, vmid = str(args.get("host_id") or ""), str(args.get("node") or ""), str(args.get("vmid") or "")
+    action = str(args.get("action") or "").strip().lower()
+    if not host_id or not node or not vmid or action not in {"start", "stop", "restart"}:
+        return {"reply": "I need a host, node, VM id, and a start/stop/restart action.", "data": {"route": "tool_error", "error": "missing_args"}}
+    try:
+        result = ctx.deps["proxmox_vm_action"](host_id, node, vmid, action)
+    except HTTPException as exc:
+        return {"reply": f"I can't do that: {exc.detail}", "data": {"route": "tool_error", "error": "proxmox_error", "detail": exc.detail}}
+    return {"reply": f"Done. VM {vmid}: {action}.", "data": {"route": "proxmox_vm_action", "result": result}}
+
+
+def _proxmox_lxc_action_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    host_id, node, vmid = str(args.get("host_id") or ""), str(args.get("node") or ""), str(args.get("vmid") or "")
+    action = str(args.get("action") or "").strip().lower()
+    if not host_id or not node or not vmid or action not in {"start", "stop", "restart"}:
+        return {"reply": "I need a host, node, container id, and a start/stop/restart action.", "data": {"route": "tool_error", "error": "missing_args"}}
+    try:
+        result = ctx.deps["proxmox_lxc_action"](host_id, node, vmid, action)
+    except HTTPException as exc:
+        return {"reply": f"I can't do that: {exc.detail}", "data": {"route": "tool_error", "error": "proxmox_error", "detail": exc.detail}}
+    return {"reply": f"Done. Container {vmid}: {action}.", "data": {"route": "proxmox_lxc_action", "result": result}}
+
+
 def build_pilot_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(Tool(
@@ -188,5 +296,143 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="home_assistant.access",
         risk=RiskLevel.WRITE,
         handler=_control_device_handler,
+    ))
+    registry.register(Tool(
+        name="list_tasks",
+        description="List the user's tasks, optionally filtered by status (open, in_progress, done).",
+        parameters={
+            "type": "object",
+            "properties": {"status": {"type": "string", "description": "Optional filter: 'open', 'in_progress', or 'done'."}},
+        },
+        required_permission="tasks.read",
+        risk=RiskLevel.READ,
+        handler=_list_tasks_handler,
+    ))
+    registry.register(Tool(
+        name="create_task",
+        description="Add a new task to the user's task list.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "The task's title."},
+                "due_at": {"type": "integer", "description": "Optional due date as a Unix epoch timestamp."},
+            },
+            "required": ["title"],
+        },
+        required_permission="tasks.write",
+        risk=RiskLevel.WRITE,
+        handler=_create_task_handler,
+    ))
+    registry.register(Tool(
+        name="complete_task",
+        description="Mark a task as complete, given its task_id (from list_tasks).",
+        parameters={
+            "type": "object",
+            "properties": {"task_id": {"type": "string", "description": "The task's id, from list_tasks."}},
+            "required": ["task_id"],
+        },
+        required_permission="tasks.write",
+        risk=RiskLevel.WRITE,
+        handler=_complete_task_handler,
+    ))
+    registry.register(Tool(
+        name="list_calendar_events",
+        description="List the user's upcoming personal calendar events.",
+        parameters={"type": "object", "properties": {}},
+        required_permission="calendar.read",
+        risk=RiskLevel.READ,
+        handler=_list_calendar_events_handler,
+    ))
+    registry.register(Tool(
+        name="create_calendar_event",
+        description=(
+            "Create a personal calendar event. If it overlaps an existing event, this returns the conflict "
+            "instead of double-booking — relay that to the user and ask them to pick another time."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "The event's title."},
+                "start": {"type": "integer", "description": "Start time as a Unix epoch timestamp."},
+                "end": {"type": "integer", "description": "End time as a Unix epoch timestamp."},
+            },
+            "required": ["title", "start", "end"],
+        },
+        required_permission="calendar.write",
+        risk=RiskLevel.WRITE,
+        handler=_create_calendar_event_handler,
+    ))
+    registry.register(Tool(
+        name="list_emails",
+        description="List the user's recent email messages.",
+        parameters={
+            "type": "object",
+            "properties": {"unread_only": {"type": "boolean", "description": "If true, only list unread messages."}},
+        },
+        required_permission="email.read",
+        risk=RiskLevel.READ,
+        handler=_list_emails_handler,
+    ))
+    registry.register(Tool(
+        name="create_email_draft",
+        description="Create an email draft held for the user's approval. Does not send anything.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "to": {"type": "string", "description": "Recipient email address."},
+                "subject": {"type": "string", "description": "Email subject."},
+                "body": {"type": "string", "description": "Email body text."},
+            },
+            "required": ["to", "body"],
+        },
+        required_permission="email.write",
+        risk=RiskLevel.WRITE,
+        handler=_create_email_draft_handler,
+    ))
+    registry.register(Tool(
+        name="send_email_draft",
+        description="Send a previously created email draft, given its draft_id. This is a real, irreversible send — always confirm with the user before calling it.",
+        parameters={
+            "type": "object",
+            "properties": {"draft_id": {"type": "string", "description": "The draft's id, from create_email_draft."}},
+            "required": ["draft_id"],
+        },
+        required_permission="email.write",
+        risk=RiskLevel.WRITE,
+        handler=_send_email_draft_handler,
+    ))
+    registry.register(Tool(
+        name="proxmox_vm_action",
+        description="Start, stop, or restart a Proxmox VM. This is a real action on real infrastructure — always confirm with the user before calling it.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "host_id": {"type": "string", "description": "The configured Proxmox host id."},
+                "node": {"type": "string", "description": "The Proxmox node name."},
+                "vmid": {"type": "string", "description": "The VM id."},
+                "action": {"type": "string", "description": "One of: start, stop, restart."},
+            },
+            "required": ["host_id", "node", "vmid", "action"],
+        },
+        required_permission="proxmox.manage",
+        risk=RiskLevel.WRITE,
+        handler=_proxmox_vm_action_handler,
+    ))
+    registry.register(Tool(
+        name="proxmox_lxc_action",
+        description="Start, stop, or restart a Proxmox LXC container. This is a real action on real infrastructure — always confirm with the user before calling it.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "host_id": {"type": "string", "description": "The configured Proxmox host id."},
+                "node": {"type": "string", "description": "The Proxmox node name."},
+                "vmid": {"type": "string", "description": "The container id."},
+                "action": {"type": "string", "description": "One of: start, stop, restart."},
+            },
+            "required": ["host_id", "node", "vmid", "action"],
+        },
+        required_permission="proxmox.manage",
+        risk=RiskLevel.WRITE,
+        handler=_proxmox_lxc_action_handler,
     ))
     return registry

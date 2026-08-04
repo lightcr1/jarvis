@@ -1198,6 +1198,38 @@ def try_skill(
             "data": {"display_name": name, "location": loc, "note_count": note_count},
         }
 
+    if t in {"diagnose jarvis", "health check"}:
+        checks = {
+            "stt_provider": os.getenv("STT_PROVIDER") or "local",
+            "tts_configured": bool(os.getenv("PIPER_MODEL")),
+            "proxmox_configured": bool(os.getenv("PROXMOX_API_TOKEN")),
+            "cloud_configured": bool(
+                os.getenv("OPENAI_API_KEY") or os.getenv("GEMINI_API_KEY") or os.getenv("OPENROUTER_API_KEY")
+                or os.getenv("ANTHROPIC_API_KEY") or os.getenv("MISTRAL_API_KEY") or os.getenv("DEEPSEEK_API_KEY")
+            ),
+        }
+        return {
+            "reply": "Diagnostics ready.",
+            "data": {"route": "diagnose_jarvis", "checks": checks, "next_steps": ["Configure missing items via env or config file."]},
+        }
+
+    if t in {"config show", "show config"}:
+        def _mask(value: str, keep: int = 4) -> str:
+            if not value:
+                return ""
+            if len(value) <= keep:
+                return "*" * len(value)
+            return f"{value[:keep]}***"
+        config = {
+            "LLM_PROVIDER": os.getenv("LLM_PROVIDER") or "openai",
+            "OPENAI_API_KEY": _mask(os.getenv("OPENAI_API_KEY") or ""),
+            "GEMINI_API_KEY": _mask(os.getenv("GEMINI_API_KEY") or ""),
+            "PROXMOX_BASE_URL": os.getenv("PROXMOX_BASE_URL") or "",
+            "PROXMOX_API_TOKEN": _mask(os.getenv("PROXMOX_API_TOKEN") or ""),
+            "ALLOWED_TARGETS": os.getenv("ALLOWED_TARGETS") or "",
+        }
+        return {"reply": "Config snapshot.", "data": {"route": "config_show", "config": config}}
+
     if t in {"help", "skills", "skills overview", "what can you do", "was kannst du", "was kannst du tun"}:
         overview = [
             "weather / wetter [in <city>] — current weather + 3-day forecast",

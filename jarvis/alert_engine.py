@@ -99,10 +99,45 @@ def _read_ha_entity_value(ha_store: object | None, entity_id: str, attribute: st
         return None
 
 
+def _read_presence_idle_minutes(user_store: object | None, owner_user_id: str | None) -> float | None:
+    """Minutes since the rule owner was last seen — requires touch_last_seen() to
+    actually be called somewhere live (wired into /chat) for this to be meaningful;
+    a user who has never been "seen" reads as an unbounded (very large) idle time."""
+    if user_store is None or not owner_user_id:
+        return None
+    try:
+        user = user_store.get_user(owner_user_id)
+        if not user:
+            return None
+        last_seen = user.get("last_seen_at")
+        if not last_seen:
+            return 1_000_000.0
+        return round((time.time() - float(last_seen)) / 60.0, 1)
+    except Exception:
+        return None
+
+
+def _read_calendar_upcoming_minutes(calendar_service: object | None, owner_user_id: str | None) -> float | None:
+    """Minutes until the rule owner's next calendar event — a large sentinel when
+    nothing is upcoming so `below` conditions behave sensibly (never spuriously true)."""
+    if calendar_service is None or not owner_user_id:
+        return None
+    try:
+        now = int(time.time())
+        result = calendar_service.list_events(user_id=owner_user_id, role="standard_user", start=now)
+        events = result.get("events") or []
+        if not events:
+            return 10_000.0
+        soonest = min(int(e["start"]) for e in events)
+        return round(max(0, soonest - now) / 60.0, 1)
+    except Exception:
+        return None
+
+
 SignalSource = Callable[[dict], "float | str | None"]
 
 
-def _default_signal_sources(ha_store: object | None) -> dict[str, SignalSource]:
+def _default_signal_sources(ha_store: object | None, user_store: object | None = None, calendar_service: object | None = None) -> dict[str, SignalSource]:
     """Built-in metric readers, keyed by the `metric` field used in rule dicts.
 
     Each source is a `Callable[[dict], float | str | None]` taking the full rule
@@ -119,6 +154,8 @@ def _default_signal_sources(ha_store: object | None) -> dict[str, SignalSource]:
             if rule.get("ha_entity_id")
             else None
         ),
+        "presence_idle_minutes": lambda rule: _read_presence_idle_minutes(user_store, rule.get("owner_user_id")),
+        "calendar_upcoming_minutes": lambda rule: _read_calendar_upcoming_minutes(calendar_service, rule.get("owner_user_id")),
     }
 
 
@@ -179,6 +216,8 @@ class AlertEngine:
         broadcast_fn: Callable | None = None,
         broadcast_to_user_fn: Callable | None = None,
         extra_sources: dict[str, SignalSource] | None = None,
+        user_store: object | None = None,
+        calendar_service: object | None = None,
     ) -> None:
         self._rules_store = rules_store
         self._audit = audit_admin_event
@@ -189,7 +228,7 @@ class AlertEngine:
         self._threshold_crossed_at: dict[str, float] = {}
         self._last_fired_at: dict[str, float] = {}
         self._history: deque[dict] = deque(maxlen=_MAX_HISTORY)
-        self._sources: dict[str, SignalSource] = _default_signal_sources(ha_store)
+        self._sources: dict[str, SignalSource] = _default_signal_sources(ha_store, user_store, calendar_service)
         if extra_sources:
             self._sources.update(extra_sources)
 
@@ -253,15 +292,33 @@ class AlertEngine:
             logger.warning("Signal source %r raised: %s", rule.get("metric"), exc)
             return None
 
+    def _evaluate_clauses(self, rule: dict, clauses: list[dict]) -> list[tuple[bool, float | str | None]]:
+        results = []
+        for clause in clauses:
+            # ha_entity_id/ha_attribute fall back to the rule's own top-level fields
+            # so a compound rule doesn't have to repeat them on every HA-metric clause.
+            effective = {**rule, **clause}
+            value = self._read_metric(effective)
+            met = value is not None and _evaluate_condition(value, clause.get("condition", "above"), clause.get("threshold", 0))
+            results.append((met, value))
+        return results
+
     async def _evaluate_rule(self, rule: dict, now: float) -> None:
         rule_id = rule["id"]
-        value = await asyncio.get_event_loop().run_in_executor(None, self._read_metric, rule)
-        if value is None:
-            if rule.get("metric") == "ha_entity":
-                logger.debug("Alert rule %r: HA entity not found, skipping.", rule_id)
-            self._threshold_crossed_at.pop(rule_id, None)
-            return
-        condition_met = _evaluate_condition(value, rule.get("condition", "above"), rule.get("threshold", 0))
+        conditions = rule.get("conditions") or []
+        if conditions:
+            results = await asyncio.get_event_loop().run_in_executor(None, self._evaluate_clauses, rule, conditions)
+            combinator = rule.get("combinator", "and")
+            condition_met = all(r[0] for r in results) if combinator != "or" else any(r[0] for r in results)
+            value: float | str = "; ".join(f"{c.get('metric')} {c.get('condition')} {c.get('threshold')} (now {r[1]})" for c, r in zip(conditions, results))
+        else:
+            value = await asyncio.get_event_loop().run_in_executor(None, self._read_metric, rule)
+            if value is None:
+                if rule.get("metric") == "ha_entity":
+                    logger.debug("Alert rule %r: HA entity not found, skipping.", rule_id)
+                self._threshold_crossed_at.pop(rule_id, None)
+                return
+            condition_met = _evaluate_condition(value, rule.get("condition", "above"), rule.get("threshold", 0))
         if not condition_met:
             self._threshold_crossed_at.pop(rule_id, None)
             return

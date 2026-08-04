@@ -532,6 +532,7 @@ class SSEShapeWithRouterTest(unittest.TestCase):
                 list_users=lambda: [],
                 find_by_username=lambda u: None,
                 get_user=lambda u: None,
+                touch_last_seen=lambda u: None,
             ),
             admin_password_store=SimpleNamespace(verify_password=lambda u, p: False, set_password=lambda u, p: None),
             audit_log=SimpleNamespace(write=lambda e, d: None),

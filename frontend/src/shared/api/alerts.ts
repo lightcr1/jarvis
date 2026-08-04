@@ -10,12 +10,22 @@ export type JarvisAlert = {
   code: string;
 };
 
+export type AlertMetric = "cpu" | "ram" | "disk" | "ha_health" | "ha_entity" | "presence_idle_minutes" | "calendar_upcoming_minutes";
+
+export type AlertConditionClause = {
+  metric: AlertMetric;
+  condition: "above" | "below" | "equals" | "contains";
+  threshold: number | string;
+  ha_entity_id?: string | null;
+  ha_attribute?: string | null;
+};
+
 export type AlertRule = {
   id: string;
   owner_user_id?: string | null;
   name: string;
   enabled: boolean;
-  metric: "cpu" | "ram" | "disk" | "ha_health" | "ha_entity";
+  metric: AlertMetric;
   condition: "above" | "below" | "equals" | "contains";
   threshold: number | string;
   duration_seconds: number;
@@ -24,6 +34,8 @@ export type AlertRule = {
   ha_entity_id: string | null;
   ha_attribute: string | null;
   message_template: string;
+  conditions?: AlertConditionClause[] | null;
+  combinator?: "and" | "or";
 };
 
 export type AlertRuleCreate = Omit<AlertRule, "id" | "owner_user_id">;

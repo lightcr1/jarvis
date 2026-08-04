@@ -3,6 +3,8 @@ import { AdminSettings, AdminSettingsPayload, fetchAdminSettings, updateAdminSet
 import {
   AlertRule,
   AlertRuleCreate,
+  AlertConditionClause,
+  AlertMetric,
   fetchAlertRules,
   createAlertRule,
   updateAlertRule,
@@ -44,6 +46,57 @@ const DEFAULT_FORM: RuleFormState = {
   message_template: "Alert: {metric} is {value} (threshold: {threshold})",
 };
 
+const METRIC_OPTIONS: { value: AlertMetric; label: string }[] = [
+  { value: "cpu", label: "CPU" },
+  { value: "ram", label: "RAM" },
+  { value: "disk", label: "Disk" },
+  { value: "ha_health", label: "Home Assistant health" },
+  { value: "ha_entity", label: "Home Assistant entity" },
+  { value: "presence_idle_minutes", label: "Minutes since user was last active" },
+  { value: "calendar_upcoming_minutes", label: "Minutes until next calendar event" },
+];
+
+const EMPTY_CLAUSE: AlertConditionClause = { metric: "cpu", condition: "above", threshold: 80, ha_entity_id: null, ha_attribute: null };
+
+function ClauseRow({ clause, onChange, onRemove, canRemove, inp, J }: {
+  clause: AlertConditionClause;
+  onChange: (patch: Partial<AlertConditionClause>) => void;
+  onRemove: () => void;
+  canRemove: boolean;
+  inp: React.CSSProperties;
+  J: ReturnType<typeof useJ>;
+}) {
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 6, padding: "10px", borderRadius: 5, background: J.bg3, border: `1px solid ${J.border}` }}>
+      <div style={{ display: "flex", gap: 6 }}>
+        <select style={{ ...inp, flex: 2 }} value={clause.metric} onChange={e => onChange({ metric: e.target.value as AlertMetric })}>
+          {METRIC_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+        </select>
+        <select style={{ ...inp, flex: 1 }} value={clause.condition} onChange={e => onChange({ condition: e.target.value as AlertConditionClause["condition"] })}>
+          <option value="above">above</option>
+          <option value="below">below</option>
+          <option value="equals">equals</option>
+          <option value="contains">contains</option>
+        </select>
+        <input style={{ ...inp, flex: 1 }} value={String(clause.threshold)} onChange={e => {
+          const v = parseFloat(e.target.value);
+          onChange({ threshold: isNaN(v) ? e.target.value : v });
+        }} placeholder="threshold" />
+        <button
+          onClick={onRemove} disabled={!canRemove} title="Remove clause"
+          style={{ padding: "0 10px", borderRadius: 4, cursor: canRemove ? "pointer" : "default", background: "transparent", color: canRemove ? J.error : J.textMuted, border: `1px solid ${J.border}`, opacity: canRemove ? 1 : 0.4 }}
+        >✕</button>
+      </div>
+      {clause.metric === "ha_entity" && (
+        <div style={{ display: "flex", gap: 6 }}>
+          <input style={{ ...inp, flex: 1 }} value={clause.ha_entity_id ?? ""} onChange={e => onChange({ ha_entity_id: e.target.value || null })} placeholder="HA entity id, e.g. switch.living_room" />
+          <input style={{ ...inp, flex: 1 }} value={clause.ha_attribute ?? ""} onChange={e => onChange({ ha_attribute: e.target.value || null })} placeholder="HA attribute (state default)" />
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AlertRuleForm({
   initial,
   onSave,
@@ -57,6 +110,12 @@ function AlertRuleForm({
 }) {
   const J = useJ();
   const [form, setForm] = useState<RuleFormState>(initial);
+  const hasInitialConditions = !!(initial.conditions && initial.conditions.length > 0);
+  const [mode, setMode] = useState<"simple" | "compound">(hasInitialConditions ? "compound" : "simple");
+  const [clauses, setClauses] = useState<AlertConditionClause[]>(
+    hasInitialConditions ? initial.conditions! : [{ ...EMPTY_CLAUSE }]
+  );
+  const [combinator, setCombinator] = useState<"and" | "or">(initial.combinator ?? "and");
 
   const inp: React.CSSProperties = {
     width: "100%", boxSizing: "border-box", padding: "5px 9px", fontSize: 12,
@@ -65,45 +124,101 @@ function AlertRuleForm({
   };
 
   const set = (patch: Partial<RuleFormState>) => setForm(f => ({ ...f, ...patch }));
+  const updateClause = (idx: number, patch: Partial<AlertConditionClause>) =>
+    setClauses(cs => cs.map((c, i) => (i === idx ? { ...c, ...patch } : c)));
+  const addClause = () => setClauses(cs => [...cs, { ...EMPTY_CLAUSE }]);
+  const removeClause = (idx: number) => setClauses(cs => cs.filter((_, i) => i !== idx));
+
+  const handleSaveClick = () => {
+    if (mode === "compound") {
+      onSave({ ...form, conditions: clauses, combinator });
+    } else {
+      // Explicit empty array (not undefined) so editing a previously-compound rule
+      // back to simple actually clears its conditions server-side, not just skips them.
+      onSave({ ...form, conditions: [] });
+    }
+  };
 
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
       <Field label="Name">
         <input style={inp} value={form.name} onChange={e => set({ name: e.target.value })} placeholder="Rule name" />
       </Field>
-      <Field label="Metric">
-        <select style={inp} value={form.metric} onChange={e => set({ metric: e.target.value as AlertRule["metric"] })}>
-          <option value="cpu">CPU</option>
-          <option value="ram">RAM</option>
-          <option value="disk">Disk</option>
-          <option value="ha_health">Home Assistant health</option>
-          <option value="ha_entity">Home Assistant entity</option>
-        </select>
+
+      <Field label="Condition type">
+        <div style={{ display: "flex", gap: 6 }}>
+          <button onClick={() => setMode("simple")} style={{
+            flex: 1, padding: "6px 0", fontSize: 12, borderRadius: 4, cursor: "pointer",
+            background: mode === "simple" ? J.amberDim : "transparent", color: mode === "simple" ? J.amber : J.textSec,
+            border: `1px solid ${mode === "simple" ? J.borderAccent : J.border}`,
+          }}>Single signal</button>
+          <button onClick={() => setMode("compound")} style={{
+            flex: 1, padding: "6px 0", fontSize: 12, borderRadius: 4, cursor: "pointer",
+            background: mode === "compound" ? J.amberDim : "transparent", color: mode === "compound" ? J.amber : J.textSec,
+            border: `1px solid ${mode === "compound" ? J.borderAccent : J.border}`,
+          }}>Multiple signals (AND/OR)</button>
+        </div>
       </Field>
-      {form.metric === "ha_entity" && (
+
+      {mode === "compound" ? (
         <>
-          <Field label="HA entity ID">
-            <input style={inp} value={form.ha_entity_id ?? ""} onChange={e => set({ ha_entity_id: e.target.value || null })} placeholder="e.g. switch.living_room" />
+          <Field label="Combine with">
+            <select style={inp} value={combinator} onChange={e => setCombinator(e.target.value as "and" | "or")}>
+              <option value="and">AND — all signals must be true</option>
+              <option value="or">OR — any signal is enough</option>
+            </select>
           </Field>
-          <Field label="HA attribute">
-            <input style={inp} value={form.ha_attribute ?? ""} onChange={e => set({ ha_attribute: e.target.value || null })} placeholder="state (default)" />
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {clauses.map((clause, idx) => (
+              <ClauseRow
+                key={idx}
+                clause={clause}
+                onChange={patch => updateClause(idx, patch)}
+                onRemove={() => removeClause(idx)}
+                canRemove={clauses.length > 1}
+                inp={inp}
+                J={J}
+              />
+            ))}
+          </div>
+          <button onClick={addClause} style={{
+            alignSelf: "flex-start", padding: "5px 12px", fontSize: 11, borderRadius: 4, cursor: "pointer",
+            background: "transparent", color: J.amber, border: `1px solid ${J.borderAccent}`,
+          }}>+ Add signal</button>
+        </>
+      ) : (
+        <>
+          <Field label="Metric">
+            <select style={inp} value={form.metric} onChange={e => set({ metric: e.target.value as AlertRule["metric"] })}>
+              {METRIC_OPTIONS.map(m => <option key={m.value} value={m.value}>{m.label}</option>)}
+            </select>
+          </Field>
+          {form.metric === "ha_entity" && (
+            <>
+              <Field label="HA entity ID">
+                <input style={inp} value={form.ha_entity_id ?? ""} onChange={e => set({ ha_entity_id: e.target.value || null })} placeholder="e.g. switch.living_room" />
+              </Field>
+              <Field label="HA attribute">
+                <input style={inp} value={form.ha_attribute ?? ""} onChange={e => set({ ha_attribute: e.target.value || null })} placeholder="state (default)" />
+              </Field>
+            </>
+          )}
+          <Field label="Condition">
+            <select style={inp} value={form.condition} onChange={e => set({ condition: e.target.value as AlertRule["condition"] })}>
+              <option value="above">above</option>
+              <option value="below">below</option>
+              <option value="equals">equals</option>
+              <option value="contains">contains</option>
+            </select>
+          </Field>
+          <Field label="Threshold">
+            <input style={inp} value={String(form.threshold)} onChange={e => {
+              const v = parseFloat(e.target.value);
+              set({ threshold: isNaN(v) ? e.target.value : v });
+            }} placeholder="e.g. 90" />
           </Field>
         </>
       )}
-      <Field label="Condition">
-        <select style={inp} value={form.condition} onChange={e => set({ condition: e.target.value as AlertRule["condition"] })}>
-          <option value="above">above</option>
-          <option value="below">below</option>
-          <option value="equals">equals</option>
-          <option value="contains">contains</option>
-        </select>
-      </Field>
-      <Field label="Threshold">
-        <input style={inp} value={String(form.threshold)} onChange={e => {
-          const v = parseFloat(e.target.value);
-          set({ threshold: isNaN(v) ? e.target.value : v });
-        }} placeholder="e.g. 90" />
-      </Field>
       <Field label="Duration (seconds)">
         <input type="number" style={inp} min={0} value={form.duration_seconds}
           onChange={e => set({ duration_seconds: Math.max(0, parseInt(e.target.value) || 0) })} />
@@ -135,7 +250,7 @@ function AlertRuleForm({
           padding: "6px 14px", fontSize: 12, borderRadius: 4, cursor: "pointer",
           background: "transparent", color: J.textSec, border: `1px solid ${J.border}`,
         }}>Cancel</button>
-        <button onClick={() => onSave(form)} disabled={saving || !form.name.trim()} style={{
+        <button onClick={handleSaveClick} disabled={saving || !form.name.trim()} style={{
           padding: "6px 16px", fontSize: 12, fontWeight: 600, borderRadius: 4, cursor: "pointer",
           background: J.amber, color: J.bg0, border: "none", opacity: saving ? 0.6 : 1,
         }}>{saving ? "Saving…" : "Save rule"}</button>
@@ -272,7 +387,16 @@ function AlertRulesSection() {
               <div style={{ flex: 1, minWidth: 120 }}>
                 <div style={{ fontSize: 13, fontWeight: 500, color: rule.enabled ? J.text : J.textMuted }}>{rule.name}</div>
                 <div style={{ fontSize: 11, color: J.textSec, marginTop: 2 }}>
-                  {rule.metric.toUpperCase()} {rule.condition} {String(rule.threshold)}
+                  {rule.conditions && rule.conditions.length > 0 ? (
+                    rule.conditions.map((c, i) => (
+                      <span key={i}>
+                        {i > 0 ? ` ${(rule.combinator ?? "and").toUpperCase()} ` : ""}
+                        {c.metric} {c.condition} {String(c.threshold)}
+                      </span>
+                    ))
+                  ) : (
+                    <>{rule.metric.toUpperCase()} {rule.condition} {String(rule.threshold)}</>
+                  )}
                   {rule.duration_seconds > 0 ? ` for ${rule.duration_seconds}s` : ""}
                   {" — "}<span style={{ color: SEVERITY_COLOR(J, rule.severity) }}>{rule.severity}</span>
                 </div>

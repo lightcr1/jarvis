@@ -176,10 +176,21 @@ class AdminSettingsIn(BaseModel):
     provider: AdminProviderSettingsIn = Field(default_factory=AdminProviderSettingsIn)
 
 
+_ALERT_METRIC_PATTERN = "^(cpu|ram|disk|ha_health|ha_entity|presence_idle_minutes|calendar_upcoming_minutes)$"
+
+
+class AlertConditionClause(BaseModel):
+    metric: str = Field(default="cpu", pattern=_ALERT_METRIC_PATTERN)
+    condition: str = Field(default="above", pattern="^(above|below|equals|contains)$")
+    threshold: float | str = 80.0
+    ha_entity_id: str | None = None
+    ha_attribute: str | None = None
+
+
 class AlertRuleCreate(BaseModel):
     name: str = Field(min_length=1)
     enabled: bool = True
-    metric: str = Field(default="cpu", pattern="^(cpu|ram|disk|ha_health|ha_entity)$")
+    metric: str = Field(default="cpu", pattern=_ALERT_METRIC_PATTERN)
     condition: str = Field(default="above", pattern="^(above|below|equals|contains)$")
     threshold: float | str = 80.0
     duration_seconds: int = Field(default=0, ge=0)
@@ -188,6 +199,8 @@ class AlertRuleCreate(BaseModel):
     ha_entity_id: str | None = None
     ha_attribute: str | None = None
     message_template: str = "Alert: {metric} is {value} (threshold: {threshold})"
+    conditions: list[AlertConditionClause] | None = None
+    combinator: str = Field(default="and", pattern="^(and|or)$")
 
 
 class AlertRuleUpdate(BaseModel):
@@ -202,6 +215,8 @@ class AlertRuleUpdate(BaseModel):
     ha_entity_id: str | None = None
     ha_attribute: str | None = None
     message_template: str | None = None
+    conditions: list[AlertConditionClause] | None = None
+    combinator: str | None = None
 
 
 class PlanCreate(BaseModel):

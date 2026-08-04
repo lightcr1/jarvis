@@ -552,6 +552,8 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
             token = None
 
         current("chat_history").append_message(session_id, "user", text, owner_key=owner_key, owner_user_id=effective_user_id)
+        if effective_user_id:
+            current("user_store").touch_last_seen(effective_user_id)
         granted_permissions = sorted(resolve_effective_permissions(role, effective_user_id, current("membership_store"), current("permission_store")))
         status_token = current("status_hub").begin("processing", source=source, mode=mode or "chat")
 
@@ -572,6 +574,11 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                             "home_assistant_service": current("home_assistant_service"),
                             "run_cmd": current("run_cmd"),
                             "ensure_service_allowed": current("ensure_service_allowed"),
+                            "task_service": current("task_service"),
+                            "calendar_service": current("calendar_service"),
+                            "email_service": current("email_service"),
+                            "proxmox_vm_action": current("proxmox_vm_action"),
+                            "proxmox_lxc_action": current("proxmox_lxc_action"),
                         },
                     )
                     tool_result = execute_tool(
@@ -652,21 +659,6 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                     current("chat_history").append_message(session_id, "jarvis", reply, owner_key=owner_key, owner_user_id=effective_user_id)
                     return {"reply": reply, "data": data, "session_id": session_id}
 
-            response = current("engine").process(text, token, role=role, source=source, granted_permissions=granted_permissions)
-            summary = response.get("summary", "") if isinstance(response, dict) else getattr(response, "summary", "")
-            data = response.get("data", {}) if isinstance(response, dict) else (getattr(response, "data", {}) or {})
-
-            if data.get("error") == "permission_denied":
-                current("audit_log").write("permission_denied", {"role": role, "source": source, "text": text, "data": data})
-            if data.get("error") == "emergency_stop":
-                current("audit_log").write("emergency_stop_blocked", {"role": role, "source": source, "text": text, "path": "engine"})
-            if data.get("confirm") in {"YES", "YES, proceed"}:
-                current("audit_log").write("dangerous_action_confirmation_requested", {"role": role, "source": source, "text": text, "risk": data.get("risk")})
-
-            if data.get("route") != "cloud":
-                current("chat_history").append_message(session_id, "jarvis", summary, owner_key=owner_key, owner_user_id=effective_user_id)
-                return {"reply": summary, "data": data, "session_id": session_id}
-
             # ── AI Router path (JARVIS_USE_AI_ROUTER=1) ──────────────────────
             if _ai_router_enabled:
                 router_obj = _make_ai_router()
@@ -713,6 +705,11 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                             "home_assistant_service": current("home_assistant_service"),
                             "run_cmd": current("run_cmd"),
                             "ensure_service_allowed": current("ensure_service_allowed"),
+                            "task_service": current("task_service"),
+                            "calendar_service": current("calendar_service"),
+                            "email_service": current("email_service"),
+                            "proxmox_vm_action": current("proxmox_vm_action"),
+                            "proxmox_lxc_action": current("proxmox_lxc_action"),
                         },
                     )
                     tool_result = run_chat_with_tools(
@@ -810,6 +807,8 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
             token = None
 
         current("chat_history").append_message(session_id, "user", text, owner_key=owner_key, owner_user_id=effective_user_id)
+        if effective_user_id:
+            current("user_store").touch_last_seen(effective_user_id)
         granted_permissions = sorted(resolve_effective_permissions(role, effective_user_id, current("membership_store"), current("permission_store")))
         status_token = current("status_hub").begin("processing", source=source, mode=mode or "chat")
 
@@ -830,6 +829,11 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                             "home_assistant_service": current("home_assistant_service"),
                             "run_cmd": current("run_cmd"),
                             "ensure_service_allowed": current("ensure_service_allowed"),
+                            "task_service": current("task_service"),
+                            "calendar_service": current("calendar_service"),
+                            "email_service": current("email_service"),
+                            "proxmox_vm_action": current("proxmox_vm_action"),
+                            "proxmox_lxc_action": current("proxmox_lxc_action"),
                         },
                     )
                     tool_result = execute_tool(
@@ -921,23 +925,6 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                         yield f"data: {_json.dumps({'type': 'done', 'reply': r, 'session_id': sid, 'data': d})}\n\n"
                     return StreamingResponse(_rag(), media_type="text/event-stream")
 
-            response = current("engine").process(text, token, role=role, source=source, granted_permissions=granted_permissions)
-            summary = response.get("summary", "") if isinstance(response, dict) else getattr(response, "summary", "")
-            data = response.get("data", {}) if isinstance(response, dict) else (getattr(response, "data", {}) or {})
-
-            if data.get("error") == "permission_denied":
-                current("audit_log").write("permission_denied", {"role": role, "source": source, "text": text, "data": data})
-            if data.get("error") == "emergency_stop":
-                current("audit_log").write("emergency_stop_blocked", {"role": role, "source": source, "text": text, "path": "engine"})
-            if data.get("confirm") in {"YES", "YES, proceed"}:
-                current("audit_log").write("dangerous_action_confirmation_requested", {"role": role, "source": source, "text": text, "risk": data.get("risk")})
-
-            if data.get("route") != "cloud":
-                current("chat_history").append_message(session_id, "jarvis", summary, owner_key=owner_key, owner_user_id=effective_user_id)
-                def _engine(r=summary, d=data, sid=session_id):
-                    yield f"data: {_json.dumps({'type': 'done', 'reply': r, 'session_id': sid, 'data': d})}\n\n"
-                return StreamingResponse(_engine(), media_type="text/event-stream")
-
             # ── AI Router streaming path (JARVIS_USE_AI_ROUTER=1) ────────────
             if _ai_router_enabled:
                 router_obj = _make_ai_router()
@@ -998,6 +985,11 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                                 "home_assistant_service": current("home_assistant_service"),
                                 "run_cmd": current("run_cmd"),
                                 "ensure_service_allowed": current("ensure_service_allowed"),
+                                "task_service": current("task_service"),
+                                "calendar_service": current("calendar_service"),
+                                "email_service": current("email_service"),
+                                "proxmox_vm_action": current("proxmox_vm_action"),
+                                "proxmox_lxc_action": current("proxmox_lxc_action"),
                             },
                         )
                         tool_result = run_chat_with_tools(

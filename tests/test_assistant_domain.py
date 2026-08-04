@@ -1919,5 +1919,36 @@ class CaseConvertSkillTests(unittest.TestCase):
         self.assertEqual("foo", result["data"]["result"])
 
 
+class DiagnosticsSkillTests(unittest.TestCase):
+    """Ported from the legacy JarvisEngine's build_registry() when it was
+    retired from live chat routing — these two skills were the only genuinely
+    unique (non-duplicated, non-stub) capabilities it had."""
+
+    def test_diagnose_jarvis(self):
+        result = try_skill("diagnose jarvis", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("diagnose_jarvis", result["data"]["route"])
+        self.assertIn("stt_provider", result["data"]["checks"])
+        self.assertIn("cloud_configured", result["data"]["checks"])
+
+    def test_health_check_alias(self):
+        result = try_skill("health check", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("diagnose_jarvis", result["data"]["route"])
+
+    def test_config_show(self):
+        with patch.dict("os.environ", {"OPENAI_API_KEY": "sk-1234567890"}, clear=False):
+            result = try_skill("config show", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("config_show", result["data"]["route"])
+        self.assertEqual("sk-1***", result["data"]["config"]["OPENAI_API_KEY"])
+        self.assertNotIn("1234567890", str(result["data"]["config"]))
+
+    def test_show_config_alias(self):
+        result = try_skill("show config", **_deps())
+        self.assertIsNotNone(result)
+        self.assertEqual("config_show", result["data"]["route"])
+
+
 if __name__ == "__main__":
     unittest.main()

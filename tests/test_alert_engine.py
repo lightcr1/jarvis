@@ -418,6 +418,158 @@ async def test_engine_skips_ha_entity_when_not_found():
 
 
 # ---------------------------------------------------------------------------
+# Compound (multi-signal) rule tests
+# ---------------------------------------------------------------------------
+
+def _compound_setup(combinator: str):
+    import os, tempfile
+    tmp = tempfile.mktemp(suffix=".json")
+    os.environ["JARVIS_ALERT_RULES_PATH"] = tmp
+    store = AlertRulesStore()
+    store.data["rules"] = []
+    store.create_rule({
+        "name": "Compound test",
+        "conditions": [
+            {"metric": "cpu", "condition": "above", "threshold": 80.0},
+            {"metric": "ram", "condition": "above", "threshold": 70.0},
+        ],
+        "combinator": combinator,
+        "duration_seconds": 0,
+        "severity": "warning",
+        "cooldown_seconds": 60,
+    })
+    fired: list[dict] = []
+
+    async def fake_broadcast(event):
+        fired.append(event)
+
+    engine = AlertEngine(rules_store=store, audit_admin_event=_FakeAudit(), broadcast_fn=fake_broadcast)
+    return tmp, store, engine, fired
+
+
+@pytest.mark.asyncio
+async def test_compound_rule_stores_clauses_and_combinator():
+    import os
+    tmp, store, engine, fired = _compound_setup("and")
+    try:
+        rule = store.list_rules()[0]
+        assert rule["combinator"] == "and"
+        assert len(rule["conditions"]) == 2
+        assert rule["conditions"][0]["metric"] == "cpu"
+        # Single-condition fields mirror clause 0 for any legacy consumer.
+        assert rule["metric"] == "cpu"
+        assert rule["threshold"] == 80.0
+    finally:
+        os.environ.pop("JARVIS_ALERT_RULES_PATH", None)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_compound_and_requires_all_clauses_true():
+    import os
+    tmp, store, engine, fired = _compound_setup("and")
+    try:
+        rule = store.list_rules()[0]
+        now = time.time()
+
+        engine._evaluate_clauses = lambda r, clauses: [(True, 90.0), (False, 50.0)]
+        await engine._evaluate_rule(rule, now)
+        assert len(fired) == 0
+
+        engine._evaluate_clauses = lambda r, clauses: [(True, 90.0), (True, 80.0)]
+        await engine._evaluate_rule(rule, now + 1)
+        assert len(fired) == 1
+    finally:
+        os.environ.pop("JARVIS_ALERT_RULES_PATH", None)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_compound_or_fires_when_any_clause_true():
+    import os
+    tmp, store, engine, fired = _compound_setup("or")
+    try:
+        rule = store.list_rules()[0]
+        now = time.time()
+
+        engine._evaluate_clauses = lambda r, clauses: [(True, 90.0), (False, 50.0)]
+        await engine._evaluate_rule(rule, now)
+        assert len(fired) == 1
+    finally:
+        os.environ.pop("JARVIS_ALERT_RULES_PATH", None)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+@pytest.mark.asyncio
+async def test_compound_or_does_not_fire_when_all_clauses_false():
+    import os
+    tmp, store, engine, fired = _compound_setup("or")
+    try:
+        rule = store.list_rules()[0]
+        now = time.time()
+
+        engine._evaluate_clauses = lambda r, clauses: [(False, 10.0), (False, 50.0)]
+        await engine._evaluate_rule(rule, now)
+        assert len(fired) == 0
+    finally:
+        os.environ.pop("JARVIS_ALERT_RULES_PATH", None)
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+
+
+def test_presence_idle_minutes_signal_source():
+    from jarvis.alert_engine import _read_presence_idle_minutes
+
+    class _FakeUserStore:
+        def get_user(self, user_id):
+            return {"id": user_id, "last_seen_at": time.time() - 900} if user_id == "u1" else None
+
+    assert _read_presence_idle_minutes(None, "u1") is None
+    assert _read_presence_idle_minutes(_FakeUserStore(), None) is None
+    assert _read_presence_idle_minutes(_FakeUserStore(), "missing") is None
+    minutes = _read_presence_idle_minutes(_FakeUserStore(), "u1")
+    assert 14.5 < minutes < 15.5
+
+    class _NeverSeenStore:
+        def get_user(self, user_id):
+            return {"id": user_id}
+
+    assert _read_presence_idle_minutes(_NeverSeenStore(), "u1") == 1_000_000.0
+
+
+def test_calendar_upcoming_minutes_signal_source():
+    from jarvis.alert_engine import _read_calendar_upcoming_minutes
+
+    now = int(time.time())
+
+    class _FakeCalendarService:
+        def __init__(self, events):
+            self._events = events
+
+        def list_events(self, *, user_id, role, start=None):
+            return {"events": self._events}
+
+    assert _read_calendar_upcoming_minutes(None, "u1") is None
+    assert _read_calendar_upcoming_minutes(_FakeCalendarService([]), None) is None
+    assert _read_calendar_upcoming_minutes(_FakeCalendarService([]), "u1") == 10_000.0
+
+    soon = _FakeCalendarService([{"id": "e1", "start": now + 600, "end": now + 1200}])
+    minutes = _read_calendar_upcoming_minutes(soon, "u1")
+    assert 9.5 < minutes < 10.5
+
+
+# ---------------------------------------------------------------------------
 # REST endpoint tests
 # ---------------------------------------------------------------------------
 
@@ -473,6 +625,32 @@ class TestAlertsRestEndpoints(unittest.TestCase):
         data = resp.json()
         assert data["rule"]["name"] == "My CPU Rule"
         assert data["rule"]["id"].startswith("rule-")
+
+    def test_create_compound_rule_via_rest(self):
+        resp = self._client.post(
+            "/admin/alerts/rules",
+            json={
+                "name": "Meeting soon and idle",
+                "conditions": [
+                    {"metric": "calendar_upcoming_minutes", "condition": "below", "threshold": 10},
+                    {"metric": "presence_idle_minutes", "condition": "above", "threshold": 15},
+                ],
+                "combinator": "and",
+                "severity": "info",
+                "cooldown_seconds": 300,
+            },
+            headers=_ADMIN_HDR,
+        )
+        assert resp.status_code == 201
+        rule = resp.json()["rule"]
+        assert rule["combinator"] == "and"
+        assert len(rule["conditions"]) == 2
+        assert rule["conditions"][0]["metric"] == "calendar_upcoming_minutes"
+        # Fetching the rule back (GET-side of the CRUD loop) preserves the clauses.
+        listed = self._client.get("/admin/alerts/rules", headers=_ADMIN_HDR).json()["rules"]
+        persisted = next(r for r in listed if r["id"] == rule["id"])
+        assert persisted["combinator"] == "and"
+        assert len(persisted["conditions"]) == 2
 
     def test_create_rule_invalid_metric(self):
         resp = self._client.post(
@@ -807,7 +985,7 @@ async def test_unregistered_metric_source_is_skipped_not_crashed():
 def test_default_signal_sources_cover_builtin_metrics():
     from jarvis.alert_engine import _default_signal_sources
     sources = _default_signal_sources(ha_store=None)
-    assert set(sources.keys()) == {"cpu", "ram", "disk", "ha_health", "ha_entity"}
+    assert set(sources.keys()) == {"cpu", "ram", "disk", "ha_health", "ha_entity", "presence_idle_minutes", "calendar_upcoming_minutes"}
 
 
 # ---------------------------------------------------------------------------

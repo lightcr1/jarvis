@@ -213,6 +213,13 @@ export function shouldAutoStartOnWakeword(
   return orbState === 'idle';
 }
 
+const SILENCE_STOP_MS = 1300;
+const MIN_RECORDING_MS = 500;
+
+export function shouldAutoStopOnSilence(msSinceSound: number, msSinceStart: number): boolean {
+  return msSinceStart >= MIN_RECORDING_MS && msSinceSound >= SILENCE_STOP_MS;
+}
+
 type Exchange = { you: string; jarvis: string };
 
 export function OrbScreen({ onNavigate, liveState = 'idle', wakewordEvent = null }: { onNavigate: (screen: string) => void; liveState?: string; wakewordEvent?: JarvisStatusEvent | null }) {
@@ -232,6 +239,8 @@ export function OrbScreen({ onNavigate, liveState = 'idle', wakewordEvent = null
   const sessionRef       = useRef<string | null>(null);
   const audioRef         = useRef<HTMLAudioElement | null>(null);
   const muteTTSRef       = useRef(muteTTS);
+  const silenceCtxRef    = useRef<AudioContext | null>(null);
+  const silenceTimerRef  = useRef<number | null>(null);
   useEffect(() => { muteTTSRef.current = muteTTS; }, [muteTTS]);
 
   useEffect(() => {
@@ -335,6 +344,56 @@ export function OrbScreen({ onNavigate, liveState = 'idle', wakewordEvent = null
     }
   };
 
+  const stopSilenceWatcher = () => {
+    if (silenceTimerRef.current !== null) {
+      window.clearInterval(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (silenceCtxRef.current) {
+      void silenceCtxRef.current.close().catch(() => {});
+      silenceCtxRef.current = null;
+    }
+  };
+
+  // Auto-stop after a short silence, so a wakeword-triggered (or manually started)
+  // utterance completes itself without a second tap. Purely additive — manual
+  // tap-to-stop (stopRecording via handleMicToggle) keeps working unchanged, in
+  // case this heuristic's noise floor is wrong for a given mic/room.
+  const startSilenceWatcher = (stream: MediaStream) => {
+    try {
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+      if (!AudioCtx) return;
+      const ctx = new AudioCtx();
+      const source = ctx.createMediaStreamSource(stream);
+      const analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      source.connect(analyser);
+      silenceCtxRef.current = ctx;
+
+      const data = new Uint8Array(analyser.frequencyBinCount);
+      const startedAt = Date.now();
+      let lastSoundAt = Date.now();
+
+      silenceTimerRef.current = window.setInterval(() => {
+        analyser.getByteTimeDomainData(data);
+        let sumSquares = 0;
+        for (let i = 0; i < data.length; i++) {
+          const centered = data[i] - 128;
+          sumSquares += centered * centered;
+        }
+        const rms = Math.sqrt(sumSquares / data.length);
+        const now = Date.now();
+        if (rms > 4) lastSoundAt = now;
+        if (shouldAutoStopOnSilence(now - lastSoundAt, now - startedAt)) {
+          stopRecording();
+        }
+      }, 150);
+    } catch {
+      // Silence detection is a nice-to-have — if the Web Audio API isn't available
+      // or setup fails, recording still works via manual tap-to-stop.
+    }
+  };
+
   const startRecording = async () => {
     setErrorMsg('');
     setTranscript('');
@@ -347,12 +406,14 @@ export function OrbScreen({ onNavigate, liveState = 'idle', wakewordEvent = null
       chunksRef.current = [];
       recorder.ondataavailable = e => { if (e.data.size > 0) chunksRef.current.push(e.data); };
       recorder.onstop = () => {
+        stopSilenceWatcher();
         stream.getTracks().forEach(t => t.stop());
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' });
         void processAudio(blob);
       };
       mediaRecorderRef.current = recorder;
       recorder.start();
+      startSilenceWatcher(stream);
       setOrbState('listening');
     } catch {
       setHasMic(false);

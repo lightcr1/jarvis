@@ -34,7 +34,7 @@ _ENV_PATHS = [
     "JARVIS_USER_STORE_PATH", "JARVIS_MEMBERSHIP_STORE_PATH", "JARVIS_PERMISSION_STORE_PATH",
     "JARVIS_ADMIN_PASSWORD_STORE_PATH", "JARVIS_USER_PREFERENCES_PATH", "JARVIS_FILES_STORE_PATH",
     "JARVIS_USER_FILES_PATH", "JARVIS_USER_LIMITS_STORE_PATH", "JARVIS_ADMIN_SETTINGS_PATH",
-    "JARVIS_MEMORY_PATH", "JARVIS_RAG_CACHE_PATH",
+    "JARVIS_MEMORY_PATH", "JARVIS_RAG_CACHE_PATH", "JARVIS_TASKS_STORE_PATH",
 ]
 
 
@@ -67,6 +67,18 @@ class ChatToolCallingTests(unittest.TestCase):
             normalize_role=jarvisappv4.normalize_role,
             user_limits_store=jarvisappv4.user_limits_store,
             admin_settings_store=jarvisappv4.admin_settings_store,
+            audit_log=jarvisappv4.audit_log,
+        )
+        jarvisappv4.task_store = jarvisappv4.TaskStore()
+        jarvisappv4.task_service = jarvisappv4.TaskService(
+            store=jarvisappv4.task_store,
+            user_store=jarvisappv4.user_store,
+            membership_store=jarvisappv4.membership_store,
+            permission_store=jarvisappv4.permission_store,
+            resolve_effective_permissions=jarvisappv4.resolve_effective_permissions,
+            normalize_role=jarvisappv4.normalize_role,
+            share_store=jarvisappv4.task_share_store,
+            group_store=jarvisappv4.group_store,
             audit_log=jarvisappv4.audit_log,
         )
         jarvisappv4._identity_tokens.clear()
@@ -170,6 +182,22 @@ class ChatToolCallingTests(unittest.TestCase):
         self.assertEqual(1, len(notes))
         self.assertEqual("prefers working late at night", notes[0]["text"])
 
+    def test_chat_updates_user_last_seen(self):
+        # Powers the alert engine's presence_idle_minutes signal source — a chat
+        # message is the simplest available proxy for "the user is around."
+        session_token = self._create_user_with_permissions("presenceuser", ["assistant.chat"])
+        headers = {"X-Jarvis-Session": session_token}
+        user_id = self.client.get("/auth/me", headers=headers).json()["user"]["id"]
+        self.assertIsNone(jarvisappv4.user_store.get_user(user_id).get("last_seen_at"))
+
+        responses = [ChatResult(text="Hi.", input_tokens=5, output_tokens=2, model="gpt-4o-mini", provider="openai")]
+        patcher, _fake = self._patched_provider(responses)
+        with patcher:
+            res = self.client.post("/chat", headers=headers, json={"text": "hello there"})
+
+        self.assertEqual(200, res.status_code)
+        self.assertIsNotNone(jarvisappv4.user_store.get_user(user_id).get("last_seen_at"))
+
     def test_write_tool_requires_confirmation_then_executes(self):
         session_token = self._create_user_with_permissions("restartuser", ["assistant.chat", "actions.write.execute"])
         headers = {"X-Jarvis-Session": session_token}
@@ -186,10 +214,6 @@ class ChatToolCallingTests(unittest.TestCase):
             return "active"
 
         with patcher, patch("jarvisappv4.run_cmd", fake_run_cmd):
-            # Deliberately avoids the word "restart" next to a service name — the legacy
-            # JarvisEngine fuzzy-matcher (jarvis_engine.py, still wired into /chat as a
-            # first-pass router ahead of the LLM) intercepts phrasing like "restart nginx"
-            # as its own hardcoded "service restart" skill and never reaches tool-calling.
             res1 = self.client.post("/chat", headers=headers, json={"text": "nginx seems to be acting up, can you sort it out for me"})
             self.assertEqual(200, res1.status_code)
             body1 = res1.json()
@@ -216,10 +240,6 @@ class ChatToolCallingTests(unittest.TestCase):
         patcher, fake = self._patched_provider(responses)
 
         with patcher, patch("jarvisappv4.run_cmd", lambda cmd, timeout=8: "active"):
-            # Deliberately avoids the word "restart" next to a service name — the legacy
-            # JarvisEngine fuzzy-matcher (jarvis_engine.py, still wired into /chat as a
-            # first-pass router ahead of the LLM) intercepts phrasing like "restart nginx"
-            # as its own hardcoded "service restart" skill and never reaches tool-calling.
             res1 = self.client.post("/chat", headers=headers, json={"text": "nginx seems to be acting up, can you sort it out for me"})
             body1 = res1.json()
             self.assertEqual("tool_confirmation_required", body1["data"]["route"])
@@ -231,6 +251,31 @@ class ChatToolCallingTests(unittest.TestCase):
             self.assertEqual(200, res2.status_code)
             self.assertEqual(2, len(fake.calls))
             self.assertNotEqual("service_restarted", res2.json()["data"].get("route"))
+
+    def test_create_task_tool_requires_confirmation_then_executes(self):
+        session_token = self._create_user_with_permissions("taskuser", ["assistant.chat", "tasks.write", "tasks.read"])
+        headers = {"X-Jarvis-Session": session_token}
+        user_id = self.client.get("/auth/me", headers=headers).json()["user"]["id"]
+
+        responses = [
+            ChatResult(text="", input_tokens=10, output_tokens=5, model="gpt-4o-mini", provider="openai",
+                       tool_calls=[ToolCall(id="call-1", name="create_task", arguments={"title": "Water the plants"})]),
+        ]
+        patcher, fake = self._patched_provider(responses)
+        with patcher:
+            res1 = self.client.post("/chat", headers=headers, json={"text": "add water the plants to my tasks"})
+            self.assertEqual(200, res1.status_code)
+            body1 = res1.json()
+            self.assertEqual("tool_confirmation_required", body1["data"]["route"])
+            self.assertEqual(0, len(jarvisappv4.task_service.list_tasks(user_id=user_id, role="standard_user")["tasks"]))
+
+            res2 = self.client.post("/chat", headers=headers, json={"text": "yes", "session_id": body1["session_id"]})
+            self.assertEqual(200, res2.status_code)
+            body2 = res2.json()
+            self.assertEqual("task_created", body2["data"]["route"])
+            tasks = jarvisappv4.task_service.list_tasks(user_id=user_id, role="standard_user")["tasks"]
+            self.assertEqual(1, len(tasks))
+            self.assertEqual("Water the plants", tasks[0]["title"])
 
     def test_proxmox_status_tool_denied_for_user_without_permission(self):
         session_token = self._create_user_with_permissions("noproxmox", ["assistant.chat"])

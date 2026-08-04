@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shouldAutoStartOnWakeword } from "./OrbScreen";
+import { shouldAutoStartOnWakeword, shouldAutoStopOnSilence } from "./OrbScreen";
 
 describe("shouldAutoStartOnWakeword", () => {
   it("returns false when there is no event", () => {
@@ -27,5 +27,25 @@ describe("shouldAutoStartOnWakeword", () => {
 
   it("returns true for a new event timestamp after a previous one was handled", () => {
     expect(shouldAutoStartOnWakeword({ kind: "wakeword", ts: 200 }, 100, "idle")).toBe(true);
+  });
+});
+
+describe("shouldAutoStopOnSilence", () => {
+  it("does not stop before the minimum recording duration, even with long silence", () => {
+    expect(shouldAutoStopOnSilence(2000, 200)).toBe(false);
+  });
+
+  it("does not stop while sound is recent, even after the minimum duration", () => {
+    expect(shouldAutoStopOnSilence(300, 2000)).toBe(false);
+  });
+
+  it("stops once both the minimum duration and silence threshold are exceeded", () => {
+    expect(shouldAutoStopOnSilence(1300, 500)).toBe(true);
+    expect(shouldAutoStopOnSilence(5000, 5000)).toBe(true);
+  });
+
+  it("does not stop right at the boundary minus one", () => {
+    expect(shouldAutoStopOnSilence(1299, 500)).toBe(false);
+    expect(shouldAutoStopOnSilence(1300, 499)).toBe(false);
   });
 });

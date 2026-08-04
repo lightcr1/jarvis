@@ -25,12 +25,15 @@ class ChatFallbackTests(unittest.TestCase):
         res = self.client.post(
             "/chat",
             headers={"Authorization": f"Bearer {token}", "X-Jarvis-Role": "admin"},
-            json={"text": "service restart local nginx"},
+            json={"text": "restart nginx"},
         )
         self.assertEqual(res.status_code, 200)
         body = res.json()
-        # guest_restricted cannot execute write actions regardless of headers
-        self.assertEqual(body.get("reply"), "Permission denied.")
+        # The revoked token is nulled out before reaching try_skill(), so the write-skill
+        # guard (block_write_if_unauthorized) denies for lack of a token at all — a
+        # revoked token cannot authorize a dangerous action regardless of headers.
+        self.assertEqual(body.get("reply"), "Token required.")
+        self.assertEqual(body["data"]["error"], "missing_token")
 
     def test_cloud_error_returns_context_reply(self):
         with patch.dict(os.environ, {"OPENAI_API_KEY": "dummy"}, clear=False), patch("jarvisappv4.get_provider", return_value="gemini"), patch(

@@ -17,7 +17,7 @@ def live_attr(state: object, name: str) -> LiveRef[object]:
 
 
 def build_auth_chat_deps(state: object) -> dict:
-    from .proxmox_module import proxmox_health
+    from .proxmox_module import proxmox_health, proxmox_lxc_action, proxmox_vm_action
 
     return {
         "ensure_default_admin_seeded": state.ensure_default_admin_seeded,
@@ -53,7 +53,6 @@ def build_auth_chat_deps(state: object) -> dict:
         "cloud_llm_available": state.cloud_llm_available,
         "format_rag_reply": state.format_rag_reply,
         "rag_llm_answer": state.rag_llm_answer,
-        "engine": LiveRef(lambda: state.engine),
         "build_context_reply": state.build_context_reply,
         "get_provider": state.get_provider,
         "local_ai_chat_reply": state.local_ai_chat_reply,
@@ -69,6 +68,11 @@ def build_auth_chat_deps(state: object) -> dict:
         "proxmox_health": proxmox_health,
         "run_cmd": live_attr(state, "run_cmd"),
         "ensure_service_allowed": live_attr(state, "ensure_service_allowed"),
+        "task_service": live_attr(state, "task_service"),
+        "calendar_service": live_attr(state, "calendar_service"),
+        "email_service": live_attr(state, "email_service"),
+        "proxmox_vm_action": proxmox_vm_action,
+        "proxmox_lxc_action": proxmox_lxc_action,
         "get_anthropic": state.get_anthropic,
         "get_gemini": state.get_gemini,
         "get_openai": state.get_openai,

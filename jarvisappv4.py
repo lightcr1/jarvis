@@ -509,6 +509,7 @@ alert_engine = AlertEngine(
     ha_store=home_assistant_store,
     broadcast_fn=get_alert_broadcaster().broadcast,
     broadcast_to_user_fn=get_alert_broadcaster().broadcast_to_user,
+    user_store=user_store,
 )
 
 suggestion_engine = SuggestionEngine()
@@ -560,6 +561,15 @@ calendar_service = CalendarService(
     resolve_effective_permissions=resolve_effective_permissions,
     normalize_role=normalize_role,
     audit_log=audit_log,
+)
+
+# calendar_service doesn't exist yet at alert_engine's own construction point above —
+# register this source late via the same extension hook later Proxmox/NAS signal
+# sources are meant to use, rather than reordering initialization.
+from jarvis.alert_engine import _read_calendar_upcoming_minutes as _read_calendar_upcoming_minutes_for_alerts
+alert_engine.register_source(
+    "calendar_upcoming_minutes",
+    lambda rule: _read_calendar_upcoming_minutes_for_alerts(calendar_service, rule.get("owner_user_id")),
 )
 
 email_service = EmailService(
