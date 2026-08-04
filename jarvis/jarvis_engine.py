@@ -121,6 +121,14 @@ class SkillRegistry:
     def skills(self) -> list[Skill]:
         return list(self._skills)
 
+    # Below this ratio, difflib similarity is coincidental rather than intentional
+    # typo tolerance — e.g. a bare "confirm" or "yep" was scoring high enough
+    # against unrelated skills ("config show", "help") to hijack the reply before
+    # it ever reached the LLM. 0.6 keeps real single-typo matches (e.g. "statuz
+    # jarvis" -> 0.92) and the "service" disambiguation case (0.64-0.67) while
+    # excluding short/generic phrases (observed false positives topped out at 0.57).
+    MIN_MATCH_SCORE = 0.6
+
     def match(self, text: str) -> list[tuple[Skill, float]]:
         normalized = normalize(text)
         scored: list[tuple[Skill, float]] = []
@@ -129,7 +137,7 @@ class SkillRegistry:
             for trigger in skill.triggers + skill.examples + [skill.name]:
                 score = difflib.SequenceMatcher(None, normalized, normalize(trigger)).ratio()
                 best = max(best, score)
-            if best > 0.45:
+            if best > self.MIN_MATCH_SCORE:
                 scored.append((skill, best))
         scored.sort(key=lambda item: item[1], reverse=True)
         return scored
@@ -288,7 +296,14 @@ class JarvisEngine:
         lowered = text.strip().lower()
         if lowered in {CONFIRM_WRITE.lower(), CONFIRM_CRITICAL.lower()}:
             if not ctx.token:
-                return summary_response("Token required.", {"error": "missing_token"})
+                # _pending is keyed by token, and a WRITE/CRITICAL plan is never
+                # stored there without one (see _handle_plan) — so without a token
+                # there is no possible pending action to confirm. Treat this as "not
+                # a confirmation" rather than an error, so a bare "yes" said with
+                # nothing actually pending (the common case for session-authenticated
+                # chat users, who never carry a bearer token) falls through to normal
+                # skill/RAG/LLM routing instead of a dead-end "Token required." reply.
+                return None
             role_name = normalize_role((ctx.metadata or {}).get("role"))
             plan = self._pending.pop(ctx.token, None)
             if plan and plan.risk in {RiskLevel.WRITE, RiskLevel.CRITICAL}:

@@ -402,14 +402,19 @@ class EngineFallbackTests(unittest.TestCase):
         resp = self.engine.process("qwerty nonsense phrase xyz123", token=None)
         self.assertEqual(resp["data"]["route"], "cloud")
 
-    def test_handle_confirm_without_token_returns_token_required(self):
+    def test_handle_confirm_without_token_falls_through_to_normal_routing(self):
+        # Without a token there is no possible pending action to confirm (_pending
+        # is token-keyed) — this used to dead-end on "Token required.", which broke
+        # a live chat user replying a bare "yes"/"YES, proceed" with nothing
+        # actually pending. It should behave like any other unmatched phrase.
         resp = self.engine.process("YES, proceed", token=None)
-        self.assertEqual(resp["summary"], "Token required.")
-        self.assertEqual(resp["data"]["error"], "missing_token")
+        self.assertNotEqual(resp["summary"], "Token required.")
+        self.assertEqual(resp["data"]["route"], "offline")
 
-    def test_handle_write_confirm_without_token_returns_token_required(self):
+    def test_handle_write_confirm_without_token_falls_through_to_normal_routing(self):
         resp = self.engine.process("YES", token=None)
-        self.assertEqual(resp["summary"], "Token required.")
+        self.assertNotEqual(resp["summary"], "Token required.")
+        self.assertEqual(resp["data"]["route"], "offline")
 
     def test_confirm_with_no_pending_action(self):
         resp = self.engine.process("YES, proceed", token="some-token")
