@@ -531,3 +531,89 @@ pin down further — see `assistant_domain.py::try_skill()` and
 - Full suite after all 4 phases: **2206 passed, 0 failed** (backend); frontend
   `tsc --noEmit` clean, Vitest 48/48 passed, `npm run build` succeeds.
 - Not yet committed — left for the user to review/commit.
+
+### 2026-08-07 — Grounding, closeout of Phase 1's last gaps, proactive speech
+- User asked, in general terms, to finish whatever remained to make JARVIS as
+  close as possible to the "real" fictional JARVIS/FRIDAY/EDITH, with full
+  discretion on scope and no fixed checklist to follow.
+- Found and committed a prior session's already-working-but-uncommitted WIP
+  first: OpenRouter/Mistral/DeepSeek gained real tool-calling (previously the
+  `tools` argument was silently ignored on the OpenAI-compatible surface, so
+  the documented default cloud provider could describe Proxmox/HA/calendar
+  but never actually query them — the most likely root cause of the
+  long-standing "certain replies feel fabricated" complaint from earlier
+  sessions), plus stripped leaked reasoning/safety-classifier text from
+  OpenRouter's free-tier models and pinned specific model slugs instead of
+  the flaky `openrouter/free` auto-router, plus an explicit anti-fabrication
+  system-prompt block (EN+DE).
+- Extended the same real tool-calling to **Gemini** (`jarvis/providers/gemini_provider.py`)
+  — the one remaining first-class documented provider still ignoring `tools`.
+  Gemini uses a materially different function-calling protocol from the
+  OpenAI-style JSON tool-call messages every other provider shares, so this
+  needed a real translation layer (`_to_gemini_messages()`) converting the
+  `assistant.tool_calls` / `role:"tool"` messages `tool_orchestrator.py`
+  produces into Gemini's native function_call/function_response `Content`
+  parts — needed for multi-round tool chains (call → result → follow-up call)
+  to actually work rather than degrading into confused plain-text turns. Also
+  gave `GeminiProvider` its first-ever test coverage (there was none before).
+- Added a new `get_login_history` LLM tool (`jarvis/tool_registry_tools.py`,
+  `audit.read`-gated) backed by the existing `AuditLogStore.read_events()` —
+  closes a literal gap against CLAUDE.md's own vision script ("Who accessed
+  the system last night?" / "no anomalies detected"). The only prior coverage
+  was an exact-match chat skill reading the OS `last` command, which doesn't
+  match natural phrasing and isn't JARVIS's own app-level login trail.
+- Dispatched the `jarvis-alert-engine-builder` agent (background) to close
+  the four concretely-verified gaps left over from Phase 1 (Proactive
+  Intelligence): weekly digest / nightly summary Settings UI toggles;
+  rendering the briefing/suggestion/digest cards `useJarvisAlerts()` had been
+  returning with nothing consuming them since they were built; quiet-hours
+  suppression wired into `push_service.fanout_push` (in-app WS delivery
+  unaffected — only the push-to-closed-app path); and role/user-scoped
+  broadcast methods (`notify_user`, `broadcast_to_admins`) on
+  `AlertBroadcaster`. While auditing every `broadcast()` call site for the
+  last item, the agent found and fixed two real bugs, not asked for: personal
+  morning-briefing/digest text was going out over `broadcast()` to *every*
+  connected client with only client-side filtering by `user_id` (a real
+  privacy leak, now `notify_user`-scoped), and PolicyEngine/PlaybookExecutor
+  self-healing events (restart actions, escalations) were reaching every
+  logged-in user despite their entire REST surface being admin-gated (now
+  `broadcast_to_admins`-scoped).
+- Built proactive spoken alerts on the Orb screen (`OrbScreen.tsx`): every
+  alert previously only ever showed as a silent toast, even though "Sir, CPU
+  has been above 90% for 5 minutes" being *spoken* unprompted is the core of
+  CLAUDE.md's own vision script. `JarvisApp` now threads its live `alerts`
+  into `OrbScreen`; a new effect speaks the first unspoken warning/critical
+  alert through the same `synthesizeSpeech()`+`Audio` path chat replies
+  already use (so mute and mic-tap-to-interrupt both just work for free via
+  the shared `audioRef`), gated to idle-only so it never interrupts an
+  in-progress listen/think/speak/error state. Extracted the decision as a
+  pure `pickAlertToSpeak()` per this file's existing tested-pure-function
+  convention (`shouldAutoStartOnWakeword`/`shouldAutoStopOnSilence`).
+  Ambient Display Mode was deliberately left out of this pass — it has no
+  audio-playback infrastructure at all yet (`OrbScreen` already did, via the
+  chat-reply TTS path), so wiring speech there is a real standalone build,
+  not a small extension; flagged as a natural next step, not done here.
+- Verified every change independently before committing (ran the full suite
+  myself rather than trusting the agent's self-report, reviewed every diff):
+  backend `pytest tests/ -x -q` → **2230 passed, 149 subtests passed, 0
+  failures** after each commit; frontend `tsc --noEmit` clean, `npm run
+  build` clean, Vitest **56/56 passed** (was 48, +8 new for
+  `pickAlertToSpeak`). Five commits, each pushed to `main` individually as a
+  checkpoint rather than batched at the end.
+- Explicitly did **not** attempt: any of CLAUDE.md's P0 items (wakeword
+  hardware/mic tuning, voice-quality sign-off, deployment drills on a clean
+  host, environment-separation validation, the formal performance benchmark,
+  manual acceptance testing, security sign-off, recovery drills) — all
+  require physical hardware, a real target machine, or a human's formal
+  sign-off, none of which an agent can produce. Also left alone: Voice
+  Everywhere and the Plugin System (both already explicitly deferred by the
+  user in earlier sessions, the latter pending its own design pass), local
+  LLM tool-calling (explicitly judged out of scope — support varies too much
+  by model to safely wire up with confidence), and Stripe subscription
+  renewal re-verification (a real known gap, but a billing-correctness issue
+  orthogonal to the "feel like real JARVIS" goal this session was scoped to).
+- Immediate next step, if picked back up: speak alerts on Ambient Display
+  Mode too (needs its own audio-playback plumbing built from scratch); the
+  Stripe renewal-verification gap; CLAUDE.md itself is now further out of
+  date than before this session and could use the full rewrite its own
+  "Note on staleness" flags as a separate task.
