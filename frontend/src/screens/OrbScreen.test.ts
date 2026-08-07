@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { shouldAutoStartOnWakeword, shouldAutoStopOnSilence } from "./OrbScreen";
+import { shouldAutoStartOnWakeword, shouldAutoStopOnSilence, pickAlertToSpeak } from "./OrbScreen";
+import type { JarvisAlert } from "../shared/api/alerts";
+
+function makeAlert(overrides: Partial<JarvisAlert> = {}): JarvisAlert {
+  return { id: "a1", level: "warning", title: "CPU", message: "CPU above 90% for 5 minutes.", source: "system", code: "cpu_high", ...overrides };
+}
 
 describe("shouldAutoStartOnWakeword", () => {
   it("returns false when there is no event", () => {
@@ -47,5 +52,50 @@ describe("shouldAutoStopOnSilence", () => {
   it("does not stop right at the boundary minus one", () => {
     expect(shouldAutoStopOnSilence(1299, 500)).toBe(false);
     expect(shouldAutoStopOnSilence(1300, 499)).toBe(false);
+  });
+});
+
+describe("pickAlertToSpeak", () => {
+  it("picks a warning-level alert when idle and unmuted", () => {
+    const alert = makeAlert({ level: "warning" });
+    expect(pickAlertToSpeak([alert], "idle", false, new Set())).toBe(alert);
+  });
+
+  it("picks a critical-level alert too", () => {
+    const alert = makeAlert({ level: "critical" });
+    expect(pickAlertToSpeak([alert], "idle", false, new Set())).toBe(alert);
+  });
+
+  it("does not pick an info-level alert — not urgent enough to interrupt unprompted", () => {
+    const alert = makeAlert({ level: "info" });
+    expect(pickAlertToSpeak([alert], "idle", false, new Set())).toBeNull();
+  });
+
+  it("does not pick anything while not idle", () => {
+    const alert = makeAlert();
+    expect(pickAlertToSpeak([alert], "listening", false, new Set())).toBeNull();
+    expect(pickAlertToSpeak([alert], "thinking", false, new Set())).toBeNull();
+    expect(pickAlertToSpeak([alert], "speaking", false, new Set())).toBeNull();
+  });
+
+  it("does not pick anything when TTS is muted", () => {
+    const alert = makeAlert();
+    expect(pickAlertToSpeak([alert], "idle", true, new Set())).toBeNull();
+  });
+
+  it("skips an alert that was already spoken", () => {
+    const alert = makeAlert({ id: "a1" });
+    expect(pickAlertToSpeak([alert], "idle", false, new Set(["a1"]))).toBeNull();
+  });
+
+  it("picks the first eligible alert when several are pending", () => {
+    const first = makeAlert({ id: "a1", level: "info" });
+    const second = makeAlert({ id: "a2", level: "warning" });
+    const third = makeAlert({ id: "a3", level: "critical" });
+    expect(pickAlertToSpeak([first, second, third], "idle", false, new Set())).toBe(second);
+  });
+
+  it("returns null when there are no alerts", () => {
+    expect(pickAlertToSpeak([], "idle", false, new Set())).toBeNull();
   });
 });

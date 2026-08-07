@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from 'react';
 import { J, useJ, stripMarkdown, StatusBadge, IconMic, IconSettings, IconChat, IconVolume, MarkdownText, showToast } from './jarvis-shared';
 import { streamChatMessage, transcribeAudio, synthesizeSpeech, SttError, getSystemMetrics } from '../shared/api/chat';
 import type { JarvisStatusEvent } from '../shared/api/status';
+import type { JarvisAlert } from '../shared/api/alerts';
 
 export type HealthTier = 'good' | 'warn' | 'critical';
 
@@ -220,9 +221,23 @@ export function shouldAutoStopOnSilence(msSinceSound: number, msSinceStart: numb
   return msSinceStart >= MIN_RECORDING_MS && msSinceSound >= SILENCE_STOP_MS;
 }
 
+const SPEAKABLE_ALERT_LEVELS = new Set(['warning', 'critical']);
+
+// Only speak unprompted when idle and not muted, and only the more urgent
+// levels — an "info" alert doesn't warrant interrupting the room unprompted.
+export function pickAlertToSpeak(
+  alerts: JarvisAlert[],
+  orbState: string,
+  muted: boolean,
+  alreadySpoken: Set<string>,
+): JarvisAlert | null {
+  if (orbState !== 'idle' || muted) return null;
+  return alerts.find(a => SPEAKABLE_ALERT_LEVELS.has(a.level) && !alreadySpoken.has(a.id)) ?? null;
+}
+
 type Exchange = { you: string; jarvis: string };
 
-export function OrbScreen({ onNavigate, liveState = 'idle', wakewordEvent = null }: { onNavigate: (screen: string) => void; liveState?: string; wakewordEvent?: JarvisStatusEvent | null }) {
+export function OrbScreen({ onNavigate, liveState = 'idle', wakewordEvent = null, alerts = [] }: { onNavigate: (screen: string) => void; liveState?: string; wakewordEvent?: JarvisStatusEvent | null; alerts?: JarvisAlert[] }) {
   useJ();
   const [orbState, setOrbState]     = useState('idle');
   const [transcript, setTranscript] = useState('');
@@ -241,7 +256,39 @@ export function OrbScreen({ onNavigate, liveState = 'idle', wakewordEvent = null
   const muteTTSRef       = useRef(muteTTS);
   const silenceCtxRef    = useRef<AudioContext | null>(null);
   const silenceTimerRef  = useRef<number | null>(null);
+  const spokenAlertIdsRef = useRef<Set<string>>(new Set());
+  const speakingAlertRef  = useRef(false);
   useEffect(() => { muteTTSRef.current = muteTTS; }, [muteTTS]);
+
+  // Proactive voice: speak a new warning/critical alert unprompted when idle,
+  // mirroring "Sir, CPU has been above 90% for 5 minutes" — the same audioRef
+  // chat replies use, so tapping the mic mid-alert interrupts it like normal.
+  useEffect(() => {
+    if (speakingAlertRef.current) return;
+    const next = pickAlertToSpeak(alerts, orbState, muteTTSRef.current, spokenAlertIdsRef.current);
+    if (!next) return;
+    spokenAlertIdsRef.current.add(next.id);
+    speakingAlertRef.current = true;
+    setOrbState('speaking');
+    (async () => {
+      try {
+        const audioBlob = await synthesizeSpeech(`Sir, ${next.message}`);
+        const url = URL.createObjectURL(audioBlob);
+        await new Promise<void>((resolve) => {
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          audio.onended = () => { URL.revokeObjectURL(url); audioRef.current = null; resolve(); };
+          audio.onerror  = () => { URL.revokeObjectURL(url); audioRef.current = null; resolve(); };
+          audio.play().catch(() => resolve());
+        });
+      } catch {
+        // TTS synthesis failed — nothing to play, just clean up below.
+      } finally {
+        speakingAlertRef.current = false;
+        setOrbState(s => (s === 'speaking' ? 'idle' : s));
+      }
+    })();
+  }, [alerts, orbState]);
 
   useEffect(() => {
     const update = () => setOrbSize(window.innerWidth <= 640 ? 200 : 260);

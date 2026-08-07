@@ -456,7 +456,7 @@ export function JarvisApp() {
         )}
         <ErrorBoundary label={screen}>
           {screen === 'chat'     && <ChatScreen onNavigate={navigate} />}
-          {screen === 'orb'      && <OrbScreen onNavigate={navigate} liveState={liveStatus.state} wakewordEvent={liveStatus.lastEvent} />}
+          {screen === 'orb'      && <OrbScreen onNavigate={navigate} liveState={liveStatus.state} wakewordEvent={liveStatus.lastEvent} alerts={notificationsEnabled ? alerts : []} />}
           {screen === 'home'     && <HomeAssistantScreen onNavigate={navigate} />}
           {screen === 'proxmox'  && <ProxmoxScreen onNavigate={navigate} />}
           {screen === 'tasks'    && <TasksScreen onNavigate={navigate} />}
