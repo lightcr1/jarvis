@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import time
+from datetime import datetime
+
 from fastapi import HTTPException
 
 from .files import chat_helpers as _fd
@@ -200,6 +203,37 @@ def _proxmox_lxc_action_handler(ctx: ToolExecutionContext, args: dict) -> dict:
     except HTTPException as exc:
         return {"reply": f"I can't do that: {exc.detail}", "data": {"route": "tool_error", "error": "proxmox_error", "detail": exc.detail}}
     return {"reply": f"Done. Container {vmid}: {action}.", "data": {"route": "proxmox_lxc_action", "result": result}}
+
+
+def _login_history_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    audit_log = ctx.deps["audit_log"]
+    try:
+        hours = int(args.get("hours") or 24)
+    except (TypeError, ValueError):
+        hours = 24
+    hours = max(1, min(hours, 24 * 30))
+    since_ts = int(time.time()) - hours * 3600
+    successes = audit_log.read_events(event="user_login_succeeded", since_ts=since_ts, limit=50)
+    failures = audit_log.read_events(event="user_login_failed", since_ts=since_ts, limit=50)
+    events = sorted(successes + failures, key=lambda e: e.get("ts") or 0, reverse=True)
+    if not events:
+        return {
+            "reply": f"No login activity in the last {hours} hour(s).",
+            "data": {"route": "login_history", "events": [], "hours": hours},
+        }
+    lines = []
+    for e in events[:10]:
+        ts = e.get("ts")
+        when = datetime.fromtimestamp(ts).strftime("%Y-%m-%d %H:%M") if ts else "unknown time"
+        who = e.get("username") or e.get("user_id") or "unknown"
+        if e.get("event") == "user_login_succeeded":
+            lines.append(f"{when} — {who} logged in successfully")
+        else:
+            lines.append(f"{when} — failed login for {who} ({e.get('reason', 'unknown reason')})")
+    failure_count = sum(1 for e in events if e.get("event") == "user_login_failed")
+    tail = f"{failure_count} failed attempt(s) in that window — worth a look." if failure_count else "No anomalies detected."
+    reply = f"On it. {len(events)} login event(s) in the last {hours} hour(s):\n" + "\n".join(lines) + f"\n{tail}"
+    return {"reply": reply, "data": {"route": "login_history", "events": events[:10], "hours": hours}}
 
 
 def build_pilot_tool_registry() -> ToolRegistry:
@@ -434,5 +468,21 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="proxmox.manage",
         risk=RiskLevel.WRITE,
         handler=_proxmox_lxc_action_handler,
+    ))
+    registry.register(Tool(
+        name="get_login_history",
+        description=(
+            "Get recent login activity (successful and failed) across all users, for questions like "
+            "'who accessed the system last night' or 'any failed logins recently'. Admin-only data."
+        ),
+        parameters={
+            "type": "object",
+            "properties": {
+                "hours": {"type": "integer", "description": "How many hours back to look. Defaults to 24."},
+            },
+        },
+        required_permission="audit.read",
+        risk=RiskLevel.READ,
+        handler=_login_history_handler,
     ))
     return registry

@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import tempfile
+import time
 import unittest
 
 from fastapi import HTTPException
 
 from jarvis.admin_settings_store import AdminSettingsStore
+from jarvis.audit_log_store import AuditLogStore
 from jarvis.authz import resolve_effective_permissions
 from jarvis.calendar.service import CalendarService
 from jarvis.calendar.store import CalendarEventStore
@@ -107,7 +110,9 @@ class PilotToolsTests(unittest.TestCase):
         os.environ["JARVIS_EMAIL_DRAFTS_STORE_PATH"] = os.path.join(base, "email_drafts.json")
         os.environ["JARVIS_SECRET_KEY"] = generate_master_key()
         os.environ["JARVIS_INTEGRATION_CREDENTIALS_PATH"] = os.path.join(base, "creds.json")
+        os.environ["JARVIS_AUDIT_LOG_PATH"] = os.path.join(base, "audit.log")
 
+        self.audit_log_store = AuditLogStore()
         self.user_store = UserStore()
         self.membership_store = MembershipStore()
         self.permission_store = PermissionStore()
@@ -185,6 +190,7 @@ class PilotToolsTests(unittest.TestCase):
             "JARVIS_ADMIN_SETTINGS_PATH", "JARVIS_MEMORY_PATH", "JARVIS_HOME_ASSISTANT_STORE_PATH",
             "JARVIS_TASKS_STORE_PATH", "JARVIS_CALENDAR_STORE_PATH", "JARVIS_EMAIL_STORE_PATH",
             "JARVIS_EMAIL_DRAFTS_STORE_PATH", "JARVIS_SECRET_KEY", "JARVIS_INTEGRATION_CREDENTIALS_PATH",
+            "JARVIS_AUDIT_LOG_PATH",
         ):
             os.environ.pop(key, None)
         self.tmpdir.cleanup()
@@ -436,6 +442,7 @@ class PilotToolsTests(unittest.TestCase):
                 "list_folder", "read_file", "save_memory_note", "proxmox_status", "restart_service", "list_devices", "control_device",
                 "list_tasks", "create_task", "complete_task", "list_calendar_events", "create_calendar_event",
                 "list_emails", "create_email_draft", "send_email_draft", "proxmox_vm_action", "proxmox_lxc_action",
+                "get_login_history",
             },
             {t.name for t in self.registry.all()},
         )
@@ -526,6 +533,53 @@ class PilotToolsTests(unittest.TestCase):
         tool = self.registry.get("control_device")
         result = tool.handler(self._ctx(user, home_assistant_service=None), {"entity_id": "light.kitchen", "action": "turn_on"})
         self.assertEqual("not_configured", result["data"]["error"])
+
+    def test_get_login_history_is_gated_by_audit_read(self):
+        tool = self.registry.get("get_login_history")
+        self.assertEqual("audit.read", tool.required_permission)
+
+    def test_get_login_history_reports_no_activity(self):
+        user = self._rw_user()
+        tool = self.registry.get("get_login_history")
+        result = tool.handler(self._ctx(user, audit_log=self.audit_log_store), {})
+        self.assertEqual([], result["data"]["events"])
+        self.assertIn("No login activity", result["reply"])
+
+    def test_get_login_history_reports_successes_and_failures_no_anomalies(self):
+        user = self._rw_user()
+        self.audit_log_store.write("user_login_succeeded", {"user_id": "u1", "username": "alice", "role": "standard_user"})
+        tool = self.registry.get("get_login_history")
+        result = tool.handler(self._ctx(user, audit_log=self.audit_log_store), {})
+        self.assertEqual(1, len(result["data"]["events"]))
+        self.assertIn("alice", result["reply"])
+        self.assertIn("No anomalies detected", result["reply"])
+
+    def test_get_login_history_flags_failed_attempts(self):
+        user = self._rw_user()
+        self.audit_log_store.write("user_login_failed", {"username": "mallory", "reason": "invalid_credentials"})
+        self.audit_log_store.write("user_login_succeeded", {"user_id": "u1", "username": "alice", "role": "standard_user"})
+        tool = self.registry.get("get_login_history")
+        result = tool.handler(self._ctx(user, audit_log=self.audit_log_store), {})
+        self.assertEqual(2, len(result["data"]["events"]))
+        self.assertIn("mallory", result["reply"])
+        self.assertIn("1 failed attempt", result["reply"])
+
+    def test_get_login_history_respects_hours_window(self):
+        user = self._rw_user()
+        old_ts = int(time.time()) - 100 * 3600
+        self.audit_log_store.write("user_login_succeeded", {"user_id": "u1", "username": "old_login", "role": "standard_user"})
+        # Force the just-written event outside the default 24h window by rewriting its timestamp directly.
+        content = self.audit_log_store.path.read_text(encoding="utf-8")
+        entry = json.loads(content.strip())
+        entry["ts"] = old_ts
+        self.audit_log_store.path.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+        tool = self.registry.get("get_login_history")
+        result = tool.handler(self._ctx(user, audit_log=self.audit_log_store), {"hours": 24})
+        self.assertEqual([], result["data"]["events"])
+
+        result_wide = tool.handler(self._ctx(user, audit_log=self.audit_log_store), {"hours": 200})
+        self.assertEqual(1, len(result_wide["data"]["events"]))
 
 
 if __name__ == "__main__":

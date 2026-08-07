@@ -579,6 +579,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                             "email_service": current("email_service"),
                             "proxmox_vm_action": current("proxmox_vm_action"),
                             "proxmox_lxc_action": current("proxmox_lxc_action"),
+                            "audit_log": current("audit_log"),
                         },
                     )
                     tool_result = execute_tool(
@@ -710,6 +711,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                             "email_service": current("email_service"),
                             "proxmox_vm_action": current("proxmox_vm_action"),
                             "proxmox_lxc_action": current("proxmox_lxc_action"),
+                            "audit_log": current("audit_log"),
                         },
                     )
                     tool_result = run_chat_with_tools(
@@ -834,6 +836,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                             "email_service": current("email_service"),
                             "proxmox_vm_action": current("proxmox_vm_action"),
                             "proxmox_lxc_action": current("proxmox_lxc_action"),
+                            "audit_log": current("audit_log"),
                         },
                     )
                     tool_result = execute_tool(
@@ -990,6 +993,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                                 "email_service": current("email_service"),
                                 "proxmox_vm_action": current("proxmox_vm_action"),
                                 "proxmox_lxc_action": current("proxmox_lxc_action"),
+                                "audit_log": current("audit_log"),
                             },
                         )
                         tool_result = run_chat_with_tools(
