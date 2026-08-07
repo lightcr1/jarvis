@@ -24,10 +24,16 @@ MODELS: dict[str, dict[Tier, str]] = {
         Tier.MEDIUM: "gemini-2.5-flash",
         Tier.COMPLEX: "gemini-1.5-pro",
     },
+    # Pinned to specific $0 OpenRouter models, not the "openrouter/free" auto-router.
+    # That auto-router draws from OpenRouter's whole free-tier pool on every request —
+    # including a pure content-safety guardrail model and reasoning-labeled models —
+    # which is what caused inconsistent quality, leaked chain-of-thought, and a leaked
+    # "User Safety: safe / Response Safety: safe" verdict in production. Pinning to one
+    # plain instruct model per tier keeps cost at zero while keeping behavior consistent.
     "openrouter": {
-        Tier.SIMPLE: "openrouter/free",
-        Tier.MEDIUM: "openrouter/free",
-        Tier.COMPLEX: "openrouter/free",
+        Tier.SIMPLE: "nvidia/nemotron-nano-9b-v2:free",
+        Tier.MEDIUM: "google/gemma-4-31b-it:free",
+        Tier.COMPLEX: "nvidia/nemotron-3-super-120b-a12b:free",
     },
     "mistral": {
         Tier.SIMPLE: "mistral-small-latest",

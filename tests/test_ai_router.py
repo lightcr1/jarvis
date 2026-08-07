@@ -397,6 +397,16 @@ class RunTests(unittest.TestCase):
         self.assertEqual(full, once)
 
 
+class ToolCapableProvidersTest(unittest.TestCase):
+    def test_openai_compatible_providers_are_tool_capable(self):
+        from jarvis.ai_router import AIRouter
+        # OpenRouter is the documented default cloud provider — it must be able
+        # to use real tools (Proxmox/HA/calendar/etc.) rather than silently
+        # falling back to an ungrounded plain LLM reply.
+        for name in ("openai", "anthropic", "openrouter", "mistral", "deepseek"):
+            self.assertIn(name, AIRouter.TOOL_CAPABLE_PROVIDERS)
+
+
 # ------------------------------------------------------------------
 # finalize() tests
 # ------------------------------------------------------------------

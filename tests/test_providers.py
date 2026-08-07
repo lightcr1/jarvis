@@ -148,6 +148,75 @@ def test_openrouter_streaming_yields_chunks():
     assert chunks == [ChatChunk("OR response")]
 
 
+def test_openrouter_streaming_strips_think_block_split_across_chunks():
+    from jarvis.providers.openrouter_provider import OpenRouterProvider
+
+    pieces = ["Before ", "<thi", "nk>reasoning here</th", "ink> After"]
+    chunks_in = []
+    for piece in pieces:
+        c = MagicMock()
+        c.choices = [MagicMock(delta=MagicMock(content=piece))]
+        chunks_in.append(c)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = iter(chunks_in)
+
+    p = OpenRouterProvider(client_factory=lambda: mock_client)
+    result = p.create_chat_completion(
+        model="anthropic/claude-haiku-4-5", messages=[{"role": "user", "content": "test"}],
+        system_prompt="sys", max_tokens=256, tier=Tier.SIMPLE, stream=True,
+    )
+    text = "".join(c.token for c in result)
+    assert text == "Before  After"
+    assert "reasoning here" not in text
+
+
+def test_openrouter_non_streaming_strips_reasoning_and_safety_preamble():
+    from jarvis.providers.openrouter_provider import OpenRouterProvider
+
+    mock_resp = MagicMock()
+    mock_resp.choices = [MagicMock(message=MagicMock(
+        content="User Safety: safe\nResponse Safety: safe\n\n<think>internal notes</think>Actual reply.",
+        tool_calls=None,
+    ))]
+    mock_resp.usage = MagicMock(prompt_tokens=10, completion_tokens=5)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_resp
+
+    p = OpenRouterProvider(client_factory=lambda: mock_client)
+    result = p.create_chat_completion(
+        model="anthropic/claude-haiku-4-5", messages=[{"role": "user", "content": "?"}],
+        system_prompt="sys", max_tokens=200, tier=Tier.MEDIUM, stream=False,
+    )
+    assert result.text == "Actual reply."
+
+
+def test_openrouter_non_streaming_passes_tools_and_parses_tool_calls():
+    from jarvis.providers.openrouter_provider import OpenRouterProvider
+
+    tool_call = MagicMock()
+    tool_call.id = "call_1"
+    tool_call.function.name = "get_proxmox_status"
+    tool_call.function.arguments = '{"host_id": "h1"}'
+    mock_resp = MagicMock()
+    mock_resp.choices = [MagicMock(message=MagicMock(content=None, tool_calls=[tool_call]))]
+    mock_resp.usage = MagicMock(prompt_tokens=10, completion_tokens=5)
+    mock_client = MagicMock()
+    mock_client.chat.completions.create.return_value = mock_resp
+
+    p = OpenRouterProvider(client_factory=lambda: mock_client)
+    tools_schema = [{"type": "function", "function": {"name": "get_proxmox_status", "description": "d", "parameters": {}}}]
+    result = p.create_chat_completion(
+        model="anthropic/claude-haiku-4-5", messages=[{"role": "user", "content": "status?"}],
+        system_prompt="sys", max_tokens=200, tier=Tier.MEDIUM, stream=False, tools=tools_schema,
+    )
+    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
+    assert call_kwargs["tools"] == tools_schema
+    assert call_kwargs["tool_choice"] == "auto"
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "get_proxmox_status"
+    assert result.tool_calls[0].arguments == {"host_id": "h1"}
+
+
 # ─── Validate API key (monkeypatched, no network) ─────────────────────────────
 
 def test_validate_key_skipped_for_local():
@@ -198,4 +267,8 @@ def test_models_dict_has_new_providers():
     assert "openrouter" in MODELS
     assert "mistral" in MODELS
     assert "deepseek" in MODELS
-    assert MODELS["openrouter"][Tier.COMPLEX] == "openrouter/free"
+    # Must route to real, specific models — not a placeholder "free" slug that
+    # silently lands on whatever unreliable/low-quality model OpenRouter picks.
+    for tier in (Tier.SIMPLE, Tier.MEDIUM, Tier.COMPLEX):
+        assert MODELS["openrouter"][tier] != "openrouter/free"
+        assert "/" in MODELS["openrouter"][tier]

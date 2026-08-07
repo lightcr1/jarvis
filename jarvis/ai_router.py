@@ -302,10 +302,14 @@ class AIRouter:
         )
         return getattr(result, "text", str(result))
 
-    # Providers that can be handed a tool schema today — see the tool-calling
-    # non-goals in jarvis/tool_registry_tools.py: Gemini/local/OpenAI-compatible
-    # (OpenRouter, Mistral, DeepSeek) accept-but-ignore `tools` for now.
-    TOOL_CAPABLE_PROVIDERS = {"openai", "anthropic"}
+    # Providers that can be handed a tool schema today. OpenRouter/Mistral/DeepSeek
+    # go through the same OpenAI-compatible chat-completions surface as OpenAI
+    # itself, so they get real function-calling too — this matters because
+    # OpenRouter is the documented default cloud provider, and without it those
+    # users never get grounded tool results (Proxmox/HA/calendar/etc.), which
+    # pushed the model toward confidently fabricating plausible-looking data.
+    # Gemini/local are not wired up for tool schemas yet.
+    TOOL_CAPABLE_PROVIDERS = {"openai", "anthropic", "openrouter", "mistral", "deepseek"}
 
     def run_with_tools(
         self,
