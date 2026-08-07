@@ -1081,6 +1081,33 @@ export function SettingsScreen() {
       <div style={{ padding: '8px 0 14px', fontSize: 12, color: J.textMuted, lineHeight: 1.5 }}>
         Requires staying connected to JARVIS at the scheduled time.
       </div>
+
+      <Row label="Weekly Digest" desc="A weekly rollup of system health, alerts and backups">
+        <Toggle on={prefs.weekly_digest_enabled ?? false} onChange={v => set('weekly_digest_enabled', v)} />
+      </Row>
+      <Row label="Digest day" desc="Day of the week the digest is sent">
+        <Sel value={prefs.weekly_digest_day || 'sunday'}
+          onChange={v => set('weekly_digest_day', v)}
+          options={[
+            { v: 'monday', l: 'Monday' }, { v: 'tuesday', l: 'Tuesday' }, { v: 'wednesday', l: 'Wednesday' },
+            { v: 'thursday', l: 'Thursday' }, { v: 'friday', l: 'Friday' }, { v: 'saturday', l: 'Saturday' },
+            { v: 'sunday', l: 'Sunday' },
+          ]} />
+      </Row>
+      <Field label="Digest time" value={prefs.weekly_digest_time || '18:00'}
+        onChange={v => set('weekly_digest_time', v)} type="time" />
+      <div style={{ padding: '8px 0 14px', fontSize: 12, color: J.textMuted, lineHeight: 1.5 }}>
+        Requires staying connected to JARVIS at the scheduled time.
+      </div>
+
+      <Row label="Nightly Summary" desc="A short end-of-day recap of activity and tomorrow's schedule">
+        <Toggle on={prefs.nightly_summary_enabled ?? false} onChange={v => set('nightly_summary_enabled', v)} />
+      </Row>
+      <Field label="Summary time" value={prefs.nightly_summary_time || '21:00'}
+        onChange={v => set('nightly_summary_time', v)} type="time" />
+      <div style={{ padding: '8px 0 14px', fontSize: 12, color: J.textMuted, lineHeight: 1.5 }}>
+        Requires staying connected to JARVIS at the scheduled time.
+      </div>
     </>),
 
     voice: (<>

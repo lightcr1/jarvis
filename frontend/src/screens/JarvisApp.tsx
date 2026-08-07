@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconAmbient, IconJarvisMark } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconAmbient, IconJarvisMark, IconZap } from './jarvis-shared';
 import { GreetingOverlay } from '../components/GreetingOverlay';
 import { OnboardingModal, shouldShowOnboarding } from '../components/OnboardingModal';
 import { LoginScreen } from './LoginScreen';
@@ -250,10 +250,32 @@ function ShortcutsOverlay({ onClose }: { onClose: () => void }) {
   );
 }
 
+function NoticeCard({ icon, accent, title, message, onDismiss }: {
+  icon: React.ReactNode; accent: string; title: string; message: string; onDismiss: () => void;
+}) {
+  return (
+    <div style={{ width: 'min(340px, calc(100vw - 28px))', background: J.bg2, border: `1px solid ${accent}`, borderLeft: `3px solid ${accent}`, borderRadius: 12, padding: '12px 14px', boxShadow: '0 12px 32px rgba(0,0,0,0.28)', pointerEvents: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ color: accent, display: 'flex' }}>{icon}</span>
+          <div style={{ fontSize: 12, fontWeight: 600, color: J.text }}>{title}</div>
+        </div>
+        <button onClick={onDismiss} aria-label="Dismiss" style={{ background: 'none', border: 'none', color: J.textMuted, cursor: 'pointer', display: 'flex', padding: 0 }}>
+          <IconX size={14} />
+        </button>
+      </div>
+      <div style={{ fontSize: 12, color: J.textSec, lineHeight: 1.5, whiteSpace: 'pre-wrap', maxHeight: 240, overflowY: 'auto' }}>{message}</div>
+    </div>
+  );
+}
+
+const DIGEST_LABEL: Record<string, string> = { weekly_digest: 'Weekly Digest', nightly_summary: 'Nightly Summary' };
+const DIGEST_ICON: Record<string, React.ReactNode> = { weekly_digest: <IconBook size={12} />, nightly_summary: <IconMoon size={12} /> };
+
 export function JarvisApp() {
   useJ(); // re-render when theme changes
   const liveStatus = useJarvisLiveStatus();
-  const { alerts, dismissAlert } = useJarvisAlerts();
+  const { alerts, dismissAlert, briefings, dismissBriefing, suggestions, dismissSuggestion, digests, dismissDigest } = useJarvisAlerts();
   const integrationStatus = useIntegrationStatus();
   const guest = isGuestMode();
   const [screen, setScreen] = useState<Screen>(() => {
@@ -396,6 +418,24 @@ export function JarvisApp() {
     return () => { timers.forEach(timer => window.clearTimeout(timer)); };
   }, [alerts, dismissAlert, notificationsEnabled]);
 
+  useEffect(() => {
+    if (!briefings.length || !notificationsEnabled) return;
+    const timers = briefings.map((b) => window.setTimeout(() => dismissBriefing(b.ts), 15000));
+    return () => { timers.forEach(timer => window.clearTimeout(timer)); };
+  }, [briefings, dismissBriefing, notificationsEnabled]);
+
+  useEffect(() => {
+    if (!digests.length || !notificationsEnabled) return;
+    const timers = digests.map((d) => window.setTimeout(() => dismissDigest(d.ts), 15000));
+    return () => { timers.forEach(timer => window.clearTimeout(timer)); };
+  }, [digests, dismissDigest, notificationsEnabled]);
+
+  useEffect(() => {
+    if (!suggestions.length || !notificationsEnabled) return;
+    const timers = suggestions.map((s) => window.setTimeout(() => dismissSuggestion(s.suggestion_id), 10000));
+    return () => { timers.forEach(timer => window.clearTimeout(timer)); };
+  }, [suggestions, dismissSuggestion, notificationsEnabled]);
+
   if (screen === 'login') return <LoginScreen onLogin={handleLogin} onGuest={handleGuestLogin} />;
   if (screen === 'ambient') return <AmbientDisplayScreen onExit={() => setScreenAndUrl('chat')} />;
 
@@ -427,18 +467,36 @@ export function JarvisApp() {
         {notificationsEnabled && (
           <div style={{ position: 'absolute', right: 14, bottom: mobilePad ? 74 : 14, zIndex: 40, display: 'flex', flexDirection: 'column', gap: 10, pointerEvents: 'none' }}>
             {alerts.map(alert => (
-              <div key={alert.id} style={{ width: 'min(340px, calc(100vw - 28px))', background: J.bg2, border: `1px solid ${alert.level === 'warning' ? J.warn : J.border}`, borderLeft: `3px solid ${alert.level === 'warning' ? J.warn : J.blue}`, borderRadius: 12, padding: '12px 14px', boxShadow: '0 12px 32px rgba(0,0,0,0.28)', pointerEvents: 'auto' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 4 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span style={{ color: alert.level === 'warning' ? J.warn : J.blue, display: 'flex' }}><IconBell size={12} /></span>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: J.text }}>{alert.title}</div>
-                  </div>
-                  <button onClick={() => dismissAlert(alert.id)} aria-label="Dismiss alert" style={{ background: 'none', border: 'none', color: J.textMuted, cursor: 'pointer', display: 'flex', padding: 0 }}>
-                    <IconX size={14} />
-                  </button>
-                </div>
-                <div style={{ fontSize: 12, color: J.textSec, lineHeight: 1.5 }}>{alert.message}</div>
-              </div>
+              <NoticeCard key={alert.id}
+                icon={<IconBell size={12} />}
+                accent={alert.level === 'warning' ? J.warn : J.blue}
+                title={alert.title}
+                message={alert.message}
+                onDismiss={() => dismissAlert(alert.id)} />
+            ))}
+            {briefings.map(b => (
+              <NoticeCard key={`briefing-${b.ts}`}
+                icon={<IconSun size={12} />}
+                accent={J.amber}
+                title="Morning Briefing"
+                message={b.text}
+                onDismiss={() => dismissBriefing(b.ts)} />
+            ))}
+            {digests.map(d => (
+              <NoticeCard key={`digest-${d.ts}`}
+                icon={DIGEST_ICON[d.kind] ?? <IconBook size={12} />}
+                accent={J.amber}
+                title={DIGEST_LABEL[d.kind] ?? 'Digest'}
+                message={d.text}
+                onDismiss={() => dismissDigest(d.ts)} />
+            ))}
+            {suggestions.map(s => (
+              <NoticeCard key={s.suggestion_id}
+                icon={<IconZap size={12} />}
+                accent={J.success}
+                title="Suggestion"
+                message={s.message}
+                onDismiss={() => dismissSuggestion(s.suggestion_id)} />
             ))}
           </div>
         )}

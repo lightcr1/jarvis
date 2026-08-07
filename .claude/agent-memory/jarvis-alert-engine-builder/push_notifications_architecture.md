@@ -63,11 +63,23 @@ router-build time, since keys are cached after first call) rather than a `LiveRe
   `pushError`), not persisted as a `UserPreferences` field — the subscription itself (stored
   server-side per user) is the source of truth.
 
+**2026-08-07 update — quiet hours wired into `fanout_push` (V2 Phase 1 gap closure, see
+[[phase1_frontend_gaps_closed]]):** `fanout_push(..., prefs_store: object | None = None)` new
+optional param. `_is_quiet_hours_suppressed(payload, user_id, prefs_store)` in
+`push_service.py` skips a user's push if `prefs_store.get(user_id)["quiet_hours_enabled"]`
+is true and `is_within_quiet_hours(...)` (reused directly from `user_preferences_store.py`,
+same helper `api_auth_chat.py::_context_mode_for_prefs` already used for in-chat DND) says
+the current time falls inside their window — **unless** the event `type` is in
+`_QUIET_HOURS_EXEMPT_TYPES = {"briefing", "weekly_digest", "nightly_summary"}**, since those
+fire at a time the user explicitly chose themselves (suppressing them would defeat their own
+schedule). Alerts, suggestions, and policy/playbook events all respect quiet hours. Wired in
+`jarvisappv4.py`'s `_alert_push_fanout` via `prefs_store=user_preferences_store`. In-app
+WebSocket delivery is untouched by this — only the push-to-closed-app path is suppressed.
+
 **Deferred / open decisions:**
-- No role-scoping on push targets: broadcast-style events (alerts, suggestions) go to every
-  subscribed user, not just admins, even though e.g. suggestions are infra-focused. Would
-  need a role check in `fanout_push` or filtering subscriptions by role.
-- Quiet hours (`quiet_hours_enabled/start/end` in `user_preferences_store.py`, added by a
-  concurrent Phase 2 agent) are NOT wired into the push fanout path — a suggestion/alert
-  fired during a user's quiet hours will still push. Would need `fanout_push` to accept a
-  preferences lookup.
+- No role-scoping on push targets: broadcast-style events (alerts, suggestions) still go to
+  every subscribed user, not just admins — `PushSubscriptionStore` doesn't track role, and
+  role-tagging push subscriptions would be a bigger schema change. The 2026-08-07 pass DID
+  add role-scoped delivery for policy/playbook admin-ops events, but WS-only (see
+  `broadcast_to_admins` in [[websocket_fanout]]) — deliberately no push fanout for those
+  since there's no role info to filter subscriptions by.

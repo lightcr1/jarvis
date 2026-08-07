@@ -8,8 +8,11 @@ metadata:
 Built 2026-07-27 alongside [[push-notifications-architecture]] and the AlertEngine pluggable
 refactor noted in [[alert-engine-architecture]]. All three new scheduled loops live in
 `jarvisappv4.py` and follow the exact `_morning_briefing_loop()` pattern: per-user opt-in
-prefs in `user_preferences_store.py`, broadcast via `get_alert_broadcaster().broadcast()`,
-started as `asyncio.create_task()` in `_lifespan()`, cancelled on shutdown.
+prefs in `user_preferences_store.py`, started as `asyncio.create_task()` in `_lifespan()`,
+cancelled on shutdown. **2026-08-07 update:** broadcast delivery for all three switched from
+`get_alert_broadcaster().broadcast()` to `.notify_user(uid, payload)` — see [[websocket_fanout]]
+for why (`broadcast()` was leaking every user's personal briefing/digest text to every
+connected client, filtered only client-side).
 
 **Weekly digest** (`_weekly_digest_loop`, type `weekly_digest`):
 - Prefs: `weekly_digest_enabled` (bool), `weekly_digest_day` (lowercase weekday name,
@@ -61,19 +64,17 @@ started as `asyncio.create_task()` in `_lifespan()`, cancelled on shutdown.
 - Proxmox snapshot is skipped gracefully if `proxmox_health()["configured"]` is False (no
   hosts configured) — same "don't crash if integration absent" pattern as HA entity rules.
 
-**Frontend data plumbing (not a full UI yet):** `useJarvisAlerts()` in
-`frontend/src/shared/api/alerts.ts` now also parses `weekly_digest`/`nightly_summary` (into
-a `digests: DigestPush[]` array, `dismissDigest(ts)`) and `suggestion` (into `suggestions:
-SuggestionEvent[]`, `dismissSuggestion(suggestion_id)`). **No visual card component was
-built** — this mirrors the pre-existing `briefings`/`dismissBriefing` state, which was
-already returned by the hook but never rendered anywhere in `JarvisApp.tsx` before this
-session either. Building the actual dismissible-card UI is the natural next step for
-whoever picks up Phase 1 frontend work.
+**Frontend data plumbing:** `useJarvisAlerts()` in `frontend/src/shared/api/alerts.ts` parses
+`weekly_digest`/`nightly_summary` (into a `digests: DigestPush[]` array, `dismissDigest(ts)`)
+and `suggestion` (into `suggestions: SuggestionEvent[]`, `dismissSuggestion(suggestion_id)`).
+**2026-08-07 update:** the visual card UI this note used to flag as missing is now built —
+see [[phase1_frontend_gaps_closed]] for the `NoticeCard` component in `JarvisApp.tsx` that
+renders alerts/briefings/digests/suggestions as dismissible toast-style cards.
 
 **New user preference fields** (in `user_preferences_store.py`'s `DEFAULT_PREFERENCES` +
 `update()`, and mirrored in `frontend/src/shared/api/client.ts`'s `UserPreferences` type):
 `weekly_digest_enabled`, `weekly_digest_day`, `weekly_digest_time`,
-`nightly_summary_enabled`, `nightly_summary_time`. All default to disabled — there is
-currently NO settings UI to turn them on, so in production these loops will iterate over
-zero enabled users until a frontend toggle is added (same "add to prefs first, wire settings
-UI later" sequencing risk as the digest/summary loops shipping ahead of their UI).
+`nightly_summary_enabled`, `nightly_summary_time`. All default to disabled. **2026-08-07
+update:** Settings UI for these now exists (see [[phase1_frontend_gaps_closed]]) — this note
+used to flag "no settings UI to turn them on" as the reason these loops would iterate over
+zero enabled users in production; that gap is closed.

@@ -7,6 +7,8 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from datetime import datetime
+
 from jarvis.push_store import PushSubscriptionStore
 from jarvis.push_service import build_push_payload, fanout_push, _target_user_ids
 from jarvis.api_notifications import build_notifications_router
@@ -205,6 +207,123 @@ async def test_fanout_push_scopes_user_events_to_that_user():
     )
     assert len(sent) == 1
     assert sent[0]["endpoint"] == SUB_B["endpoint"]
+
+
+# ---------------------------------------------------------------------------
+# fanout_push — quiet hours suppression
+# ---------------------------------------------------------------------------
+
+class _FakePrefsStore:
+    def __init__(self, prefs: dict[str, dict]):
+        self._prefs = prefs
+
+    def get(self, user_id: str) -> dict:
+        return self._prefs.get(user_id, {})
+
+
+def _freeze_push_service_clock(monkeypatch, hour: int, minute: int) -> None:
+    import jarvis.push_service as push_service_module
+
+    class _FixedDateTime(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 1, 1, hour, minute)
+
+    monkeypatch.setattr(push_service_module, "datetime", _FixedDateTime)
+
+
+@pytest.mark.asyncio
+async def test_fanout_push_suppresses_alert_during_quiet_hours(monkeypatch):
+    _freeze_push_service_clock(monkeypatch, 23, 30)
+    store = _FakeStore({"user-1": [SUB_A]})
+    prefs_store = _FakePrefsStore({
+        "user-1": {"quiet_hours_enabled": True, "quiet_hours_start": "22:00", "quiet_hours_end": "07:00"},
+    })
+    sent: list[dict] = []
+
+    await fanout_push(
+        {"type": "alert", "message": "hi"},
+        connected_user_ids=set(),
+        push_store=store,
+        vapid_keys=FAKE_VAPID,
+        send_fn=lambda s, n, v: sent.append(s) or True,
+        prefs_store=prefs_store,
+    )
+    assert sent == []
+
+
+@pytest.mark.asyncio
+async def test_fanout_push_does_not_suppress_scheduled_briefing_during_quiet_hours(monkeypatch):
+    _freeze_push_service_clock(monkeypatch, 23, 30)
+    store = _FakeStore({"user-1": [SUB_A]})
+    prefs_store = _FakePrefsStore({
+        "user-1": {"quiet_hours_enabled": True, "quiet_hours_start": "22:00", "quiet_hours_end": "07:00"},
+    })
+    sent: list[dict] = []
+
+    await fanout_push(
+        {"type": "briefing", "user_id": "user-1", "text": "hi"},
+        connected_user_ids=set(),
+        push_store=store,
+        vapid_keys=FAKE_VAPID,
+        send_fn=lambda s, n, v: sent.append(s) or True,
+        prefs_store=prefs_store,
+    )
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_fanout_push_no_suppression_when_quiet_hours_disabled(monkeypatch):
+    _freeze_push_service_clock(monkeypatch, 23, 30)
+    store = _FakeStore({"user-1": [SUB_A]})
+    prefs_store = _FakePrefsStore({"user-1": {"quiet_hours_enabled": False}})
+    sent: list[dict] = []
+
+    await fanout_push(
+        {"type": "alert", "message": "hi"},
+        connected_user_ids=set(),
+        push_store=store,
+        vapid_keys=FAKE_VAPID,
+        send_fn=lambda s, n, v: sent.append(s) or True,
+        prefs_store=prefs_store,
+    )
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_fanout_push_no_suppression_outside_quiet_window(monkeypatch):
+    _freeze_push_service_clock(monkeypatch, 13, 0)
+    store = _FakeStore({"user-1": [SUB_A]})
+    prefs_store = _FakePrefsStore({
+        "user-1": {"quiet_hours_enabled": True, "quiet_hours_start": "22:00", "quiet_hours_end": "07:00"},
+    })
+    sent: list[dict] = []
+
+    await fanout_push(
+        {"type": "alert", "message": "hi"},
+        connected_user_ids=set(),
+        push_store=store,
+        vapid_keys=FAKE_VAPID,
+        send_fn=lambda s, n, v: sent.append(s) or True,
+        prefs_store=prefs_store,
+    )
+    assert len(sent) == 1
+
+
+@pytest.mark.asyncio
+async def test_fanout_push_no_suppression_when_prefs_store_omitted(monkeypatch):
+    _freeze_push_service_clock(monkeypatch, 23, 30)
+    store = _FakeStore({"user-1": [SUB_A]})
+    sent: list[dict] = []
+
+    await fanout_push(
+        {"type": "alert", "message": "hi"},
+        connected_user_ids=set(),
+        push_store=store,
+        vapid_keys=FAKE_VAPID,
+        send_fn=lambda s, n, v: sent.append(s) or True,
+    )
+    assert len(sent) == 1
 
 
 # ---------------------------------------------------------------------------

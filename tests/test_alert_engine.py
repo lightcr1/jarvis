@@ -1092,3 +1092,96 @@ async def test_broadcast_to_user_ignores_other_users():
 
     await broadcaster.broadcast_to_user("user-1", {"type": "briefing_seen", "last_briefing_seen_ts": 456})
     assert len(received) == 1
+
+
+@pytest.mark.asyncio
+async def test_broadcast_to_user_does_not_trigger_push_fanout():
+    broadcaster = AlertBroadcaster()
+    calls: list[tuple[dict, set]] = []
+
+    class _FakeWS:
+        async def send_json(self, data):
+            pass
+
+    async def fake_fanout(payload, connected_user_ids):
+        calls.append((payload, connected_user_ids))
+
+    broadcaster.configure_push_fanout(fake_fanout)
+    broadcaster.connect(_FakeWS(), user_id="user-1")  # type: ignore
+    await broadcaster.broadcast_to_user("user-1", {"type": "briefing_seen", "last_briefing_seen_ts": 1})
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_notify_user_reaches_target_and_triggers_push_fanout():
+    broadcaster = AlertBroadcaster()
+    received: list[dict] = []
+    calls: list[tuple[dict, set]] = []
+
+    class _FakeWS:
+        async def send_json(self, data):
+            received.append(data)
+
+    async def fake_fanout(payload, connected_user_ids):
+        calls.append((payload, connected_user_ids))
+
+    broadcaster.configure_push_fanout(fake_fanout)
+    ws1 = _FakeWS()
+    ws2 = _FakeWS()
+    broadcaster.connect(ws1, user_id="user-1")  # type: ignore
+    broadcaster.connect(ws2, user_id="user-2")  # type: ignore
+
+    await broadcaster.notify_user("user-1", {"type": "briefing", "user_id": "user-1", "text": "hi"})
+    assert len(received) == 1
+    assert len(calls) == 1
+    assert calls[0][0]["user_id"] == "user-1"
+
+
+@pytest.mark.asyncio
+async def test_broadcast_to_admins_reaches_only_admin_role_sockets():
+    broadcaster = AlertBroadcaster()
+    received: list[dict] = []
+
+    class _FakeWS:
+        async def send_json(self, data):
+            received.append(data)
+
+    admin_ws = _FakeWS()
+    user_ws = _FakeWS()
+    broadcaster.connect(admin_ws, user_id="usr-admin", role="admin")  # type: ignore
+    broadcaster.connect(user_ws, user_id="usr-1", role="standard_user")  # type: ignore
+
+    await broadcaster.broadcast_to_admins({"type": "policy_escalation", "message": "restart storm"})
+    assert len(received) == 1
+
+
+@pytest.mark.asyncio
+async def test_broadcast_to_admins_does_not_trigger_push_fanout():
+    broadcaster = AlertBroadcaster()
+    calls: list[tuple[dict, set]] = []
+
+    class _FakeWS:
+        async def send_json(self, data):
+            pass
+
+    async def fake_fanout(payload, connected_user_ids):
+        calls.append((payload, connected_user_ids))
+
+    broadcaster.configure_push_fanout(fake_fanout)
+    broadcaster.connect(_FakeWS(), user_id="usr-admin", role="admin")  # type: ignore
+    await broadcaster.broadcast_to_admins({"type": "policy_escalation", "message": "restart storm"})
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_broadcast_to_admins_ignores_sockets_without_role():
+    broadcaster = AlertBroadcaster()
+    received: list[dict] = []
+
+    class _FakeWS:
+        async def send_json(self, data):
+            received.append(data)
+
+    broadcaster.connect(_FakeWS())  # type: ignore  # no user_id/role, e.g. legacy connect()
+    await broadcaster.broadcast_to_admins({"type": "policy_escalation", "message": "hi"})
+    assert received == []

@@ -26,15 +26,18 @@ class AlertBroadcaster:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._clients: dict[WebSocket, str | None] = {}
+        self._client_roles: dict[WebSocket, str | None] = {}
         self._push_fanout: PushFanoutFn | None = None
 
-    def connect(self, ws: WebSocket, user_id: str | None = None) -> None:
+    def connect(self, ws: WebSocket, user_id: str | None = None, role: str | None = None) -> None:
         with self._lock:
             self._clients[ws] = user_id
+            self._client_roles[ws] = role
 
     def disconnect(self, ws: WebSocket) -> None:
         with self._lock:
             self._clients.pop(ws, None)
+            self._client_roles.pop(ws, None)
 
     def connected_user_ids(self) -> set[str]:
         with self._lock:
@@ -43,15 +46,16 @@ class AlertBroadcaster:
     def configure_push_fanout(self, fn: PushFanoutFn | None) -> None:
         self._push_fanout = fn
 
-    async def broadcast(self, payload: dict) -> None:
-        with self._lock:
-            targets = list(self._clients.keys())
+    async def _send_to(self, targets: list[WebSocket], payload: dict) -> None:
         for ws in targets:
             try:
                 await ws.send_json(payload)
             except Exception:
                 with self._lock:
                     self._clients.pop(ws, None)
+                    self._client_roles.pop(ws, None)
+
+    async def _push(self, payload: dict) -> None:
         if self._push_fanout is None:
             return
         try:
@@ -59,15 +63,57 @@ class AlertBroadcaster:
         except Exception as exc:
             logger.warning("Push fanout failed: %s", exc)
 
+    async def broadcast(self, payload: dict) -> None:
+        """True broadcast — every connected `/ws/alerts` client, regardless of
+        user or role. Reserved for content that is genuinely shared/system-wide
+        (e.g. Home Assistant health, default host-level alert rules with no
+        `owner_user_id`, proactive infra suggestions) — not for anything scoped
+        to one user or to admins, which should use `broadcast_to_user`/
+        `notify_user`/`broadcast_to_admins` instead so private payloads don't
+        ride over every open tab's WebSocket.
+        """
+        with self._lock:
+            targets = list(self._clients.keys())
+        await self._send_to(targets, payload)
+        await self._push(payload)
+
     async def broadcast_to_user(self, user_id: str, payload: dict) -> None:
+        """WebSocket-only delivery to `user_id`'s live connections — deliberately
+        no push fanout. Used for lightweight cross-device sync signals (e.g.
+        `briefing_seen`) where pushing a notification to a closed app would be
+        meaningless noise. For real user-facing notification content, use
+        `notify_user` instead.
+        """
         with self._lock:
             targets = [ws for ws, uid in self._clients.items() if uid == user_id]
-        for ws in targets:
-            try:
-                await ws.send_json(payload)
-            except Exception:
-                with self._lock:
-                    self._clients.pop(ws, None)
+        await self._send_to(targets, payload)
+
+    async def notify_user(self, user_id: str, payload: dict) -> None:
+        """Like `broadcast_to_user`, but also push-fanouts to `user_id` if they
+        aren't currently connected — for genuine per-user notification content
+        (morning briefing, weekly digest, nightly summary, an owner's own custom
+        alert rule firing) as opposed to silent sync signals.
+        """
+        await self.broadcast_to_user(user_id, payload)
+        await self._push(payload)
+
+    async def broadcast_to_admins(self, payload: dict) -> None:
+        """Scopes WebSocket delivery to connected sessions whose role is
+        "admin" — used for self-healing policy/playbook engine internals
+        (restart actions, escalations, playbook run status) whose REST control
+        surface (`/admin/policies/*`, `/admin/playbooks/*`) is already fully
+        admin-gated, so the live push channel should match that same audience
+        instead of reaching every logged-in standard_user/guest tab.
+
+        Push-to-closed-app fanout is deliberately not attempted here:
+        `PushSubscriptionStore` doesn't track role, and role-tagging push
+        subscriptions is a bigger schema change left for a future pass —
+        admins away from an open tab can still check `/admin/policies/history`
+        or the audit log.
+        """
+        with self._lock:
+            targets = [ws for ws, role in self._client_roles.items() if role == "admin"]
+        await self._send_to(targets, payload)
 
 
 _broadcaster = AlertBroadcaster()
@@ -259,7 +305,7 @@ def build_alerts_router(deps: dict) -> APIRouter:
             return
 
         await websocket.accept()
-        _broadcaster.connect(websocket, user_id=session["user"]["id"])
+        _broadcaster.connect(websocket, user_id=session["user"]["id"], role=session["user"].get("role"))
 
         try:
             ha_alerts = _get_ha_alerts(deps, session)

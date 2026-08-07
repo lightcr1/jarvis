@@ -508,7 +508,7 @@ alert_engine = AlertEngine(
     audit_admin_event=_audit_admin_event,
     ha_store=home_assistant_store,
     broadcast_fn=get_alert_broadcaster().broadcast,
-    broadcast_to_user_fn=get_alert_broadcaster().broadcast_to_user,
+    broadcast_to_user_fn=get_alert_broadcaster().notify_user,
     user_store=user_store,
 )
 
@@ -516,7 +516,10 @@ suggestion_engine = SuggestionEngine()
 
 
 def _alert_push_fanout(payload: dict, connected_user_ids: set[str]):
-    return fanout_push(payload, connected_user_ids, push_subscription_store, get_vapid_keys())
+    return fanout_push(
+        payload, connected_user_ids, push_subscription_store, get_vapid_keys(),
+        prefs_store=user_preferences_store,
+    )
 
 
 get_alert_broadcaster().configure_push_fanout(_alert_push_fanout)
@@ -529,7 +532,7 @@ policy_engine = PolicyEngine(
     write_permission_check=lambda: role_has_permission("admin", "actions.write.execute"),
     audit_admin_event=_audit_admin_event,
     ha_store=home_assistant_store,
-    broadcast_fn=get_alert_broadcaster().broadcast,
+    broadcast_fn=get_alert_broadcaster().broadcast_to_admins,
 )
 
 playbook_executor = PlaybookExecutor(
@@ -537,7 +540,7 @@ playbook_executor = PlaybookExecutor(
     action_dispatch=build_default_action_dispatch(run_cmd, ensure_service_allowed),
     audit_admin_event=_audit_admin_event,
     emergency_stop_enabled=emergency_stop_enabled,
-    broadcast_fn=get_alert_broadcaster().broadcast,
+    broadcast_fn=get_alert_broadcaster().broadcast_to_admins,
 )
 
 task_service = TaskService(
@@ -949,7 +952,7 @@ async def _morning_briefing_loop() -> None:
                     reply_text += await loop.run_in_executor(None, _briefing_calendar_line, uid, role)
                     reply_text += await loop.run_in_executor(None, _briefing_email_line, uid, role)
                     from jarvis.api_alerts import get_alert_broadcaster
-                    await get_alert_broadcaster().broadcast({
+                    await get_alert_broadcaster().notify_user(uid, {
                         "type": "briefing",
                         "user_id": uid,
                         "text": reply_text,
@@ -1065,7 +1068,7 @@ async def _weekly_digest_loop() -> None:
                 if prefs.get("weekly_digest_time", "18:00") != current_hm:
                     continue
                 try:
-                    await get_alert_broadcaster().broadcast({
+                    await get_alert_broadcaster().notify_user(uid, {
                         "type": "weekly_digest",
                         "user_id": uid,
                         "text": text,
@@ -1158,7 +1161,7 @@ async def _nightly_summary_loop() -> None:
                     chat_count = _count_sessions_active_on(sessions, today)
                     briefing_sent = _briefing_sent_dates.get(uid) == today
                     text = _build_nightly_summary_text(chat_count, alerts_today, briefing_sent, tomorrow_lines)
-                    await get_alert_broadcaster().broadcast({
+                    await get_alert_broadcaster().notify_user(uid, {
                         "type": "nightly_summary",
                         "user_id": uid,
                         "text": text,

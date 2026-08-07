@@ -6,3 +6,4 @@
 - [Push Notifications Architecture](push_notifications_architecture.md) — VAPID keys, subscription store, webpush send/fanout, frontend wiring
 - [Proactive Intelligence V2](proactive_intelligence_v2.md) — Weekly digest, nightly summary, and suggestion-engine scheduled loops
 - [Autonomous Infra V2 Phase 4](autonomous_infra_v2_phase4.md) — PolicyStore/PolicyEngine self-healing + PlaybookStore/PlaybookExecutor, AlertEngine-vs-PolicyEngine reasoning
+- [Phase 1 Frontend Gaps Closed](phase1_frontend_gaps_closed.md) — 2026-08-07: digest/summary settings UI, card rendering, quiet-hours push suppression, role-scoped broadcast (notify_user/broadcast_to_admins)
