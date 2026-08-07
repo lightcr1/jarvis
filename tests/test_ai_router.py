@@ -403,7 +403,7 @@ class ToolCapableProvidersTest(unittest.TestCase):
         # OpenRouter is the documented default cloud provider — it must be able
         # to use real tools (Proxmox/HA/calendar/etc.) rather than silently
         # falling back to an ungrounded plain LLM reply.
-        for name in ("openai", "anthropic", "openrouter", "mistral", "deepseek"):
+        for name in ("openai", "anthropic", "openrouter", "mistral", "deepseek", "gemini"):
             self.assertIn(name, AIRouter.TOOL_CAPABLE_PROVIDERS)
 
 

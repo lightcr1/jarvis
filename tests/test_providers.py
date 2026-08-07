@@ -272,3 +272,114 @@ def test_models_dict_has_new_providers():
     for tier in (Tier.SIMPLE, Tier.MEDIUM, Tier.COMPLEX):
         assert MODELS["openrouter"][tier] != "openrouter/free"
         assert "/" in MODELS["openrouter"][tier]
+
+
+# ─── Gemini provider — tool-calling ───────────────────────────────────────────
+
+def test_gemini_text_only_completion():
+    from jarvis.providers.gemini_provider import GeminiProvider
+
+    mock_resp = MagicMock()
+    mock_resp.text = "Hello there."
+    mock_resp.function_calls = None
+    mock_resp.usage_metadata = MagicMock(prompt_token_count=10, candidates_token_count=4)
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_resp
+
+    p = GeminiProvider(client_factory=lambda: mock_client)
+    result = p.create_chat_completion(
+        model="gemini-2.5-flash", messages=[{"role": "user", "content": "hi"}],
+        system_prompt="sys", max_tokens=200, tier=Tier.MEDIUM, stream=False,
+    )
+    assert result.text == "Hello there."
+    assert result.tool_calls == []
+
+
+def test_gemini_passes_function_declarations_when_tools_given():
+    from jarvis.providers.gemini_provider import GeminiProvider
+
+    mock_resp = MagicMock()
+    mock_resp.text = ""
+    mock_resp.function_calls = None
+    mock_resp.usage_metadata = None
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_resp
+
+    p = GeminiProvider(client_factory=lambda: mock_client)
+    tools_schema = [{
+        "type": "function",
+        "function": {"name": "get_login_history", "description": "d", "parameters": {"type": "object", "properties": {}}},
+    }]
+    p.create_chat_completion(
+        model="gemini-2.5-flash", messages=[{"role": "user", "content": "who logged in?"}],
+        system_prompt="sys", max_tokens=200, tier=Tier.MEDIUM, stream=False, tools=tools_schema,
+    )
+    call_kwargs = mock_client.models.generate_content.call_args.kwargs
+    config = call_kwargs["config"]
+    assert len(config.tools) == 1
+    assert config.tools[0].function_declarations[0].name == "get_login_history"
+
+
+def test_gemini_parses_function_call_response():
+    from google.genai import types
+    from jarvis.providers.gemini_provider import GeminiProvider
+
+    fc = types.FunctionCall(name="proxmox_status", args={})
+    mock_resp = MagicMock()
+    mock_resp.text = ""
+    mock_resp.function_calls = [fc]
+    mock_resp.usage_metadata = None
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_resp
+
+    p = GeminiProvider(client_factory=lambda: mock_client)
+    result = p.create_chat_completion(
+        model="gemini-2.5-flash", messages=[{"role": "user", "content": "proxmox status?"}],
+        system_prompt="sys", max_tokens=200, tier=Tier.MEDIUM, stream=False,
+        tools=[{
+            "type": "function",
+            "function": {"name": "proxmox_status", "description": "d", "parameters": {"type": "object", "properties": {}}},
+        }],
+    )
+    assert len(result.tool_calls) == 1
+    assert result.tool_calls[0].name == "proxmox_status"
+    assert result.tool_calls[0].arguments == {}
+    assert result.tool_calls[0].id  # synthesized fallback id since FunctionCall.id is None here
+
+
+def test_gemini_no_text_no_tools_falls_back_to_placeholder():
+    from jarvis.providers.gemini_provider import GeminiProvider
+
+    mock_resp = MagicMock()
+    mock_resp.text = ""
+    mock_resp.function_calls = None
+    mock_resp.usage_metadata = None
+    mock_client = MagicMock()
+    mock_client.models.generate_content.return_value = mock_resp
+
+    p = GeminiProvider(client_factory=lambda: mock_client)
+    result = p.create_chat_completion(
+        model="gemini-2.5-flash", messages=[{"role": "user", "content": "hi"}],
+        system_prompt="sys", max_tokens=200, tier=Tier.MEDIUM, stream=False,
+    )
+    assert "No output" in result.text
+
+
+def test_gemini_translates_openai_style_tool_exchange_into_function_parts():
+    from jarvis.providers.gemini_provider import _to_gemini_messages
+
+    messages = [
+        {"role": "user", "content": "what's the proxmox status?"},
+        {"role": "assistant", "content": None, "tool_calls": [
+            {"id": "call_1", "type": "function", "function": {"name": "proxmox_status", "arguments": "{}"}},
+        ]},
+        {"role": "tool", "tool_call_id": "call_1", "content": '{"configured": true, "summary": {"running": 4}}'},
+    ]
+    contents = _to_gemini_messages(messages)
+    assert len(contents) == 3
+    assert contents[0].role == "user"
+    assert contents[1].role == "model"
+    assert contents[1].parts[0].function_call.name == "proxmox_status"
+    assert contents[2].role == "user"
+    assert contents[2].parts[0].function_response.name == "proxmox_status"
+    assert contents[2].parts[0].function_response.response == {"configured": True, "summary": {"running": 4}}

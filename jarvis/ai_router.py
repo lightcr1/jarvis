@@ -308,8 +308,10 @@ class AIRouter:
     # OpenRouter is the documented default cloud provider, and without it those
     # users never get grounded tool results (Proxmox/HA/calendar/etc.), which
     # pushed the model toward confidently fabricating plausible-looking data.
-    # Gemini/local are not wired up for tool schemas yet.
-    TOOL_CAPABLE_PROVIDERS = {"openai", "anthropic", "openrouter", "mistral", "deepseek"}
+    # Gemini has its own native function-calling (see providers/gemini_provider.py's
+    # _to_gemini_messages for the OpenAI-tool-message -> Content/Part translation).
+    # local is not wired up for tool schemas yet — support varies too much by model.
+    TOOL_CAPABLE_PROVIDERS = {"openai", "anthropic", "openrouter", "mistral", "deepseek", "gemini"}
 
     def run_with_tools(
         self,
