@@ -130,6 +130,15 @@ def build_billing_router(deps: dict) -> APIRouter:
         elif event_type == "customer.subscription.deleted" and user_id:
             assign_plan(user_id, "", plan_store=current("plan_store"), user_limits_store=current("user_limits_store"), credit_store=current("credit_store"))
             current("audit_log").write("billing_subscription_cancelled", {"user_id": user_id})
+        elif event_type == "customer.subscription.updated" and user_id and obj.get("status") not in ("active", "trialing"):
+            # A renewal charge failing doesn't delete the subscription — Stripe
+            # marks it past_due/unpaid and retries per its dunning schedule,
+            # sometimes for weeks, before ever sending .deleted. Without this,
+            # ensure_monthly_grant() (plan_service.py) keeps granting free AI
+            # credit every month the whole time, since it only checks whether a
+            # plan_id is still assigned, not whether Stripe is still being paid.
+            assign_plan(user_id, "", plan_store=current("plan_store"), user_limits_store=current("user_limits_store"), credit_store=current("credit_store"))
+            current("audit_log").write("billing_subscription_payment_lapsed", {"user_id": user_id, "status": obj.get("status")})
 
         return {"received": True}
 

@@ -223,6 +223,49 @@ class BillingApiTests(unittest.TestCase):
         billing = self.client.get("/auth/me/billing", headers={"X-Jarvis-Session": buyer_token}).json()
         self.assertIsNone(billing.get("plan"))
 
+    def test_webhook_unassigns_plan_on_subscription_past_due(self):
+        # Regression coverage: a failed renewal charge does not delete the
+        # subscription — Stripe marks it past_due/unpaid and retries for days
+        # or weeks before ever sending .deleted. Without handling .updated,
+        # the user kept their plan (and its monthly AI credit) the whole time.
+        _, finance_token = self._create_user("finance6", permissions=["billing.manage"])
+        self.client.put("/billing/stripe/credentials", headers={"X-Jarvis-Session": finance_token},
+                         json={"secret_key": "sk_test_ok", "webhook_secret": "whsec_ok"})
+        buyer_id, buyer_token = self._create_user("buyer6")
+        plan = self._create_plan(stripe_price_id="price_123")
+        self.client.put(f"/admin/users/{buyer_id}/plan", headers=self._admin_headers(), json={"plan_id": plan["id"]})
+
+        payload = json.dumps({
+            "type": "customer.subscription.updated",
+            "data": {"object": {"status": "past_due", "metadata": {"user_id": buyer_id}}},
+        }).encode()
+        signature = self._sign(payload, "whsec_ok")
+        resp = self.client.post("/webhooks/stripe", content=payload, headers={"Stripe-Signature": signature})
+        self.assertEqual(200, resp.status_code)
+
+        billing = self.client.get("/auth/me/billing", headers={"X-Jarvis-Session": buyer_token}).json()
+        self.assertIsNone(billing.get("plan"))
+
+    def test_webhook_keeps_plan_when_subscription_still_active(self):
+        _, finance_token = self._create_user("finance7", permissions=["billing.manage"])
+        self.client.put("/billing/stripe/credentials", headers={"X-Jarvis-Session": finance_token},
+                         json={"secret_key": "sk_test_ok", "webhook_secret": "whsec_ok"})
+        buyer_id, buyer_token = self._create_user("buyer7")
+        plan = self._create_plan(stripe_price_id="price_123")
+        self.client.put(f"/admin/users/{buyer_id}/plan", headers=self._admin_headers(), json={"plan_id": plan["id"]})
+
+        payload = json.dumps({
+            "type": "customer.subscription.updated",
+            "data": {"object": {"status": "active", "metadata": {"user_id": buyer_id}}},
+        }).encode()
+        signature = self._sign(payload, "whsec_ok")
+        resp = self.client.post("/webhooks/stripe", content=payload, headers={"Stripe-Signature": signature})
+        self.assertEqual(200, resp.status_code)
+
+        billing = self.client.get("/auth/me/billing", headers={"X-Jarvis-Session": buyer_token}).json()
+        self.assertIsNotNone(billing.get("plan"))
+        self.assertEqual(plan["id"], billing["plan"]["id"])
+
 
 if __name__ == "__main__":
     unittest.main()
