@@ -1,9 +1,19 @@
-import { ReactNode, useEffect, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { J, useJ, IconX, IconCalendar, IconActivity, IconJarvisMark } from './jarvis-shared';
 import { useJarvisLiveStatus } from '../shared/api/status';
 import { fetchWeather, WeatherResult } from '../shared/api/weather';
 import { fetchCalendarEvents, CalendarEvent } from '../shared/api/calendar';
 import { fetchHomeAssistantOverview, HomeAssistantOverview } from '../shared/api/homeAssistant';
+import { synthesizeSpeech } from '../shared/api/chat';
+import type { JarvisAlert } from '../shared/api/alerts';
+
+const SPEAKABLE_ALERT_LEVELS = new Set(['warning', 'critical']);
+
+// Ambient Display has no listening/thinking/speaking state machine like OrbScreen —
+// it's a passive kiosk display, so the only gate is "not already mid-speech."
+export function pickAmbientAlertToSpeak(alerts: JarvisAlert[], alreadySpoken: Set<string>): JarvisAlert | null {
+  return alerts.find(a => SPEAKABLE_ALERT_LEVELS.has(a.level) && !alreadySpoken.has(a.id)) ?? null;
+}
 
 const WEATHER_REFRESH_MS = 15 * 60 * 1000;
 const CALENDAR_REFRESH_MS = 5 * 60 * 1000;
@@ -38,7 +48,7 @@ function Tile({ label, children, J }: { label: string; children: ReactNode; J: R
   );
 }
 
-export function AmbientDisplayScreen({ onExit }: { onExit: () => void }) {
+export function AmbientDisplayScreen({ onExit, alerts = [] }: { onExit: () => void; alerts?: JarvisAlert[] }) {
   const J = useJ();
   const liveStatus = useJarvisLiveStatus();
   const [now, setNow] = useState(new Date());
@@ -47,9 +57,46 @@ export function AmbientDisplayScreen({ onExit }: { onExit: () => void }) {
   const [nextEvent, setNextEvent] = useState<CalendarEvent | null>(null);
   const [overview, setOverview] = useState<HomeAssistantOverview | null>(null);
 
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const spokenAlertIdsRef = useRef<Set<string>>(new Set());
+  const isSpeakingRef = useRef(false);
+
   useEffect(() => {
     const tick = window.setInterval(() => setNow(new Date()), 1000);
     return () => window.clearInterval(tick);
+  }, []);
+
+  // Speaks unprompted, the way a real ambient JARVIS presence in a room would —
+  // there's no mic/mute UI here since this screen is meant to run unattended.
+  useEffect(() => {
+    if (isSpeakingRef.current) return;
+    const next = pickAmbientAlertToSpeak(alerts, spokenAlertIdsRef.current);
+    if (!next) return;
+    spokenAlertIdsRef.current.add(next.id);
+    isSpeakingRef.current = true;
+    (async () => {
+      try {
+        const audioBlob = await synthesizeSpeech(`Sir, ${next.message}`);
+        const url = URL.createObjectURL(audioBlob);
+        await new Promise<void>((resolve) => {
+          const audio = new Audio(url);
+          audioRef.current = audio;
+          audio.onended = () => { URL.revokeObjectURL(url); audioRef.current = null; resolve(); };
+          audio.onerror = () => { URL.revokeObjectURL(url); audioRef.current = null; resolve(); };
+          audio.play().catch(() => resolve());
+        });
+      } catch {
+        // TTS synthesis failed — nothing to play, just clean up below.
+      } finally {
+        isSpeakingRef.current = false;
+      }
+    })();
+  }, [alerts]);
+
+  useEffect(() => {
+    return () => {
+      if (audioRef.current) { audioRef.current.pause(); audioRef.current = null; }
+    };
   }, []);
 
   useEffect(() => {

@@ -39,7 +39,7 @@ def root():
     return frontend_index_response()
 
 
-@frontend_router.get("/manifest.json")
+@frontend_router.api_route("/manifest.json", methods=["GET", "HEAD"])
 def manifest():
     manifest_path = FRONTEND_DIST_DIR / "manifest.json"
     if manifest_path.exists():
@@ -47,7 +47,11 @@ def manifest():
     return FileResponse(str(PROJECT_ROOT / "frontend" / "manifest.json"), media_type="application/manifest+json")
 
 
-@frontend_router.get("/sw.js")
+# GET + HEAD on these static-asset routes: FileResponse already handles HEAD
+# correctly (headers only, no body — see starlette.responses.FileResponse.__call__),
+# but Starlette's router 405s a HEAD request before ever reaching the endpoint
+# unless HEAD is explicitly registered. PWA/uptime checks commonly probe with HEAD.
+@frontend_router.api_route("/sw.js", methods=["GET", "HEAD"])
 def service_worker():
     # Registered at the root path in main.tsx (`register('/sw.js')`) so it gets
     # scope "/" — matching manifest.json's own "scope": "/". Must be servable
@@ -56,12 +60,12 @@ def service_worker():
     return FileResponse(str(_dist_or_public("sw.js")), media_type="application/javascript")
 
 
-@frontend_router.get("/favicon.svg")
+@frontend_router.api_route("/favicon.svg", methods=["GET", "HEAD"])
 def favicon():
     return FileResponse(str(_dist_or_public("favicon.svg")), media_type="image/svg+xml")
 
 
-@frontend_router.get("/robots.txt")
+@frontend_router.api_route("/robots.txt", methods=["GET", "HEAD"])
 def robots():
     return FileResponse(str(_dist_or_public("robots.txt")), media_type="text/plain")
 

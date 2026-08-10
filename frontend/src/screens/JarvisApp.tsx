@@ -437,7 +437,7 @@ export function JarvisApp() {
   }, [suggestions, dismissSuggestion, notificationsEnabled]);
 
   if (screen === 'login') return <LoginScreen onLogin={handleLogin} onGuest={handleGuestLogin} />;
-  if (screen === 'ambient') return <AmbientDisplayScreen onExit={() => setScreenAndUrl('chat')} />;
+  if (screen === 'ambient') return <AmbientDisplayScreen onExit={() => setScreenAndUrl('chat')} alerts={notificationsEnabled ? alerts : []} />;
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden' }}>

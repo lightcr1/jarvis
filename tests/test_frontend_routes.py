@@ -80,6 +80,15 @@ class FrontendRouteModuleTests(unittest.TestCase):
         for path in ("/sw.js", "/favicon.svg", "/robots.txt", "/manifest.json"):
             self.assertIn(path, registered)
 
+    def test_root_static_file_routes_accept_head_requests(self):
+        # HEAD-only registration was missing initially — FileResponse itself
+        # already handles HEAD correctly, but Starlette 405s before reaching
+        # the endpoint unless HEAD is explicitly a registered method. PWA
+        # validators and uptime checks commonly probe with HEAD.
+        by_path = {route.path: route for route in frontend_router.routes}
+        for path in ("/sw.js", "/favicon.svg", "/robots.txt", "/manifest.json"):
+            self.assertIn("HEAD", by_path[path].methods, f"{path} should accept HEAD")
+
     def test_icons_directory_mounts_when_present(self):
         app = FastAPI()
         mount_frontend_assets(app)
