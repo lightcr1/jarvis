@@ -617,3 +617,70 @@ pin down further — see `assistant_domain.py::try_skill()` and
   Stripe renewal-verification gap; CLAUDE.md itself is now further out of
   date than before this session and could use the full rewrite its own
   "Note on staleness" flags as a separate task.
+
+### 2026-08-07 (continued) — Deploy-blocker fix, then all three deferred items closed
+- User asked directly what's still missing after the first round of this
+  session, framed as "do I need real hardware, or can you still do more in
+  code." Answered with a hardware/account vs. code-only breakdown; user
+  confirmed remote access and wakeword hardware both stay deferred, and asked
+  for whatever's left that's code-only.
+- **Found and fixed a real production bug while investigating**, not from a
+  specific ask: `/sw.js`, `/favicon.svg`, `/icons/*`, `/robots.txt` all 404'd
+  on the live server (confirmed via curl against the actual running
+  `jarvis.service`, not just the source tree) — `frontend_routes.py` never
+  had routes for them, only `/assets`, `/static`, and `/manifest.json`.
+  `main.tsx` unconditionally calls `navigator.serviceWorker.register('/sw.js')`,
+  so the 404 meant the service worker never registered in any browser —
+  meaning the entire push-notification pipeline (VAPID, `push_service.py`,
+  quiet-hours fanout, all built and tested across many prior sessions) had
+  never actually delivered a single push in production. Also found, live on
+  the deployed box: zero `/stt` calls in 14 days despite `faster-whisper`
+  being installed and working — voice input has simply never been tried, only
+  typed chat with spoken (TTS) replies. Fixed via a short plan-mode pass:
+  explicit `GET`/`HEAD` routes for the three files (`_dist_or_public()`
+  fallback mirroring the existing `manifest()` route) plus an `/icons` static
+  mount alongside the existing `/assets` one.
+- Went the same three routes' + `/manifest.json`'s **HEAD** support missing
+  too (`FileResponse` already handles HEAD correctly, but Starlette 405s
+  before reaching the endpoint unless HEAD is a registered method) — found
+  while manually curl-verifying the fix, not part of the original bug report.
+- Closed the three items explicitly deferred at the end of the first half of
+  this session:
+  - **Ambient Display Mode now speaks alerts too**, mirroring the Orb-screen
+    work from earlier — simpler than Orb's version since there's no
+    listening/thinking/speaking state machine to respect, just "not already
+    mid-speech." New `pickAmbientAlertToSpeak()` pure function + test file
+    (`AmbientDisplayScreen.test.ts`, didn't exist before).
+  - **Stripe renewal re-verification gap closed**: added a
+    `customer.subscription.updated` webhook handler — any status other than
+    `active`/`trialing` unassigns the plan immediately, closing the dunning-
+    window gap where `ensure_monthly_grant()` kept granting free AI credit
+    every month a card was failing, since it only checks whether a `plan_id`
+    is assigned, not whether Stripe is still being paid. Updated the in-app
+    Stripe setup guide to tell admins to subscribe the webhook to the new
+    event.
+  - Also added the `IconJarvisMark` brand watermark to Ambient Display Mode
+    (asked separately, mid-session) — the one screen meant to be glanced at
+    from across a room as a standby display had zero branding.
+- Deploy-blocker discovery: the live server's `jarvis` user has no
+  passwordless `sudo`, and `scripts/update.sh` needs root to restart
+  `jarvis.service` — could not complete the actual production deploy myself.
+  Stopped there rather than working around it; handed the user the exact
+  `sudo ./scripts/update.sh` command instead. **This means everything in this
+  session, including the push-notification fix, is only live once the user
+  runs that command** — verify `last_deploy_sha` / `journalctl -u jarvis`
+  after they do.
+- Verified independently before every commit (own test runs, not just
+  agent/self-reports): backend `pytest tests/ -q` → **2239 passed, 149
+  subtests passed, 0 failures**; frontend `tsc --noEmit` clean, `npm run
+  build` clean, Vitest **62/62 passed** (was 56, +6 for
+  `pickAmbientAlertToSpeak`). Also manually curl-verified the static-route fix
+  against a real locally-running instance (not just unit tests) before and
+  after the HEAD-support follow-up.
+- Immediate next step: user needs to run `sudo ./scripts/update.sh` on the
+  live box, then confirm on their own phone that the PWA icon is correct and
+  a push notification actually arrives when toggled on in Settings. After
+  that, remaining open items are unchanged from the note above (Plugin
+  System design pass, remote access, wakeword hardware, CLAUDE.md rewrite) —
+  all either explicitly deferred by the user or waiting on something only
+  they can decide/provide.
