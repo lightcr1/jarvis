@@ -1,5 +1,5 @@
 import { ReactNode, useEffect, useState } from 'react';
-import { J, useJ, IconX, IconCalendar, IconActivity } from './jarvis-shared';
+import { J, useJ, IconX, IconCalendar, IconActivity, IconJarvisMark } from './jarvis-shared';
 import { useJarvisLiveStatus } from '../shared/api/status';
 import { fetchWeather, WeatherResult } from '../shared/api/weather';
 import { fetchCalendarEvents, CalendarEvent } from '../shared/api/calendar';
@@ -118,6 +118,14 @@ export function AmbientDisplayScreen({ onExit }: { onExit: () => void }) {
       >
         <IconX size={16} />
       </button>
+
+      <div style={{
+        position: 'absolute', bottom: 22, left: 24, display: 'flex', alignItems: 'center', gap: 8,
+        color: J.amber, opacity: 0.4,
+      }}>
+        <IconJarvisMark size={20} />
+        <span style={{ fontSize: 12, fontWeight: 600, letterSpacing: '0.14em', color: J.textMuted, textTransform: 'uppercase' }}>J.A.R.V.I.S.</span>
+      </div>
 
       <div style={{ textAlign: 'center', marginBottom: '6vh' }}>
         <div style={{ fontSize: 'clamp(64px, 14vw, 148px)', fontWeight: 700, lineHeight: 1, letterSpacing: '-0.02em', color: J.text, fontVariantNumeric: 'tabular-nums' }}>
