@@ -1,8 +1,21 @@
 import unittest
 
+from fastapi import FastAPI
 from starlette.responses import FileResponse, RedirectResponse
 
-from jarvis.frontend_routes import chat_legacy_redirect, frontend_index_response, frontend_router, orb_legacy_redirect
+from jarvis.frontend_routes import (
+    FRONTEND_DIST_DIR,
+    FRONTEND_ICONS_DIR,
+    PUBLIC_STATIC_DIR,
+    chat_legacy_redirect,
+    favicon,
+    frontend_index_response,
+    frontend_router,
+    mount_frontend_assets,
+    orb_legacy_redirect,
+    robots,
+    service_worker,
+)
 
 
 class FrontendRouteModuleTests(unittest.TestCase):
@@ -40,6 +53,48 @@ class FrontendRouteModuleTests(unittest.TestCase):
         self.assertIsInstance(chat_response, RedirectResponse)
         self.assertEqual(chat_response.headers.get("location"), "/chat")
         self.assertEqual(chat_response.status_code, 307)
+
+    def test_service_worker_route_serves_sw_js(self):
+        # Must be servable at exactly this path — main.tsx calls
+        # navigator.serviceWorker.register('/sw.js'), and a 404 here means the
+        # service worker never registers, silently disabling every push
+        # notification the backend sends.
+        response = service_worker()
+        self.assertIsInstance(response, FileResponse)
+        self.assertTrue(response.path.endswith("sw.js"))
+        self.assertEqual(response.media_type, "application/javascript")
+
+    def test_favicon_route_serves_svg(self):
+        response = favicon()
+        self.assertIsInstance(response, FileResponse)
+        self.assertTrue(response.path.endswith("favicon.svg"))
+        self.assertEqual(response.media_type, "image/svg+xml")
+
+    def test_robots_route_serves_txt(self):
+        response = robots()
+        self.assertIsInstance(response, FileResponse)
+        self.assertTrue(response.path.endswith("robots.txt"))
+
+    def test_root_static_file_paths_are_registered(self):
+        registered = {route.path for route in frontend_router.routes}
+        for path in ("/sw.js", "/favicon.svg", "/robots.txt", "/manifest.json"):
+            self.assertIn(path, registered)
+
+    def test_icons_directory_mounts_when_present(self):
+        app = FastAPI()
+        mount_frontend_assets(app)
+        mount_paths = {getattr(route, "path", None) for route in app.routes}
+        if FRONTEND_ICONS_DIR.exists():
+            self.assertIn("/icons", mount_paths)
+
+    def test_dist_or_public_resolves_to_an_existing_file(self):
+        from jarvis.frontend_routes import _dist_or_public
+        for filename in ("sw.js", "favicon.svg", "robots.txt"):
+            resolved = _dist_or_public(filename)
+            self.assertTrue(
+                resolved == FRONTEND_DIST_DIR / filename or resolved == PUBLIC_STATIC_DIR / filename
+            )
+            self.assertTrue(resolved.exists(), f"{resolved} should exist in either dist or public_static")
 
 
 if __name__ == "__main__":
