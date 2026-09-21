@@ -14,3 +14,8 @@ Diese Ablage trennt aktive V1-Dokumente, Evidenzsammlung und alte Quellen klar v
 1. In `v1/planning/` Status und Freigabekriterien lesen.
 2. In `v1/handoff/` die realen Restaufgaben ausfuehren.
 3. Ergebnisse in `v1/evidence/` ablegen.
+
+## Agent operation
+
+- [OpenHands / Agent Canvas setup](OPENHANDS_SETUP.md)
+- [Manual start checklist](MANUAL_START.md)

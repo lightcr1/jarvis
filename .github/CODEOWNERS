@@ -1,0 +1,12 @@
+# Security, automation, infrastructure, and policy changes require the repository owner.
+/.github/ @lightcr1
+/AGENTS.md @lightcr1
+/config/agent-policy.json @lightcr1
+/deploy/ @lightcr1
+/scripts/deploy* @lightcr1
+/jarvis/auth*.py @lightcr1
+/jarvis/*auth*.py @lightcr1
+/jarvis/policy_engine.py @lightcr1
+/jarvis/permission*.py @lightcr1
+/jarvis/*billing*.py @lightcr1
+/jarvis/byok_store.py @lightcr1

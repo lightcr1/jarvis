@@ -258,17 +258,21 @@ def get_local_default_model() -> str:
 
 def get_local_backend() -> str:
     configured = (os.getenv("LOCAL_LLM_BACKEND") or "").strip().lower()
-    if configured in {"ollama", "llama_cpp", "auto"}:
+    if configured in {"ollama", "llama_cpp", "openai_compat", "auto"}:
         return configured
     return "auto"
 
 
 def _local_http_json(url: str, payload: dict) -> dict:
     body = json.dumps(payload).encode("utf-8")
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+    api_key = (os.getenv("LOCAL_LLM_API_KEY") or "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     req = urllib.request.Request(
         url,
         data=body,
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -375,6 +379,26 @@ def _call_llama_cpp_openai_chat(base_url: str, model: str, messages: list[dict[s
     return reply
 
 
+def _call_openai_compatible_chat(base_url: str, model: str, messages: list[dict[str, str]], system_prompt: str) -> str:
+    """Call a standard OpenAI-compatible API root using LOCAL_LLM_API_KEY."""
+    payload = {
+        "model": model,
+        "messages": [{"role": "system", "content": system_prompt}] + messages,
+        "temperature": 0.3,
+        "max_tokens": int(os.getenv("OPENAI_MAX_TOKENS") or "120"),
+        "stream": False,
+    }
+    data = _local_http_json(f"{base_url}/chat/completions", payload)
+    choices = data.get("choices") or []
+    if not choices:
+        raise HTTPException(502, "Local AI returned no choices")
+    message = choices[0].get("message") or {}
+    reply = (message.get("content") or "").strip()
+    if not reply:
+        raise HTTPException(502, "Local AI returned an empty chat completion")
+    return reply
+
+
 def _call_llama_cpp_completion(base_url: str, text: str) -> str:
     prompt = f"{SYSTEM_PROMPT}\n\nUser: {text}\nAssistant:"
     payload = {
@@ -421,6 +445,8 @@ def local_ai_chat_reply(messages: list[dict[str, str]], system_prompt: str = SYS
     try:
         if backend == "ollama":
             return _call_ollama_chat(base_url, model_hint, messages, system_prompt)
+        if backend == "openai_compat":
+            return _call_openai_compatible_chat(base_url, model_hint, messages, system_prompt)
         if backend == "llama_cpp":
             if model_exists:
                 try:
