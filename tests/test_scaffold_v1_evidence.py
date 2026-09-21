@@ -1,7 +1,9 @@
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class ScaffoldV1EvidenceTests(unittest.TestCase):
@@ -16,7 +18,7 @@ class ScaffoldV1EvidenceTests(unittest.TestCase):
                     "--date",
                     "2026-03-15",
                 ],
-                cwd="/home/jarvis/jarvis",
+                cwd=str(REPO_ROOT),
                 text=True,
                 capture_output=True,
             )
@@ -42,8 +44,8 @@ class ScaffoldV1EvidenceTests(unittest.TestCase):
                 "--date",
                 "2026-03-15",
             ]
-            first = subprocess.run(cmd, cwd="/home/jarvis/jarvis", text=True, capture_output=True)
-            second = subprocess.run(cmd, cwd="/home/jarvis/jarvis", text=True, capture_output=True)
+            first = subprocess.run(cmd, cwd=str(REPO_ROOT), text=True, capture_output=True)
+            second = subprocess.run(cmd, cwd=str(REPO_ROOT), text=True, capture_output=True)
             self.assertEqual(0, first.returncode, msg=first.stderr)
             self.assertEqual(0, second.returncode, msg=second.stderr)
             self.assertIn("No files created", second.stdout)

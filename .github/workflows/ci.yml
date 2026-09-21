@@ -38,6 +38,10 @@ jobs:
           cache: pip
       - run: python -m pip install --upgrade pip
       - run: python -m pip install -r requirements-dev.txt
+      - name: Prepare writable Jarvis data directories
+        run: |
+          sudo mkdir -p /var/lib/jarvis /etc/jarvis
+          sudo chown -R "$(id -u):$(id -g)" /var/lib/jarvis /etc/jarvis
       - run: python -m pytest -q
 
   frontend:

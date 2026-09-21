@@ -29,4 +29,12 @@ export default tseslint.config(
       "react-refresh/only-export-components": ["warn", { allowConstantExport: true }],
     },
   },
+  {
+    files: ["*.config.js"],
+    languageOptions: { globals: globals.node },
+  },
+  {
+    files: ["public_static/sw.js"],
+    languageOptions: { globals: globals.serviceworker },
+  },
 );

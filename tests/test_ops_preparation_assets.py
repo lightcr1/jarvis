@@ -1,7 +1,9 @@
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class OpsPreparationAssetsTests(unittest.TestCase):
@@ -30,7 +32,7 @@ class OpsPreparationAssetsTests(unittest.TestCase):
                     "--output",
                     str(report),
                 ],
-                cwd="/home/jarvis/jarvis",
+                cwd=str(REPO_ROOT),
                 text=True,
                 capture_output=True,
             )

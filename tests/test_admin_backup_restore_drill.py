@@ -5,6 +5,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 
 class AdminBackupRestoreDrillScriptTests(unittest.TestCase):
     def _seed_valid_files(self, root: Path) -> None:
@@ -57,7 +59,7 @@ class AdminBackupRestoreDrillScriptTests(unittest.TestCase):
 
             proc = subprocess.run(
                 ["bash", "scripts/admin_backup_restore_drill.sh", str(report_path)],
-                cwd="/home/jarvis/jarvis",
+                cwd=str(REPO_ROOT),
                 env=env,
                 text=True,
                 capture_output=True,

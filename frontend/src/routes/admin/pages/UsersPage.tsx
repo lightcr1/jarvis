@@ -230,7 +230,11 @@ export function UsersPage() {
   const toggleAll = () => setSelected(allSelected ? new Set() : new Set(filtered.map(u => u.id)));
   const toggleOne = (id: string) => setSelected(prev => {
     const s = new Set(prev);
-    s.has(id) ? s.delete(id) : s.add(id);
+    if (s.has(id)) {
+      s.delete(id);
+    } else {
+      s.add(id);
+    }
     return s;
   });
 
