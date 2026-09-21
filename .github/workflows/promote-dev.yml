@@ -1,0 +1,55 @@
+name: Promote dev to main
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  open-promotion-pr:
+    name: Open dev->main PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compare main..dev and open/update promotion PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -uo pipefail
+          compare="$(gh api "repos/${REPO}/compare/main...dev" --jq '{ahead: .ahead_by, status: .status}')"
+          ahead="$(printf '%s' "$compare" | python3 -c 'import sys,json; print(json.load(sys.stdin)["ahead"])')"
+          echo "main->dev: ahead=${ahead}"
+          if [ "${ahead:-0}" = "0" ]; then
+            echo "dev is not ahead of main - nothing to promote."
+            exit 0
+          fi
+          title="dev -> main: ${ahead} commit(s) ready"
+          body="Automated promotion of \`dev\` to \`main\` (${ahead} commit(s) ahead). Requires human review per branch protection: 1 approval + CODEOWNERS on protected paths + required CI checks."
+          # Find an existing open dev->main PR first; the owner may already
+          # have opened one manually, or a previous run may have created it.
+          existing="$(gh pr list --repo "$REPO" --head dev --base main --state open --json number -q '.[0].number // empty' 2>/dev/null || true)"
+          if [ -n "${existing:-}" ]; then
+            gh pr edit "$existing" --repo "$REPO" --title "$title" --body "$body"
+            echo "Updated promotion PR #$existing"
+            exit 0
+          fi
+          # No open PR yet: create one. Handle the race where the PR was
+          # opened between the list call above and this create.
+          created_url="$(gh pr create --repo "$REPO" --base main --head dev --title "$title" --body "$body" 2>/dev/null || true)"
+          created="$(printf '%s' "$created_url" | sed -nE 's#.*/pull/([0-9]+).*#\1#p')"
+          if [ -n "${created:-}" ]; then
+            echo "Opened promotion PR #$created"
+          else
+            existing2="$(gh pr list --repo "$REPO" --head dev --base main --state open --json number -q '.[0].number // empty' 2>/dev/null || true)"
+            if [ -n "${existing2:-}" ]; then
+              gh pr edit "$existing2" --repo "$REPO" --title "$title" --body "$body"
+              echo "Race resolved: updated promotion PR #$existing2"
+            else
+              echo "ERROR: could not create or find the promotion PR." >&2
+              exit 1
+            fi
+          fi
