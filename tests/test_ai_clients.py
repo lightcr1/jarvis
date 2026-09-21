@@ -152,6 +152,26 @@ class AiClientsTests(unittest.TestCase):
                 )
         self.assertEqual("Consider it done.", reply)
 
+    def test_openai_compatible_backend_uses_api_root_and_bearer_token(self):
+        def fake_urlopen(req, timeout=60):
+            self.assertEqual(req.full_url, "http://controller:8080/chat/v1/chat/completions")
+            self.assertEqual(req.get_header("Authorization"), "Bearer model-token")
+            payload = json.loads(req.data.decode("utf-8"))
+            self.assertEqual(payload["model"], "chat")
+            self.assertEqual(payload["messages"][0], {"role": "system", "content": "System"})
+            return _FakeHttpResponse({"choices": [{"message": {"content": "Ready."}}]})
+
+        env = {
+            "LOCAL_LLM_DEFAULT_MODEL": "chat",
+            "LOCAL_LLM_BASE_URL": "http://controller:8080/chat/v1",
+            "LOCAL_LLM_BACKEND": "openai_compat",
+            "LOCAL_LLM_API_KEY": "model-token",
+        }
+        with patch.dict("os.environ", env, clear=False):
+            with patch("jarvis.ai_clients.urllib.request.urlopen", side_effect=fake_urlopen):
+                reply = local_ai_chat_reply([{"role": "user", "content": "hello"}], "System")
+        self.assertEqual("Ready.", reply)
+
 
 if __name__ == "__main__":
     unittest.main()

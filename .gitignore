@@ -17,3 +17,6 @@ static/assets/
 assets/
 *.tsbuildinfo
 .claude/worktrees/
+
+# OpenHands local state and secrets
+deploy/openhands/.env

@@ -1,16 +1,19 @@
-fastapi
-uvicorn[standard]
-pydantic
-openai
-google-genai
-anthropic
-cryptography
-faster-whisper
-python-multipart
-edge-tts
-psutil
-pywebpush
-icalendar
+# Pinned on 2026-09-21 against a fresh install on Python 3.12 (resolved by pip
+# from PyPI the same day). Keeping these exact pins makes installs and CI runs
+# reproducible; update deliberately by bumping a pin and re-running the suite.
+fastapi==0.141.1
+uvicorn[standard]==0.53.0
+pydantic==2.13.5
+openai==3.16.2
+google-genai==2.24.0
+anthropic==1.7.0
+cryptography==50.0.1
+faster-whisper==1.2.1
+python-multipart==0.0.32
+edge-tts==7.2.8
+psutil==7.2.2
+pywebpush==2.5.0
+icalendar==7.3.0
 # optional: real always-on wakeword detection (JARVIS_WAKEWORD_ENGINE=openwakeword).
 # Needs system audio libs first — on Debian/Ubuntu: apt-get install portaudio19-dev
 #   pip install openwakeword pyaudio

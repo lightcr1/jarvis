@@ -1,7 +1,9 @@
-from pathlib import Path
 import subprocess
 import tempfile
 import unittest
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 class CollectV1EvidenceTests(unittest.TestCase):
@@ -21,7 +23,7 @@ class CollectV1EvidenceTests(unittest.TestCase):
                     "--output",
                     str(output),
                 ],
-                cwd="/home/jarvis/jarvis",
+                cwd=str(REPO_ROOT),
                 text=True,
                 capture_output=True,
             )
@@ -41,7 +43,7 @@ class CollectV1EvidenceTests(unittest.TestCase):
                 "--evidence-dir",
                 "/tmp/does-not-exist-jarvis-evidence",
             ],
-            cwd="/home/jarvis/jarvis",
+            cwd=str(REPO_ROOT),
             text=True,
             capture_output=True,
         )

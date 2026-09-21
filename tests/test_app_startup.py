@@ -12,10 +12,35 @@ class AppStartupTests(unittest.TestCase):
             self.skipTest("python-multipart is not installed in this test environment")
         return importlib.import_module("jarvisappv4")
 
+    @staticmethod
+    def _route_paths(route) -> set[str]:
+        """Collect all registered paths reachable from a route, depth-first.
+
+        Newer Starlette versions wrap ``include_router()``-added routes in an
+        opaque ``_IncludedRouter`` object instead of flattening them into
+        ``app.routes``.  Descending into ``original_router.routes`` (and any
+        other nested ``.routes`` attribute) keeps this assertion stable across
+        Starlette versions.
+        """
+        paths: set[str] = set()
+        path = getattr(route, "path", None)
+        if path:
+            paths.add(path)
+        nested_router = getattr(route, "original_router", None)
+        nested = getattr(nested_router, "routes", None)
+        if nested is None and path is None:
+            nested = getattr(route, "routes", None)
+        if nested:
+            for child in nested:
+                paths |= AppStartupTests._route_paths(child)
+        return paths
+
     def test_import_app_and_stt_route_registration(self):
         module = self._get_module()
         self.assertTrue(hasattr(module, "app"))
-        routes = {getattr(route, "path", "") for route in module.app.routes}
+        routes = set()
+        for route in module.app.routes:
+            routes |= self._route_paths(route)
         self.assertIn("/stt", routes)
         self.assertIn("/admin/login", routes)
 

@@ -1,0 +1,46 @@
+{
+  "version": 1,
+  "default": "pull_request",
+  "branch_prefix": "agent/",
+  "deny_paths": [
+    ".env",
+    ".env.*",
+    "**/.env",
+    "**/.env.*",
+    "**/*.pem",
+    "**/*.key",
+    "**/*credentials*",
+    "**/*secret*"
+  ],
+  "allow_example_paths": [
+    ".env.example",
+    "**/*.env.example",
+    "**/.env.example"
+  ],
+  "protected_paths": [
+    ".github/**",
+    "AGENTS.md",
+    "config/agent-policy.json",
+    "deploy/**",
+    "scripts/deploy*",
+    "jarvis/auth*.py",
+    "jarvis/*auth*.py",
+    "jarvis/policy_engine.py",
+    "jarvis/permission*.py",
+    "jarvis/*billing*.py",
+    "jarvis/byok_store.py"
+  ],
+  "forbidden_actions": [
+    "runpod_billable_resource_change",
+    "production_deployment",
+    "secret_or_credential_commit",
+    "billing_or_purchase",
+    "branch_protection_bypass",
+    "destructive_data_operation"
+  ],
+  "required_checks": [
+    "Backend tests",
+    "Frontend tests",
+    "Agent policy"
+  ]
+}
