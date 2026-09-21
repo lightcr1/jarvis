@@ -1,0 +1,39 @@
+name: Promote dev to main
+
+on:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  open-promotion-pr:
+    name: Open dev->main PR
+    runs-on: ubuntu-latest
+    steps:
+      - name: Compare main..dev and open/update promotion PR
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          compare="$(gh api "repos/${REPO}/compare/main...dev" --jq '{ahead: .ahead_by, status: .status}')"
+          ahead="$(printf '%s' "$compare" | python3 -c 'import sys,json; print(json.load(sys.stdin)["ahead"])')"
+          status="$(printf '%s' "$compare" | python3 -c 'import sys,json; print(json.load(sys.stdin)["status"])')"
+          echo "main->dev: ahead=${ahead} status=${status}"
+          if [ "${ahead:-0}" = "0" ]; then
+            echo "dev is not ahead of main - nothing to promote."
+            exit 0
+          fi
+          existing="$(gh pr list --repo "$REPO" --head dev --base main --state open --json number,title -q '.[0]')"
+          title="dev -> main: ${ahead} commit(s) ready"
+          body="Automated promotion of \`dev\` to \`main\` (${ahead} commit(s) ahead). Requires human review per branch protection: 1 approval + CODEOWNERS on protected paths + required CI checks."
+          if [ -n "${existing:-}" ] && [ "$existing" != "null" ]; then
+            number="$(printf '%s' "$existing" | python3 -c 'import sys,json; print(json.load(sys.stdin)["number"])')"
+            gh pr edit "$number" --repo "$REPO" --title "$title" --body "$body"
+            echo "Updated promotion PR #$number"
+          else
+            number="$(gh pr create --repo "$REPO" --base main --head dev --title "$title" --body "$body" --json number -q .number)"
+            echo "Opened promotion PR #$number"
+          fi
