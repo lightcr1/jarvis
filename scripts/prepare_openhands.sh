@@ -7,7 +7,7 @@ ENV_FILE="$DEPLOY_DIR/.env"
 RUNPOD_ENV="${1:-/home/media/runpod/.env}"
 INSTALL_ROOT="${OPENHANDS_INSTALL_ROOT:-/opt/jarvis-openhands}"
 
-for command_name in docker git openssl; do
+for command_name in docker git; do
   command -v "$command_name" >/dev/null || { echo "Missing command: $command_name" >&2; exit 1; }
 done
 [ -r "$RUNPOD_ENV" ] || { echo "Runpod env not readable: $RUNPOD_ENV" >&2; exit 1; }
@@ -22,7 +22,17 @@ docker network inspect runpod_default >/dev/null 2>&1 || {
   exit 1
 }
 
-sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" "$INSTALL_ROOT/state" "$INSTALL_ROOT/projects"
+# Create the state/projects directories with sudo only when the target is not
+# directly writable (e.g. /opt owned by root). On a user-owned install root
+# (OPENHANDS_INSTALL_ROOT) no elevation is needed.
+mkdir -p "$INSTALL_ROOT" 2>/dev/null || sudo mkdir -p "$INSTALL_ROOT"
+install -d -m 0700 "$INSTALL_ROOT/state" 2>/dev/null || sudo install -d -m 0700 "$INSTALL_ROOT/state"
+install -d -m 0700 "$INSTALL_ROOT/projects" 2>/dev/null || sudo install -d -m 0700 "$INSTALL_ROOT/projects"
+# The Agent Canvas container runs as uid 10001 (openhands). Bind-mounted
+# directories must stay writable for that uid, so relax the sandbox dirs after
+# creation (works for both root-owned /opt and user-owned install roots).
+chmod a+rwX "$INSTALL_ROOT/state" "$INSTALL_ROOT/projects" 2>/dev/null \
+  || sudo chmod a+rwX "$INSTALL_ROOT/state" "$INSTALL_ROOT/projects"
 if [ ! -d "$INSTALL_ROOT/projects/jarvis/.git" ]; then
   git clone "$(git -C "$ROOT" remote get-url origin)" "$INSTALL_ROOT/projects/jarvis"
 fi
