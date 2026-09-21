@@ -42,6 +42,17 @@ jobs:
         run: |
           sudo mkdir -p /var/lib/jarvis /etc/jarvis
           sudo chown -R "$(id -u):$(id -g)" /var/lib/jarvis /etc/jarvis
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      # jarvisappv4 serves the SPA from frontend/dist; build it so the
+      # root-page/service-worker routes have something to serve.
+      - working-directory: frontend
+        run: |
+          npm ci
+          npm run build
       - run: python -m pytest -q
 
   frontend:
