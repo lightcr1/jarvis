@@ -38,7 +38,9 @@ jobs:
           fi
           # No open PR yet: create one. Handle the race where the PR was
           # opened between the list call above and this create.
-          if created="$(gh pr create --repo "$REPO" --base main --head dev --title "$title" --body "$body" --json number -q .number 2>/dev/null)"; then
+          created_url="$(gh pr create --repo "$REPO" --base main --head dev --title "$title" --body "$body" 2>/dev/null || true)"
+          created="$(printf '%s' "$created_url" | sed -nE 's#.*/pull/([0-9]+).*#\1#p')"
+          if [ -n "${created:-}" ]; then
             echo "Opened promotion PR #$created"
           else
             existing2="$(gh pr list --repo "$REPO" --head dev --base main --state open --json number -q '.[0].number // empty' 2>/dev/null || true)"
