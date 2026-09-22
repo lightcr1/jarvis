@@ -42,6 +42,25 @@ In Agent Canvas create an LLM profile with:
 
 The model route will only answer once the Runpod worker is configured and running. Agent Canvas itself can start before that.
 
+## Running Jarvis autonomously (continuous self-improvement)
+
+Once the pod is live and the LLM profile + GitHub token are configured, Jarvis
+works proactively per `AGENTS.md` ("Autonomy mode"). Two controls:
+
+- **Work loop:** a scheduled workflow (`.github/workflows/autonomy-trigger.yml`,
+  every 6 h) keeps exactly one open issue labeled `autonomy` in this repo when
+  no round is open. Treat that issue as Jarvis' to-do queue: he works it, then
+  closes it when done.
+- **Stop autonomous work:** close the `autonomy` issue (or remove the label).
+  Jarvis then stops starting new autonomous rounds; direct owner requests
+  still always work.
+- **Owner priority:** when you chat/task Jarvis directly, he pauses autonomous
+  work (safe checkpoint), serves you, and resumes afterwards — he never
+  aborts half-done work.
+- **Efficiency rule:** changes are bundled into a few PRs per session, not
+  one commit per tiny step. Nothing to do -> the loop stays idle instead of
+  producing churn.
+
 ## Troubleshooting: Onboarding dialog stuck (Telemetry / profile setup)
 
 If the first-run dialog ("usage data" / profile setup) cannot be dismissed,
