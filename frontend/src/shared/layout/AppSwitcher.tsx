@@ -1,12 +1,13 @@
 import { getStoredUser } from "../api/client";
 import { J } from "../../screens/jarvis-shared";
 
-export type AppArea = "jarvis" | "workspace" | "admin";
+export type AppArea = "jarvis" | "workspace" | "admin" | "monitor";
 
 const AREA_META: Record<AppArea, { label: string; sublabel: string; href: string }> = {
   jarvis: { label: "JARVIS", sublabel: "Chat, voice, home & infra", href: "/?screen=chat" },
   workspace: { label: "Workspace", sublabel: "Files, mail, calendar, desktop", href: "/workspace" },
   admin: { label: "Admin Dashboard", sublabel: "Operator console", href: "/dashboard" },
+  monitor: { label: "Agent Monitor", sublabel: "Live sessions & requests", href: "/monitor" },
 };
 
 export function AppSwitcher({
@@ -24,7 +25,7 @@ export function AppSwitcher({
   // full reload) — a direct read is always current regardless of which shell
   // this is mounted under.
   const isAdmin = getStoredUser()?.role === "admin";
-  const areas: AppArea[] = ["jarvis", "workspace", ...(isAdmin ? (["admin"] as AppArea[]) : [])];
+  const areas: AppArea[] = ["jarvis", "workspace", ...(isAdmin ? (["admin", "monitor"] as AppArea[]) : [])];
   const otherAreas = areas.filter(a => a !== current);
 
   const posStyle: React.CSSProperties =
