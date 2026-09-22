@@ -20,3 +20,4 @@ assets/
 
 # OpenHands local state and secrets
 deploy/openhands/.env
+config/autonomy.json

@@ -482,3 +482,21 @@ export function testHomeAssistantConnection() {
     includeAdmin: true,
   });
 }
+
+export interface AutonomyStatus {
+  enabled: boolean;
+  updated_at?: string;
+  note?: string;
+}
+
+export function fetchAutonomyStatus() {
+  return apiRequest<{ status: AutonomyStatus }>("/autonomy", { includeAdmin: true });
+}
+
+export function updateAutonomyStatus(enabled: boolean, note: string) {
+  return apiRequest<{ status: AutonomyStatus }>("/autonomy", {
+    method: "PUT",
+    includeAdmin: true,
+    body: { enabled, note },
+  });
+}
