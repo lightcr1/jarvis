@@ -42,6 +42,22 @@ In Agent Canvas create an LLM profile with:
 
 The model route will only answer once the Runpod worker is configured and running. Agent Canvas itself can start before that.
 
+## Troubleshooting: Onboarding dialog stuck (Telemetry / profile setup)
+
+If the first-run dialog ("usage data" / profile setup) cannot be dismissed,
+the most common cause is that the bind-mounted state directory is not
+writable by the container user (uid 10001). Check the container logs for:
+
+    PermissionError: ... '/home/openhands/.openhands/provider-connections'
+
+Fix (on the host, as the VM user):
+
+    chmod -R a+rwX /home/media/jarvis-openhands/state /home/media/jarvis-openhands/projects
+    docker restart jarvis-openhands
+
+Then reload the canvas page; the dialog should complete. The prepare script
+already applies these permissions; run it again after restoring a backup.
+
 ## Security model
 
 Agent work must happen on `agent/*` branches and enter `main` through a pull request. Critical paths are owned by `@lightcr1`. The agent is forbidden from changing Runpod resources, spending money, deploying production, handling secrets, or bypassing repository controls. OpenHands remains powerful software: review its proposed commands and never broaden the `/projects` mount to `/`, `/home`, Docker socket, production data, or secret directories.
