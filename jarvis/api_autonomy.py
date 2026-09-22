@@ -18,7 +18,7 @@ def build_autonomy_router(deps: dict) -> APIRouter:
         value = deps[name]
         return value.get() if hasattr(value, "get") else value
 
-    @router.get("/api/autonomy")
+    @router.get("/autonomy")
     def get_autonomy(
         x_jarvis_user_id: str | None = None,
         x_jarvis_role: str | None = None,
@@ -28,7 +28,7 @@ def build_autonomy_router(deps: dict) -> APIRouter:
         actor_id, actor_role = require_admin(x_jarvis_user_id, x_jarvis_role, authorization)
         return {"status": current("autonomy_store").status()}
 
-    @router.put("/api/autonomy")
+    @router.put("/autonomy")
     def set_autonomy(
         body: AutonomyUpdate,
         x_jarvis_user_id: str | None = None,
