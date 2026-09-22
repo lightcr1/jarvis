@@ -202,6 +202,14 @@ def build_status_deps(state: object) -> dict:
     }
 
 
+def build_autonomy_deps(state: object) -> dict:
+    return {
+        "require_admin_access": state.require_admin_access,
+        "audit_admin_event": state._audit_admin_event,
+        "autonomy_store": live_attr(state, "autonomy_store"),
+    }
+
+
 def build_alerts_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,

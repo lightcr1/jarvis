@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "updated_at": "",
+  "updated_by": "",
+  "note": "Autonomy switch. Copy to config/autonomy.json (gitignored). The Jarvis web UI and the coding agent both read this file; AGENTS.md tells the agent to stop autonomous rounds while enabled=false. Missing file means enabled."
+}

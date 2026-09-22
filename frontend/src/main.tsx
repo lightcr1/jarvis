@@ -29,6 +29,7 @@ import { BillingPage } from "./routes/admin/pages/BillingPage";
 import { UsagePage } from "./routes/admin/pages/UsagePage";
 import { AdminDocsPage } from "./routes/admin/pages/AdminDocsPage";
 import { IntegrationsPage } from "./routes/admin/pages/IntegrationsPage";
+import { AutonomyPage } from "./routes/admin/pages/AutonomyPage";
 import { WorkspaceShell } from "./shared/layout/WorkspaceShell";
 import { OverviewScreen } from "./screens/OverviewScreen";
 import { FilesScreen } from "./screens/FilesScreen";
@@ -56,6 +57,7 @@ const router = createBrowserRouter([
       { path: "usage",            element: <UsagePage /> },
       { path: "docs",             element: <AdminDocsPage /> },
       { path: "integrations",     element: <IntegrationsPage /> },
+      { path: "autonomy",         element: <AutonomyPage /> },
     ],
   },
   {
