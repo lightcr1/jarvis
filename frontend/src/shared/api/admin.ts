@@ -500,3 +500,34 @@ export function updateAutonomyStatus(enabled: boolean, note: string) {
     body: { enabled, note },
   });
 }
+
+export interface AgentSession {
+  id: string;
+  title: string;
+  status: string;
+  updated_at?: string;
+  selected_agent?: string;
+}
+
+export interface OwnerRequest {
+  number: number;
+  title: string;
+  created_at?: string;
+  labels: string[];
+  url?: string;
+}
+
+export function fetchAgentSessions() {
+  return apiRequest<{ sessions: AgentSession[]; count: number }>("/agent/sessions", { includeAdmin: true });
+}
+
+export function fetchOwnerRequests() {
+  return apiRequest<{ requests: OwnerRequest[]; readonly: boolean; error?: string }>("/agent/requests", { includeAdmin: true });
+}
+
+export function decideOwnerRequest(number: number, decision: "approved" | "rejected") {
+  return apiRequest<{ ok: boolean; number: number; decision: string }>(
+    `/agent/requests/${number}/decide`,
+    { method: "POST", includeAdmin: true, body: { number, decision } },
+  );
+}

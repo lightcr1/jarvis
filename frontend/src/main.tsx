@@ -30,6 +30,8 @@ import { UsagePage } from "./routes/admin/pages/UsagePage";
 import { AdminDocsPage } from "./routes/admin/pages/AdminDocsPage";
 import { IntegrationsPage } from "./routes/admin/pages/IntegrationsPage";
 import { AutonomyPage } from "./routes/admin/pages/AutonomyPage";
+import { AgentMonitorPage } from "./routes/admin/pages/AgentMonitorPage";
+import { MonitorShell } from "./shared/layout/MonitorShell";
 import { WorkspaceShell } from "./shared/layout/WorkspaceShell";
 import { OverviewScreen } from "./screens/OverviewScreen";
 import { FilesScreen } from "./screens/FilesScreen";
@@ -58,6 +60,14 @@ const router = createBrowserRouter([
       { path: "docs",             element: <AdminDocsPage /> },
       { path: "integrations",     element: <IntegrationsPage /> },
       { path: "autonomy",         element: <AutonomyPage /> },
+      { path: "agent",            element: <AgentMonitorPage /> },
+    ],
+  },
+  {
+    path: "/monitor",
+    element: <MonitorShell />,
+    children: [
+      { index: true, element: <AgentMonitorPage /> },
     ],
   },
   {

@@ -1,0 +1,40 @@
+# J.A.R.V.I.S. AI Assistant — containerized deployment.
+#
+# The container joins the runpod_default network so the app can reach the
+# Runpod LLM controller (http://controller:8080) as its model backend.
+# Port 8000 inside, exposed as 8100 on the host (8000 is used by OpenHands).
+#
+# Secrets/configuration come from an env file you provide, e.g.:
+#   cp /etc/jarvis/jarvis.env /home/media/jarvis.env   (or create fresh)
+#   docker compose --env-file /home/media/jarvis.env -f deploy/docker-compose.yml up -d
+services:
+  jarvis:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: ghcr.io/lightcr1/jarvis-app:latest
+    container_name: jarvis-app
+    restart: unless-stopped
+    env_file:
+      - ${JARVIS_ENV_FILE:-/home/media/jarvis.env}
+    volumes:
+      - jarvis-data:/var/lib/jarvis
+    ports:
+      - "10.10.40.100:8100:8000"
+    networks:
+      - runpod-internal
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  jarvis-data:
+
+networks:
+  runpod-internal:
+    external: true
+    name: runpod_default
