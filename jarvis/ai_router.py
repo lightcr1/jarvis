@@ -112,7 +112,7 @@ class AIRouter:
         tier = classify_complexity(text, history_len=history_len, voice_mode=voice_mode)
         provider, api_key, src = self._resolve_provider(user_id, ps)
         model = select_model(tier, provider)
-        max_tok = max_tokens_for(tier)
+        max_tok = max_tokens_for(tier, provider)
         cost_usd = self._estimate_cost_usd(provider, model, text, max_tok, ps)
         cost_chf = cost_usd * float(ps.get("usd_to_chf_rate") or 0.90)
 
@@ -265,7 +265,7 @@ class AIRouter:
         system_prompt: str,
         max_tokens: int | None = None,
     ) -> Iterator[str]:
-        max_tok = decision.clamped_max_tokens or max_tokens or max_tokens_for(decision.tier)
+        max_tok = decision.clamped_max_tokens or max_tokens or max_tokens_for(decision.tier, decision.provider)
         provider = self._get_provider(decision.provider, decision.api_key)
         from .providers.base import ChatChunk
         result = provider.create_chat_completion(
@@ -290,7 +290,7 @@ class AIRouter:
         system_prompt: str,
         max_tokens: int | None = None,
     ) -> str:
-        max_tok = decision.clamped_max_tokens or max_tokens or max_tokens_for(decision.tier)
+        max_tok = decision.clamped_max_tokens or max_tokens or max_tokens_for(decision.tier, decision.provider)
         provider = self._get_provider(decision.provider, decision.api_key)
         result = provider.create_chat_completion(
             model=decision.model,
@@ -323,7 +323,7 @@ class AIRouter:
         max_tokens: int | None = None,
     ):
         from .tool_registry import to_anthropic_schema, to_openai_schema
-        max_tok = decision.clamped_max_tokens or max_tokens or max_tokens_for(decision.tier)
+        max_tok = decision.clamped_max_tokens or max_tokens or max_tokens_for(decision.tier, decision.provider)
         provider = self._get_provider(decision.provider, decision.api_key)
         schema = to_anthropic_schema(tools) if decision.provider == "anthropic" else to_openai_schema(tools)
         return provider.create_chat_completion(

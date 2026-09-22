@@ -1,3 +1,4 @@
+import os
 import re
 from enum import Enum
 
@@ -56,6 +57,15 @@ MAX_TOKENS: dict[Tier, int] = {
     Tier.COMPLEX: 4096,
 }
 
+# Qwen3 (Runpod local) reasons first and only then writes the answer. Too
+# small budgets end up as empty replies (finish_reason=length after only
+# reasoning tokens), so give the free local backend generous budgets.
+LOCAL_MAX_TOKENS: dict[Tier, int] = {
+    Tier.SIMPLE: 2048,
+    Tier.MEDIUM: 4096,
+    Tier.COMPLEX: 12288,
+}
+
 _COMPLEX_RE = re.compile(
     r"\b(explain|analyze|analyse|compare|design|implement|refactor|debug|architecture|"
     r"how does|why does|trade.?off|pros and cons|in depth|detailed|"
@@ -103,10 +113,16 @@ def classify_complexity(
 
 
 def select_model(tier: Tier, provider: str) -> str:
+    if provider == "local":
+        # The local backend is the Runpod controller; use its configured
+        # default logical model (LOCAL_LLM_DEFAULT_MODEL, e.g. "chat").
+        return (os.getenv("LOCAL_LLM_DEFAULT_MODEL") or "chat").strip() or "chat"
     return MODELS.get(provider, MODELS["openai"]).get(tier, MODELS["openai"][Tier.MEDIUM])
 
 
-def max_tokens_for(tier: Tier) -> int:
+def max_tokens_for(tier: Tier, provider: str = "") -> int:
+    if provider == "local":
+        return LOCAL_MAX_TOKENS[tier]
     return MAX_TOKENS[tier]
 
 
