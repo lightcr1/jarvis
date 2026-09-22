@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .agent_monitor import decide_owner_request, list_owner_requests, list_sessions
@@ -20,14 +20,37 @@ def build_agent_monitor_router(deps: dict) -> APIRouter:
         value = deps[name]
         return value.get() if hasattr(value, "get") else value
 
+    def _admin_guard(
+        x_jarvis_session: str | None,
+        x_jarvis_user_id: str | None,
+        x_jarvis_role: str | None,
+        authorization: str | None,
+    ) -> tuple[str, str]:
+        """Accept either the short-lived admin bearer token (legacy) or the
+        normal logged-in admin identity session. The web UI logs in with the
+        identity session; requiring a separate token made the monitor
+        unreachable for regular admin logins."""
+        try:
+            return current("require_admin_access")(
+                x_jarvis_user_id, x_jarvis_role, authorization
+            )
+        except Exception:
+            session = current("get_identity_session")(x_jarvis_session)
+            if not session:
+                raise HTTPException(401, "login required")
+            role = current("normalize_role")(session.get("role"))
+            if role != "admin":
+                raise HTTPException(403, "admin role required")
+            return str(session.get("user_id") or session.get("id") or ""), "admin"
+
     @router.get("/agent/sessions")
     def get_sessions(
+        x_jarvis_session: str | None = Header(default=None),
         x_jarvis_user_id: str | None = None,
         x_jarvis_role: str | None = None,
         authorization: str | None = None,
     ):
-        require_admin = current("require_admin_access")
-        require_admin(x_jarvis_user_id, x_jarvis_role, authorization)
+        _admin_guard(x_jarvis_session, x_jarvis_user_id, x_jarvis_role, authorization)
         api_key = current("openhands_api_key")
         sessions = list_sessions(api_key)
         return {
@@ -37,12 +60,12 @@ def build_agent_monitor_router(deps: dict) -> APIRouter:
 
     @router.get("/agent/requests")
     def get_requests(
+        x_jarvis_session: str | None = Header(default=None),
         x_jarvis_user_id: str | None = None,
         x_jarvis_role: str | None = None,
         authorization: str | None = None,
     ):
-        require_admin = current("require_admin_access")
-        require_admin(x_jarvis_user_id, x_jarvis_role, authorization)
+        _admin_guard(x_jarvis_session, x_jarvis_user_id, x_jarvis_role, authorization)
         token = current("github_token")
         return list_owner_requests(token)
 
@@ -50,12 +73,14 @@ def build_agent_monitor_router(deps: dict) -> APIRouter:
     def decide(
         number: int,
         body: RequestDecision,
+        x_jarvis_session: str | None = Header(default=None),
         x_jarvis_user_id: str | None = None,
         x_jarvis_role: str | None = None,
         authorization: str | None = None,
     ):
-        require_admin = current("require_admin_access")
-        actor_id, actor_role = require_admin(x_jarvis_user_id, x_jarvis_role, authorization)
+        actor_id, actor_role = _admin_guard(
+            x_jarvis_session, x_jarvis_user_id, x_jarvis_role, authorization
+        )
         token = current("github_token")
         result = decide_owner_request(number, body.decision, token)
         fn = current("audit_admin_event")
