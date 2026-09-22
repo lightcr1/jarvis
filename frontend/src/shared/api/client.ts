@@ -204,8 +204,12 @@ export function buildApiHeaders(options: RequestOptions = {}): Record<string, st
   headers["X-Jarvis-Guest-Key"] = ensureGuestKey();
   if (options.includeAdmin) {
     const adminToken = getAdminToken();
+    const sessionToken = getSessionToken();
     const user = getStoredUser();
     if (adminToken) headers.Authorization = `Bearer ${adminToken}`;
+    // The monitor/autonomy endpoints accept the logged-in admin identity
+    // session as an alternative to the short-lived admin bearer token.
+    if (sessionToken) headers["X-Jarvis-Session"] = sessionToken;
     if (user) {
       headers["X-Jarvis-Role"] = "admin";
       headers["X-Jarvis-User-Id"] = user.id;

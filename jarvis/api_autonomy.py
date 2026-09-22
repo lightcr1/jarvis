@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 
@@ -18,25 +18,45 @@ def build_autonomy_router(deps: dict) -> APIRouter:
         value = deps[name]
         return value.get() if hasattr(value, "get") else value
 
-    @router.get("/api/autonomy")
+    def _admin_guard(
+        x_jarvis_session: str | None,
+        x_jarvis_user_id: str | None,
+        x_jarvis_role: str | None,
+        authorization: str | None,
+    ) -> tuple[str, str]:
+        try:
+            require_admin = current("require_admin_access")
+            return require_admin(x_jarvis_user_id, x_jarvis_role, authorization)
+        except Exception:
+            session = current("get_identity_session")(x_jarvis_session)
+            if not session:
+                raise HTTPException(401, "login required")
+            role = current("normalize_role")(session.get("role"))
+            if role != "admin":
+                raise HTTPException(403, "admin role required")
+            return str(session.get("user_id") or session.get("id") or ""), "admin"
+
+    @router.get("/autonomy")
     def get_autonomy(
+        x_jarvis_session: str | None = Header(default=None),
         x_jarvis_user_id: str | None = None,
         x_jarvis_role: str | None = None,
         authorization: str | None = None,
     ):
-        require_admin = current("require_admin_access")
-        actor_id, actor_role = require_admin(x_jarvis_user_id, x_jarvis_role, authorization)
+        _admin_guard(x_jarvis_session, x_jarvis_user_id, x_jarvis_role, authorization)
         return {"status": current("autonomy_store").status()}
 
-    @router.put("/api/autonomy")
+    @router.put("/autonomy")
     def set_autonomy(
         body: AutonomyUpdate,
+        x_jarvis_session: str | None = Header(default=None),
         x_jarvis_user_id: str | None = None,
         x_jarvis_role: str | None = None,
         authorization: str | None = None,
     ):
-        require_admin = current("require_admin_access")
-        actor_id, actor_role = require_admin(x_jarvis_user_id, x_jarvis_role, authorization)
+        actor_id, actor_role = _admin_guard(
+            x_jarvis_session, x_jarvis_user_id, x_jarvis_role, authorization
+        )
         status = current("autonomy_store").set_mode(
             body.enabled, actor=actor_id, note=body.note
         )

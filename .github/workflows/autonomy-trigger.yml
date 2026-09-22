@@ -27,17 +27,17 @@ jobs:
             exit 0
           fi
           body="$(cat <<'EOF'
-Autonome Verbesserungsrunde für Jarvis.
+          Autonome Verbesserungsrunde für Jarvis.
 
-Arbeite nach AGENTS.md: wähle die wertvollsten Verbesserungen (Code, Tests,
-Doku, Architektur, Dependency-Hygiene), bündle sie in wenige PRs gegen `dev`,
-und dokumentiere am Ende die Session in `docs/ACTIVITY_LOG.md`.
+          Arbeite nach AGENTS.md: wähle die wertvollsten Verbesserungen (Code, Tests,
+          Doku, Architektur, Dependency-Hygiene), bündle sie in wenige PRs gegen `dev`,
+          und dokumentiere am Ende die Session in `docs/ACTIVITY_LOG.md`.
 
-Regeln:
-- Kleine, sichere Fixes direkt umsetzen; große Änderungen vorher vorschlagen.
-- Keine Beschäftigungstherapie: nur Arbeit mit echtem Wert.
-- Schließe dieses Issue, wenn die Runde abgeschlossen ist.
-EOF
-)"
+          Regeln:
+          - Kleine, sichere Fixes direkt umsetzen; große Änderungen vorher vorschlagen.
+          - Keine Beschäftigungstherapie: nur Arbeit mit echtem Wert.
+          - Schließe dieses Issue, wenn die Runde abgeschlossen ist.
+          EOF
+          )"
           number="$(gh issue create --repo "$GITHUB_REPOSITORY" --title "Autonome Verbesserungsrunde" --body "$body" --label autonomy --json number -q .number)"
           echo "Opened autonomy round issue #$number"
