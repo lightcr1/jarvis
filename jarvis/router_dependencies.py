@@ -202,6 +202,16 @@ def build_status_deps(state: object) -> dict:
     }
 
 
+def build_agent_monitor_deps(state: object) -> dict:
+    import os
+    return {
+        "require_admin_access": state.require_admin_access,
+        "audit_admin_event": state._audit_admin_event,
+        "openhands_api_key": os.getenv("OPENHANDS_API_KEY", "") or "",
+        "github_token": os.getenv("GITHUB_TOKEN", "") or "",
+    }
+
+
 def build_autonomy_deps(state: object) -> dict:
     return {
         "require_admin_access": state.require_admin_access,
