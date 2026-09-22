@@ -5,7 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .agent_monitor import decide_owner_request, list_owner_requests, list_sessions
+from .agent_monitor import decide_owner_request, list_owner_requests, list_sessions, session_status
 
 
 class RequestDecision(BaseModel):
