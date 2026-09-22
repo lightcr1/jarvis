@@ -20,7 +20,7 @@ def build_agent_monitor_router(deps: dict) -> APIRouter:
         value = deps[name]
         return value.get() if hasattr(value, "get") else value
 
-    @router.get("/api/agent/sessions")
+    @router.get("/agent/sessions")
     def get_sessions(
         x_jarvis_user_id: str | None = None,
         x_jarvis_role: str | None = None,
@@ -35,7 +35,7 @@ def build_agent_monitor_router(deps: dict) -> APIRouter:
             "count": len(sessions),
         }
 
-    @router.get("/api/agent/requests")
+    @router.get("/agent/requests")
     def get_requests(
         x_jarvis_user_id: str | None = None,
         x_jarvis_role: str | None = None,
@@ -46,7 +46,7 @@ def build_agent_monitor_router(deps: dict) -> APIRouter:
         token = current("github_token")
         return list_owner_requests(token)
 
-    @router.post("/api/agent/requests/{number}/decide")
+    @router.post("/agent/requests/{number}/decide")
     def decide(
         number: int,
         body: RequestDecision,
