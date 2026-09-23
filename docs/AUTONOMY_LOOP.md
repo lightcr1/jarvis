@@ -50,9 +50,12 @@ und widerrufen. Ideen koennen vom Besitzer (`POST /admin/ideas`) oder Agenten
 Besitzerideen zuerst. Das Einreichen oder Merken einer Idee erteilt **keine**
 Ausfuehrungsrechte. Maximal drei unbewertete Agentenideen pro 24 Stunden
 verhindern Vorschlags-Spam. Besitzerideen koennen aktuell ueber die Admin-
-Oberflaeche erfasst werden; die freie Chat-Konversation schreibt noch nicht
-automatisch in diese Warteschlange. Ein Auftrag im Chat bleibt trotzdem ein
-Besitzerauftrag und hat Vorrang. Das selbststaendige Suchen von Chancen ist
+Oberflaeche oder mit einer ausdruecklichen Nachricht im Jarvis-App-Chat
+(`Business-Idee: ...`, `Projektidee: ...`, `Jarvis-Idee: ...`) erfasst werden.
+Dieser Pfad verlangt eine eingeloggte Besitzer-Session; normale freie
+Chat-Nachrichten und Open WebUI werden nicht automatisch in die Queue
+uebernommen. Ein Auftrag im Chat bleibt trotzdem ein Besitzerauftrag und hat
+Vorrang. Das selbststaendige Suchen von Chancen ist
 ein Rundenauftrag, keine garantierte externe Marktrecherche ohne Webzugang. Freigaben verfallen spaetestens nach 30 Tagen; Ausnahmen fuer
 Geld, Veroeffentlichung, Nachrichten, Loeschung oder Sicherheitsregeln sind
 nicht ueber diesen allgemeinen Grant freigebbar. Die Anfragen liegen unter

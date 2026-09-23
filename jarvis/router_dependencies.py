@@ -35,6 +35,7 @@ def build_auth_chat_deps(state: object) -> dict:
         "get_identity_session": state._get_identity_session,
         "chat_owner_key": state._chat_owner_key,
         "chat_history": live_attr(state, "chat_history"),
+        "agent_grant_store": live_attr(state, "agent_grant_store"),
         "rag_store": live_attr(state, "rag_store"),
         "wakeword_enabled": state.wakeword_enabled,
         "wakeword_phrase": getattr(state, "wakeword_phrase", lambda: "hey jarvis"),
