@@ -29,6 +29,12 @@ Schutz und Policies muessen ausserhalb des Prompts durchgesetzt werden.
 
 ## Aenderung und Installation
 
+Fuer die Inbetriebnahme aller Gates gibt es eine Schritt-fuer-Schritt-Anleitung
+in `docs/HUMAN_TODO_GRANTS.md` (runpod-Repo, PR #44). Der sichere Austausch
+der installierten Loop-Kopie erfolgt mit `scripts/agent/install_loop.sh`
+(`--dry-run` zeigt erst den Diff, ohne Aenderungen). Ein Merge installiert den
+Loop weiterhin nicht automatisch.
+
 1. Aenderung im Repo reviewen (inklusive Policy- und Sicherheitstests). Auf
    dem Zielhost die installierte Version gegen die neue Quelle vergleichen.
 2. Offline pruefen: `python3 -m py_compile scripts/agent/autonomy_loop.py` und
