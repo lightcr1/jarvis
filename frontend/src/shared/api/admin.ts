@@ -530,6 +530,19 @@ export function reviewAgentIdea(id: string, status: "shortlisted" | "dismissed")
   });
 }
 
+export interface AgentOneTimeAction {
+  id: string; kind: string; target: string; payload: string; digest: string;
+  status: string; created_at: number; expires_at: number;
+}
+export function fetchAgentActions() {
+  return apiRequest<{ actions: AgentOneTimeAction[] }>("/admin/agent-actions", { includeAdmin: true });
+}
+export function decideAgentAction(id: string, approve: boolean) {
+  return apiRequest<{ action: AgentOneTimeAction }>(`/admin/agent-actions/${encodeURIComponent(id)}/decide`, {
+    method: "POST", includeAdmin: true, body: { approve },
+  });
+}
+
 export interface AgentGrantRequest {
   id: string;
   kind: string;

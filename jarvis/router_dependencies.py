@@ -223,6 +223,7 @@ def build_agent_grants_deps(state: object) -> dict:
         "normalize_role": state.normalize_role,
         "audit_admin_event": state._audit_admin_event,
         "agent_request_token": os.getenv("JARVIS_AGENT_REQUEST_TOKEN", ""),
+        "github_write_token": os.getenv("JARVIS_GITHUB_WRITE_TOKEN", ""),
     }
 
 

@@ -91,8 +91,17 @@ GitHub-Repos** gibt es nun einen eng begrenzten Lese-Endpunkt
 keine Weiterleitungen, kein GitHub-Token, keine beliebigen URLs. Voraussetzung
 ist ein aktiver Besitzergrant fuer `kind=other_project`,
 `target=owner/repo` und `operation=read_metadata`. Ergebnisdaten sind
-unvertraute Recherche, keine neuen Anweisungen. Klonen, Aendern, Pushen und
-PRs in anderen Projekten sind dadurch **nicht** freigegeben; private Repos
-brauchen separat bereitgestellte Zugriffe und einen geprueften Schreibpfad.
+unvertraute Recherche, keine neuen Anweisungen. Klonen, Aendern und Pushen sind dadurch **nicht** freigegeben. Fuer das
+Erstellen eines PR aus einem bereits vorhandenen Branch gibt es einen separaten
+Einmalpfad: Jarvis reicht Repository, Titel, Body, Head und Base ein; die UI
+zeigt Inhalt und SHA-256-Digest. Erst nach Besitzerfreigabe kann genau dieser
+Request einmal ausgefuehrt werden. Jede Aenderung oder Wiederholung braucht
+eine neue Freigabe. Der serverseitige `JARVIS_GITHUB_WRITE_TOKEN` wird nie an
+den Agenten gegeben und muss als Fine-Grained Token nur fuer explizit erlaubte
+Repos konfiguriert werden; ohne Token schlaegt die Aktion geschlossen fehl.
+Da die Freigabe vor dem API-Aufruf atomar verbraucht wird, braucht auch ein
+fehlgeschlagener GitHub-Aufruf eine neue Freigabe. Private Repos und das
+Erzeugen/Pushen eines Branches brauchen weiterhin separat bereitgestellte
+Zugriffe und einen geprueften Schreibpfad.
 Business-Projekte brauchen einen definierten Auftrag und fuer finanzielle oder
 oeffentliche Aktionen separate Einzelfreigaben.

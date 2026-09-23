@@ -8,7 +8,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .router_dependencies import LiveRef
-from .github_gateway import GithubGatewayError, canonical_repo, public_repository_metadata
+from .github_gateway import GithubGatewayError, canonical_repo, create_pull_request, public_repository_metadata
 
 
 class GrantRequest(BaseModel):
@@ -36,6 +36,18 @@ class OwnerIdea(BaseModel):
     kind: str = Field(default="business", max_length=32)
     title: str = Field(max_length=140)
     summary: str = Field(max_length=2000)
+
+
+class PullRequestAction(BaseModel):
+    repository: str = Field(max_length=201)
+    title: str = Field(max_length=200)
+    body: str = Field(max_length=10000)
+    head: str = Field(max_length=200)
+    base: str = Field(max_length=200)
+
+
+class ActionDecision(BaseModel):
+    approve: bool
 
 
 class IdeaReview(BaseModel):
@@ -125,6 +137,51 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
             raise HTTPException(502, str(exc)) from exc
         audit("agent.repository.metadata_read", "agent", {"repository": target})
         return {"metadata": result}
+
+    @router.post("/agent/actions/github-pull-request", status_code=201)
+    def request_pull_request(body: PullRequestAction, x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        try:
+            owner_name, repo_name = body.repository.split("/", 1)
+            target = canonical_repo(owner_name, repo_name)
+            item = current("agent_grant_store").request_one_time_action(
+                kind="github_create_pr", target=target,
+                payload=body.model_dump(exclude={"repository"}),
+            )
+        except (ValueError, GithubGatewayError) as exc:
+            raise HTTPException(422, str(exc)) from exc
+        audit("agent.action.requested", "agent", {"action_id": item["id"], "digest": item["digest"]})
+        return {"action": item}
+
+    @router.post("/admin/agent-actions/{action_id}/decide")
+    def decide_action(action_id: str, body: ActionDecision, x_jarvis_session: str | None = Header(default=None)):
+        actor = owner(x_jarvis_session)
+        item = current("agent_grant_store").decide_one_time_action(action_id, actor=actor, approve=body.approve)
+        if item is None:
+            raise HTTPException(409, "action missing, expired, or already decided")
+        audit("agent.action.decided", actor, {"action_id": action_id, "approved": body.approve, "digest": item["digest"]})
+        return {"action": item}
+
+    @router.post("/agent/actions/{action_id}/execute")
+    def execute_action(action_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        item = current("agent_grant_store").consume_one_time_action(action_id)
+        if item is None:
+            raise HTTPException(403, "approved, unused action required")
+        payload = __import__("json").loads(item["payload"])
+        owner_name, repo_name = item["target"].split("/", 1)
+        try:
+            result = create_pull_request(owner_name, repo_name, payload, current("github_write_token"))
+        except GithubGatewayError as exc:
+            audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"]})
+            raise HTTPException(502, str(exc)) from exc
+        audit("agent.action.executed", "agent", {"action_id": action_id, "digest": item["digest"], "result": result})
+        return {"result": result}
+
+    @router.get("/admin/agent-actions")
+    def list_actions(x_jarvis_session: str | None = Header(default=None)):
+        owner(x_jarvis_session)
+        return {"actions": current("agent_grant_store").list_one_time_actions()}
 
     @router.get("/admin/ideas")
     def list_ideas(x_jarvis_session: str | None = Header(default=None)):

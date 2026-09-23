@@ -26,6 +26,41 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
         raise GithubGatewayError("redirect blocked")
 
 
+def validate_pull_request(payload: dict) -> None:
+    if set(payload) != {"title", "body", "head", "base"}:
+        raise GithubGatewayError("exact pull request fields required")
+    limits = {"title": 200, "body": 10000, "head": 200, "base": 200}
+    for key, limit in limits.items():
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip() or value != value.strip() or len(value) > limit or any(c in value for c in ("\0", "\r")):
+            raise GithubGatewayError(f"invalid pull request {key}")
+    for key in ("head", "base"):
+        if not re.fullmatch(r"[A-Za-z0-9._/-]+", payload[key]) or ".." in payload[key] or payload[key].startswith("/"):
+            raise GithubGatewayError(f"invalid pull request {key}")
+
+
+def create_pull_request(owner: str, repository: str, payload: dict, token: str) -> dict:
+    canonical = canonical_repo(owner, repository)
+    validate_pull_request(payload)
+    if not token:
+        raise GithubGatewayError("GitHub write token unavailable")
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{canonical}/pulls",
+        data=json.dumps(payload).encode(), method="POST",
+        headers={"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+                 "User-Agent": "Jarvis-Scoped-Action", "Content-Type": "application/json"},
+    )
+    try:
+        with urllib.request.build_opener(_NoRedirect()).open(req, timeout=8) as response:
+            raw = response.read(65537)
+            if response.status != 201 or len(raw) > 65536:
+                raise GithubGatewayError("GitHub pull request creation failed")
+            data = json.loads(raw)
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        raise GithubGatewayError("GitHub pull request creation failed") from exc
+    return {"number": int(data["number"]), "url": str(data["html_url"]), "repository": canonical}
+
+
 def public_repository_metadata(owner: str, repository: str) -> dict:
     """Anonymous GitHub API read only: no credentials and no user-controlled host."""
     canonical = canonical_repo(owner, repository)

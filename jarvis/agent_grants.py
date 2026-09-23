@@ -6,6 +6,8 @@ contains no credentials and never executes an action. Tool gateways must call
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import sqlite3
 import time
@@ -38,6 +40,12 @@ class AgentGrantStore:
                 decided_at INTEGER, decided_by TEXT, revoked_at INTEGER
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS grants_lookup ON requests(kind,target,operation,status)")
+            db.execute("""CREATE TABLE IF NOT EXISTS one_time_actions (
+                id TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL,
+                payload TEXT NOT NULL, digest TEXT NOT NULL, status TEXT NOT NULL,
+                created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+                decided_at INTEGER, decided_by TEXT, consumed_at INTEGER
+            )""")
             db.execute("""CREATE TABLE IF NOT EXISTS ideas (
                 id TEXT PRIMARY KEY, source TEXT NOT NULL, kind TEXT NOT NULL,
                 title TEXT NOT NULL, summary TEXT NOT NULL, benefit TEXT NOT NULL,
@@ -153,6 +161,65 @@ class AgentGrantStore:
                 WHERE id=? AND status='proposed'""", (status, int(self.clock()), actor, idea_id))
             changed = db.execute("SELECT changes()").fetchone()[0]
         return self.get_idea(idea_id) if changed else None
+
+    @staticmethod
+    def _action_digest(kind: str, target: str, payload: dict) -> tuple[str, str]:
+        encoded = json.dumps({"kind": kind, "target": target, "payload": payload},
+                             ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")), hashlib.sha256(encoded.encode()).hexdigest()
+
+    def request_one_time_action(self, *, kind: str, target: str, payload: dict) -> dict:
+        if kind != "github_create_pr" or not isinstance(payload, dict):
+            raise ValueError("unsupported one-time action")
+        from .github_gateway import canonical_repo, validate_pull_request
+        owner, repository = target.split("/", 1) if target.count("/") == 1 else ("", "")
+        if canonical_repo(owner, repository) != target:
+            raise ValueError("canonical target required")
+        validate_pull_request(payload)
+        body, digest = self._action_digest(kind, target, payload)
+        now = int(self.clock())
+        identifier = uuid.uuid4().hex
+        with self._connect() as db:
+            db.execute("""INSERT INTO one_time_actions
+                (id,kind,target,payload,digest,status,created_at,expires_at)
+                VALUES (?,?,?,?,?,'pending',?,?)""", (identifier, kind, target, body, digest, now, now + 24 * 3600))
+        return self.get_one_time_action(identifier)
+
+    def get_one_time_action(self, identifier: str) -> dict | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM one_time_actions WHERE id=?", (identifier,)).fetchone()
+        return dict(row) if row else None
+
+    def list_one_time_actions(self) -> list[dict]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM one_time_actions ORDER BY created_at DESC LIMIT 100").fetchall()
+        return [dict(row) for row in rows]
+
+    def decide_one_time_action(self, identifier: str, *, actor: str, approve: bool) -> dict | None:
+        now = int(self.clock())
+        with self._connect() as db:
+            db.execute("""UPDATE one_time_actions SET status=?, decided_at=?, decided_by=?
+                WHERE id=? AND status='pending' AND expires_at>?""",
+                ("approved" if approve else "rejected", now, actor, identifier, now))
+            changed = db.execute("SELECT changes()").fetchone()[0]
+        return self.get_one_time_action(identifier) if changed else None
+
+    def consume_one_time_action(self, identifier: str) -> dict | None:
+        """Claim atomically before any external effect. A failed call needs new approval."""
+        now = int(self.clock())
+        with self._connect() as db:
+            db.execute("""UPDATE one_time_actions SET status='consumed', consumed_at=?
+                WHERE id=? AND status='approved' AND expires_at>?""", (now, identifier, now))
+            changed = db.execute("SELECT changes()").fetchone()[0]
+        if not changed:
+            return None
+        item = self.get_one_time_action(identifier)
+        assert item is not None
+        payload = json.loads(item["payload"])
+        _, digest = self._action_digest(item["kind"], item["target"], payload)
+        if digest != item["digest"]:
+            raise ValueError("action digest mismatch")
+        return item
 
     def authorize(self, *, kind: str, target: str, operation: str) -> bool:
         """Fail closed. Never pass untrusted agent classification to a real tool."""

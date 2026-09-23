@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { fetchAutonomyStatus, updateAutonomyStatus, fetchAgentGrants, decideAgentGrant, revokeAgentGrant, fetchAgentIdeas, submitOwnerIdea, reviewAgentIdea, type AgentIdea, type AgentGrantRequest, type AutonomyStatus } from "../../../shared/api/admin";
+import { fetchAutonomyStatus, updateAutonomyStatus, fetchAgentGrants, decideAgentGrant, revokeAgentGrant, fetchAgentIdeas, submitOwnerIdea, reviewAgentIdea, fetchAgentActions, decideAgentAction, type AgentIdea, type AgentOneTimeAction, type AgentGrantRequest, type AutonomyStatus } from "../../../shared/api/admin";
 import { useJ } from "../../../screens/jarvis-shared";
 
 export function AutonomyPage() {
@@ -12,6 +12,7 @@ export function AutonomyPage() {
   const [ideaSummary, setIdeaSummary] = useState("");
   const [ideaKind, setIdeaKind] = useState("business");
   const [ideaError, setIdeaError] = useState("");
+  const [actions, setActions] = useState<AgentOneTimeAction[]>([]);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -79,6 +80,15 @@ export function AutonomyPage() {
       setSaving(false);
     }
   }, [refreshIdeas]);
+
+  const refreshActions = useCallback(async () => setActions((await fetchAgentActions()).actions), []);
+  useEffect(() => { void refreshActions(); }, [refreshActions]);
+  const decideAction = useCallback(async (id: string, approve: boolean) => {
+    setSaving(true);
+    try { await decideAgentAction(id, approve); await refreshActions(); }
+    catch (e) { setGrantError(e instanceof Error ? e.message : "Aktionsentscheidung fehlgeschlagen."); }
+    finally { setSaving(false); }
+  }, [refreshActions]);
 
   const changeGrant = useCallback(async (id: string, action: "approve" | "reject" | "revoke") => {
     setSaving(true);
@@ -214,6 +224,18 @@ export function AutonomyPage() {
             </div>}
           </div>
         ))}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Einmalige externe Aktionen</div>
+        <p style={{ color: J.textMuted, fontSize: 12 }}>Die Freigabe bindet exakt Ziel, Inhalt und Digest und kann nur einmal verwendet werden.</p>
+        {actions.length === 0 && <p style={{ color: J.textMuted }}>Keine Aktionen warten.</p>}
+        {actions.map((action) => <div key={action.id} style={{ borderTop: `1px solid ${J.border}`, padding: "10px 0" }}>
+          <div><b>{action.kind}</b>: {action.target} · {action.status}</div>
+          <pre style={{ whiteSpace: "pre-wrap", fontSize: 11 }}>{action.payload}</pre>
+          <div style={{ fontSize: 11, color: J.textMuted }}>Digest: {action.digest}</div>
+          {action.status === "pending" && <div><button disabled={saving} onClick={() => void decideAction(action.id, true)}>Einmal genehmigen</button>{" "}<button disabled={saving} onClick={() => void decideAction(action.id, false)}>Ablehnen</button></div>}
+        </div>)}
       </div>
 
       <div style={card}>
