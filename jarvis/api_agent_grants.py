@@ -8,7 +8,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .router_dependencies import LiveRef
-from .github_gateway import GithubGatewayError, canonical_repo, create_pull_request, public_repository_metadata
+from .github_gateway import GithubGatewayError, canonical_repo, create_agent_branch, create_pull_request, public_repository_metadata, write_branch_file
 
 
 class GrantRequest(BaseModel):
@@ -44,6 +44,18 @@ class ProjectRequest(BaseModel):
     title: str = Field(max_length=200)
     operations: list[str] = Field(min_length=1, max_length=20)
     duration_seconds: int = Field(default=7 * 24 * 3600, ge=3600, le=30 * 24 * 3600)
+
+
+class BranchCreate(BaseModel):
+    branch: str = Field(max_length=200)
+    base: str = Field(max_length=200)
+
+
+class BranchFileWrite(BaseModel):
+    path: str = Field(max_length=300)
+    branch: str = Field(max_length=200)
+    content: str = Field(max_length=262144)
+    message: str = Field(max_length=200)
 
 
 class PullRequestAction(BaseModel):
@@ -182,6 +194,32 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         if item is None: raise HTTPException(409, "project missing or not approved")
         audit("agent.project.revoked", actor, {"project_id": project_id})
         return {"project": item}
+
+    @router.post("/agent/repositories/{repo_owner}/{repo_name}/branches")
+    def create_branch(repo_owner: str, repo_name: str, body: BranchCreate,
+                      x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        try: target = canonical_repo(repo_owner, repo_name)
+        except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
+        if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="create_branch"):
+            raise HTTPException(403, "approved project operation required")
+        try: result = create_agent_branch(repo_owner, repo_name, token=current("github_write_token"), **body.model_dump())
+        except GithubGatewayError as exc: raise HTTPException(502, str(exc)) from exc
+        audit("agent.repository.branch_created", "agent", {"repository": target, "branch": body.branch, "base": body.base})
+        return {"result": result}
+
+    @router.put("/agent/repositories/{repo_owner}/{repo_name}/files")
+    def write_file(repo_owner: str, repo_name: str, body: BranchFileWrite,
+                   x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        try: target = canonical_repo(repo_owner, repo_name)
+        except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
+        if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="write_branch_file"):
+            raise HTTPException(403, "approved project operation required")
+        try: result = write_branch_file(repo_owner, repo_name, token=current("github_write_token"), **body.model_dump())
+        except GithubGatewayError as exc: raise HTTPException(502, str(exc)) from exc
+        audit("agent.repository.file_written", "agent", {"repository": target, "path": body.path, "branch": body.branch, "commit": result["commit"]})
+        return {"result": result}
 
     @router.post("/agent/actions/github-pull-request", status_code=201)
     def request_pull_request(body: PullRequestAction, x_jarvis_agent_request_token: str | None = Header(default=None)):

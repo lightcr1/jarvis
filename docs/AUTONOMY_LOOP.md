@@ -130,8 +130,17 @@ eine neue Freigabe. Der serverseitige `JARVIS_GITHUB_WRITE_TOKEN` wird nie an
 den Agenten gegeben und muss als Fine-Grained Token nur fuer explizit erlaubte
 Repos konfiguriert werden; ohne Token schlaegt die Aktion geschlossen fehl.
 Da die Freigabe vor dem API-Aufruf atomar verbraucht wird, braucht auch ein
-fehlgeschlagener GitHub-Aufruf eine neue Freigabe. Private Repos und das
-Erzeugen/Pushen eines Branches brauchen weiterhin separat bereitgestellte
-Zugriffe und einen geprueften Schreibpfad.
+fehlgeschlagener GitHub-Aufruf eine neue Freigabe. Innerhalb eines genehmigten Projektrahmens kann die Operation `create_branch`
+einen neuen `agent/*`-Branch aus `dev` oder `main` erzeugen. Mit der getrennten
+Operation `write_branch_file` kann Jarvis ueber den typisierten Gateway einzelne
+Textdateien bis 256 KiB in einen bereits vorhandenen `agent/*`-Branch
+schreiben. Zielrepo, Operation, Branchformat und Pfad werden serverseitig
+geprueft; `AGENTS.md`, `.github/`, `deploy/`, Environment-, Credential- und
+Secret-Pfade sind immer blockiert. Das serverseitige GitHub-Token bleibt
+verborgen. Danach kann der digest-gebundene Einmalpfad einen PR erstellen.
+Binaere Dateien, beliebige Git-Befehle und direkte Pushes nach `dev`/`main`
+sind nicht Teil dieses Gateways. Private Repos
+funktionieren nur, wenn der serverseitige Fine-Grained Token genau dafuer
+berechtigt wurde.
 Business-Projekte brauchen einen definierten Auftrag und fuer finanzielle oder
 oeffentliche Aktionen separate Einzelfreigaben.

@@ -1,9 +1,11 @@
 """Small read-only GitHub adapter; never accepts an arbitrary URL or agent token."""
 from __future__ import annotations
 
+import base64
 import json
 import re
 import urllib.error
+import urllib.parse
 import urllib.request
 
 
@@ -37,6 +39,72 @@ def validate_pull_request(payload: dict) -> None:
     for key in ("head", "base"):
         if not re.fullmatch(r"[A-Za-z0-9._/-]+", payload[key]) or ".." in payload[key] or payload[key].startswith("/"):
             raise GithubGatewayError(f"invalid pull request {key}")
+
+
+def validate_agent_branch(branch: str) -> None:
+    if not re.fullmatch(r"agent/[A-Za-z0-9._/-]{1,180}", branch) or ".." in branch:
+        raise GithubGatewayError("agent branch required")
+
+
+def create_agent_branch(owner: str, repository: str, *, branch: str, base: str, token: str) -> dict:
+    canonical = canonical_repo(owner, repository); validate_agent_branch(branch)
+    if base not in {"dev", "main"}: raise GithubGatewayError("base branch must be dev or main")
+    if not token: raise GithubGatewayError("GitHub write token unavailable")
+    headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+               "User-Agent": "Jarvis-Scoped-Action", "Content-Type": "application/json"}
+    try:
+        ref_url = f"https://api.github.com/repos/{canonical}/git/ref/heads/{urllib.parse.quote(base, safe='')}"
+        with urllib.request.build_opener(_NoRedirect()).open(urllib.request.Request(ref_url, headers=headers), timeout=8) as response:
+            sha = json.loads(response.read(65537))["object"]["sha"]
+        create_url = f"https://api.github.com/repos/{canonical}/git/refs"
+        request = urllib.request.Request(create_url, data=json.dumps({"ref": f"refs/heads/{branch}", "sha": sha}).encode(), headers=headers, method="POST")
+        with urllib.request.build_opener(_NoRedirect()).open(request, timeout=8) as response:
+            if response.status != 201: raise GithubGatewayError("GitHub branch creation failed")
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError, KeyError, json.JSONDecodeError) as exc:
+        raise GithubGatewayError("GitHub branch creation failed") from exc
+    return {"repository": canonical, "branch": branch, "base": base, "sha": str(sha)}
+
+
+def validate_branch_file(path: str, branch: str, content: str, message: str) -> None:
+    validate_agent_branch(branch)
+    if not path or path.startswith("/") or ".." in path.split("/") or len(path) > 300 or "\\" in path:
+        raise GithubGatewayError("safe repository-relative path required")
+    lowered = path.lower()
+    if (path == "AGENTS.md" or lowered.startswith(".github/") or lowered.startswith("deploy/") or
+            any(part.startswith(".env") or "credential" in part or "secret" in part for part in lowered.split("/"))):
+        raise GithubGatewayError("protected path cannot be changed through agent gateway")
+    if not isinstance(content, str) or len(content.encode()) > 256 * 1024:
+        raise GithubGatewayError("file content too large")
+    if not message.strip() or len(message) > 200:
+        raise GithubGatewayError("bounded commit message required")
+
+
+def write_branch_file(owner: str, repository: str, *, path: str, branch: str,
+                      content: str, message: str, token: str) -> dict:
+    canonical = canonical_repo(owner, repository); validate_branch_file(path, branch, content, message)
+    if not token: raise GithubGatewayError("GitHub write token unavailable")
+    quoted_path = urllib.parse.quote(path, safe="/")
+    url = f"https://api.github.com/repos/{canonical}/contents/{quoted_path}"
+    headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+               "User-Agent": "Jarvis-Scoped-Action", "Content-Type": "application/json"}
+    sha = None
+    try:
+        get = urllib.request.Request(url + "?ref=" + urllib.parse.quote(branch, safe=""), headers=headers)
+        with urllib.request.build_opener(_NoRedirect()).open(get, timeout=8) as response:
+            existing = json.loads(response.read(65537)); sha = existing.get("sha")
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404: raise GithubGatewayError("GitHub file lookup failed") from exc
+    payload = {"message": message, "content": base64.b64encode(content.encode()).decode(), "branch": branch}
+    if sha: payload["sha"] = sha
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="PUT")
+    try:
+        with urllib.request.build_opener(_NoRedirect()).open(req, timeout=10) as response:
+            result = json.loads(response.read(65537))
+            if response.status not in (200, 201): raise GithubGatewayError("GitHub file write failed")
+    except (urllib.error.HTTPError, urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        raise GithubGatewayError("GitHub file write failed") from exc
+    return {"repository": canonical, "path": path, "branch": branch,
+            "commit": str((result.get("commit") or {}).get("sha") or "")}
 
 
 def create_pull_request(owner: str, repository: str, payload: dict, token: str) -> dict:
