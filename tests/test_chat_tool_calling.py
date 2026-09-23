@@ -109,6 +109,7 @@ class ChatToolCallingTests(unittest.TestCase):
         return patch("jarvis.providers.get_provider_instance", return_value=fake), fake
 
     def test_explicit_owner_chat_idea_is_queued_but_guest_cannot_submit(self):
+        jarvisappv4.ensure_default_admin_seeded()
         login = self.client.post("/auth/login", json={"username": "admin", "password": "admin123"})
         self.assertEqual(200, login.status_code)
         headers = {"X-Jarvis-Session": login.json()["session_token"]}

@@ -5,6 +5,7 @@ import tempfile
 import unittest
 
 from jarvis.audit_log_store import AuditLogStore
+from jarvis.agent_grants import AgentGrantStore
 from jarvis.group_store import GroupStore
 from jarvis.jarvis_engine import RiskLevel
 from jarvis.membership_store import MembershipStore
@@ -156,6 +157,29 @@ class ToolRegistryTests(unittest.TestCase):
         )
         self.assertEqual("dummy_write", result["data"]["route"])
         self.assertEqual(1, self.audit.count_events(event="tool_call_completed"))
+
+    def test_service_system_requires_scoped_grant_before_write(self):
+        service = self.users.create_user("agent", role="service_system")
+        self.permissions.set_user_permissions(service["id"], ["tasks.write", "files.write"])
+        grant_store = AgentGrantStore(os.path.join(self.tmpdir.name, "grants.sqlite3"))
+        task_tool = Tool(
+            name="create_task", description="Create a task", parameters={"type": "object", "properties": {}},
+            required_permission="tasks.write", risk=RiskLevel.WRITE, handler=_write_tool,
+        )
+        kwargs = {"audit_log": self.audit, "membership_store": self.memberships,
+                  "permission_store": self.permissions, "agent_grant_store": grant_store}
+        ctx = self._ctx(service, "service_system")
+        self.assertEqual("agent_grant_required", execute_tool(task_tool, ctx, {}, **kwargs)["data"]["error"])
+        request = grant_store.request(kind="workspace", target="jarvis:tasks", operation="create_task",
+                                      reason="Owner task project", duration_seconds=3600)
+        grant_store.decide(request["id"], actor="owner", approve=True)
+        self.assertEqual("dummy_write", execute_tool(task_tool, ctx, {}, **kwargs)["data"]["route"])
+        # The approval does not authorize a different tool, even with RBAC permissions.
+        self.assertEqual("agent_grant_required", execute_tool(WRITE_TOOL, ctx, {}, **kwargs)["data"]["error"])
+        grant_store.revoke(request["id"], actor="owner")
+        self.assertEqual("agent_grant_required", execute_tool(task_tool, ctx, {}, **kwargs)["data"]["error"])
+        os.environ["JARVIS_EMERGENCY_STOP"] = "1"
+        self.assertEqual("emergency_stop", execute_tool(task_tool, ctx, {}, **kwargs)["data"]["error"])
 
     def test_read_risk_tool_never_requires_confirmation(self):
         admin = self.users.create_user("root8", role="admin")

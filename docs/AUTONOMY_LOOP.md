@@ -74,7 +74,12 @@ bereitgestellt werden; PR/Merge tun das nicht.
 oder Zahlungen. Ein neues ausfuehrendes Tool muss im vertrauenswuerdigen
 Gateway erst Aktion und Ziel selbst klassifizieren und `authorize()` vor jeder
 Nebenwirkung aufrufen; ein vom Agenten gemeldetes Label ist nicht verlaesslich.
-Bis ein solches Gateway fuer eine Aktion existiert, bleibt sie technisch
-unmoeglich, unabhaengig von einem gespeicherten Grant. Fremde Repos brauchen
+Der Jarvis-App-Tool-Registry-Pfad prueft fuer die Service-Rolle zusaetzlich
+RBAC, Not-Aus und einen konkreten Grant vor internen `create_task`- und
+`complete_task`-Aktionen. Andere schreibende Tools der Service-Rolle bleiben
+in diesem Pfad gesperrt. Das ist nur ein Pilot: OpenHands-Terminal, E-Mail,
+Home Assistant, GitHub und fremde Dienste benutzen diesen Pfad nicht und
+werden dadurch nicht eingeschraenkt oder freigeschaltet. Ein vorhandener
+Grant ersetzt keine separaten externen Sicherheitsgrenzen. Fremde Repos brauchen
 zusatzlich bereitgestellte Zugriffe, Business-Projekte einen definierten
 Auftrag und fuer finanzielle/oeffentliche Aktionen separate Einzelfreigaben.

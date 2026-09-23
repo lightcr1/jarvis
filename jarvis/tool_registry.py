@@ -53,6 +53,15 @@ def to_anthropic_schema(tools: list[Tool]) -> list[dict]:
     return [{"name": t.name, "description": t.description, "input_schema": t.parameters} for t in tools]
 
 
+# Trusted registry classification: never derive authorization scope from an
+# LLM-provided argument or a self-declared tool label. Expand only with a
+# reviewed target resolver per real tool.
+_AGENT_AUTONOMOUS_TOOLS = {
+    "create_task": ("workspace", "jarvis:tasks", "create_task"),
+    "complete_task": ("workspace", "jarvis:tasks", "complete_task"),
+}
+
+
 def execute_tool(
     tool: Tool,
     ctx: ToolExecutionContext,
@@ -62,6 +71,7 @@ def execute_tool(
     membership_store,
     permission_store,
     confirm: bool = False,
+    agent_grant_store=None,
 ) -> dict:
     decision = permission_decision(ctx.role, ctx.user_id, tool.required_permission, membership_store, permission_store)
     if not decision["allowed"]:
@@ -83,7 +93,19 @@ def execute_tool(
             "data": {"route": "tool_denied", "tool": tool.name, "error": "emergency_stop"},
         }
 
-    if tool.risk != RiskLevel.READ and not confirm:
+    agent_authorized = False
+    if ctx.role == "service_system" and tool.risk != RiskLevel.READ:
+        scope = _AGENT_AUTONOMOUS_TOOLS.get(tool.name)
+        agent_authorized = bool(scope and agent_grant_store and agent_grant_store.authorize(
+            kind=scope[0], target=scope[1], operation=scope[2],
+        ))
+        if not agent_authorized:
+            if audit_log:
+                audit_log.write("tool_agent_grant_denied", {"tool": tool.name, "user_id": ctx.user_id})
+            return {"reply": "Owner grant required for this agent action.",
+                    "data": {"route": "tool_denied", "tool": tool.name, "error": "agent_grant_required"}}
+
+    if tool.risk != RiskLevel.READ and not (confirm or agent_authorized):
         if audit_log:
             audit_log.write("tool_confirmation_requested", {"tool": tool.name, "args": args, "user_id": ctx.user_id, "role": ctx.role, "risk": tool.risk})
         return {
