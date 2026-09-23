@@ -44,25 +44,33 @@ The model route will only answer once the Runpod worker is configured and runnin
 
 ## Running Jarvis autonomously (continuous self-improvement)
 
-Once the pod is live and the LLM profile + GitHub token are configured, Jarvis
-works proactively per `AGENTS.md` ("Autonomy mode"). Two controls:
+Once the pod is live, Jarvis works proactively per `AGENTS.md` (Autonomy mode).
+Controls:
 
 - **Master switch:** `config/autonomy.json` in the repo workspace
   (`enabled: true/false`). The Jarvis web UI exposes it under
   Admin → Autonomy (route `/dashboard/autonomy`); the coding agent reads it
   before each round. Missing file = enabled.
-- **Work loop:** a scheduled workflow (`.github/workflows/autonomy-trigger.yml`,
-  every 6 h) keeps exactly one open issue labeled `autonomy` as the queue.
-  Jarvis works it, then closes it when done.
+- **Work loop:** the local **Autonomy Loop** on this VM
+  (`/home/media/jarvis-openhands/autonomy/autonomy_loop.py`, started by a
+  media crontab every 2 min) starts OpenHands rounds directly with
+  `working_dir = /projects/jarvis`, keeps exactly one round alive at a time,
+  and stops the pod after a wrapup round once the owner is idle. See
+  `docs/AUTONOMY_LOOP.md`. The old GitHub-Actions workflow
+  (`.github/workflows/autonomy-trigger.yml`) is no longer required and can be
+  disabled in the repository.
 - **Stop autonomous work:** flip the switch in the web UI (or set
-  `config/autonomy.json` to `enabled: false`, or close the `autonomy` issue).
-  Jarvis then stops starting new rounds; direct owner requests always work.
-- **Owner priority:** when you chat/task Jarvis directly, he pauses autonomous
-  work (safe checkpoint), serves you, and resumes afterwards — he never
-  aborts half-done work.
+  `config/autonomy.json` to `enabled: false`). Jarvis then stops starting new
+  rounds; direct owner requests always work.
+- **Owner priority:** when you chat/task Jarvis directly, `user_activity_age`
+  resets and the loop does not start new rounds; a running round finishes at a
+  safe checkpoint instead of being aborted mid-work.
 - **Efficiency rule:** changes are bundled into a few PRs per session, not
   one commit per tiny step. Nothing to do -> the loop stays idle instead of
   producing churn.
+
+Workspace: choose **Open Workspace** → `/projects/jarvis` before starting a
+conversation in the Canvas UI, otherwise the agent sees an empty folder.
 
 ## Troubleshooting: Onboarding dialog stuck (Telemetry / profile setup)
 
