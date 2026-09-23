@@ -35,6 +35,7 @@ def build_auth_chat_deps(state: object) -> dict:
         "get_identity_session": state._get_identity_session,
         "chat_owner_key": state._chat_owner_key,
         "chat_history": live_attr(state, "chat_history"),
+        "agent_grant_store": live_attr(state, "agent_grant_store"),
         "rag_store": live_attr(state, "rag_store"),
         "wakeword_enabled": state.wakeword_enabled,
         "wakeword_phrase": getattr(state, "wakeword_phrase", lambda: "hey jarvis"),
@@ -211,6 +212,21 @@ def build_agent_monitor_deps(state: object) -> dict:
         "audit_admin_event": state._audit_admin_event,
         "openhands_api_key": os.getenv("OPENHANDS_API_KEY", "") or "",
         "github_token": os.getenv("GITHUB_TOKEN", "") or "",
+    }
+
+
+def build_agent_grants_deps(state: object) -> dict:
+    import os
+    return {
+        "agent_grant_store": live_attr(state, "agent_grant_store"),
+        "get_identity_session": state._get_identity_session,
+        "normalize_role": state.normalize_role,
+        "audit_admin_event": state._audit_admin_event,
+        "agent_request_token": os.getenv("JARVIS_AGENT_REQUEST_TOKEN", ""),
+        "github_write_token": os.getenv("JARVIS_GITHUB_WRITE_TOKEN", ""),
+        "web_search_token": os.getenv("JARVIS_BRAVE_SEARCH_TOKEN", ""),
+        "owner_user_id": os.getenv("JARVIS_OWNER_USER_ID", "").strip(),
+        "email_service": live_attr(state, "email_service"),
     }
 
 

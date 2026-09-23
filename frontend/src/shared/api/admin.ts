@@ -501,6 +501,88 @@ export function updateAutonomyStatus(enabled: boolean, note: string) {
   });
 }
 
+export interface AgentIdea {
+  id: string;
+  source: "agent" | "owner";
+  kind: string;
+  title: string;
+  summary: string;
+  benefit: string;
+  risks: string;
+  next_step: string;
+  status: string;
+  created_at: number;
+}
+
+export function fetchAgentIdeas() {
+  return apiRequest<{ ideas: AgentIdea[] }>("/admin/ideas", { includeAdmin: true });
+}
+
+export function submitOwnerIdea(kind: string, title: string, summary: string) {
+  return apiRequest<{ idea: AgentIdea }>("/admin/ideas", {
+    method: "POST", includeAdmin: true, body: { kind, title, summary },
+  });
+}
+
+export function reviewAgentIdea(id: string, status: "shortlisted" | "dismissed") {
+  return apiRequest<{ idea: AgentIdea }>(`/admin/ideas/${encodeURIComponent(id)}/review`, {
+    method: "POST", includeAdmin: true, body: { status },
+  });
+}
+
+export interface AgentProject {
+  id: string; kind: string; target: string; title: string; operations: string;
+  status: string; created_at: number; expires_at: number;
+}
+export function fetchAgentProjects() { return apiRequest<{ projects: AgentProject[] }>("/admin/agent-projects", { includeAdmin: true }); }
+export function decideAgentProject(id: string, approve: boolean) {
+  return apiRequest<{ project: AgentProject }>(`/admin/agent-projects/${encodeURIComponent(id)}/decide`, { method: "POST", includeAdmin: true, body: { approve } });
+}
+export function revokeAgentProject(id: string) {
+  return apiRequest<{ project: AgentProject }>(`/admin/agent-projects/${encodeURIComponent(id)}/revoke`, { method: "POST", includeAdmin: true });
+}
+
+export interface AgentOneTimeAction {
+  id: string; kind: string; target: string; payload: string; digest: string;
+  status: string; created_at: number; expires_at: number;
+}
+export function fetchAgentActions() {
+  return apiRequest<{ actions: AgentOneTimeAction[] }>("/admin/agent-actions", { includeAdmin: true });
+}
+export function decideAgentAction(id: string, approve: boolean) {
+  return apiRequest<{ action: AgentOneTimeAction }>(`/admin/agent-actions/${encodeURIComponent(id)}/decide`, {
+    method: "POST", includeAdmin: true, body: { approve },
+  });
+}
+
+export interface AgentGrantRequest {
+  id: string;
+  kind: string;
+  target: string;
+  operation: string;
+  reason: string;
+  status: string;
+  created_at: number;
+  expires_at: number;
+  decided_by: string | null;
+}
+
+export function fetchAgentGrants() {
+  return apiRequest<{ requests: AgentGrantRequest[] }>("/admin/agent-grants", { includeAdmin: true });
+}
+
+export function decideAgentGrant(id: string, approve: boolean) {
+  return apiRequest<{ request: AgentGrantRequest }>(`/admin/agent-grants/${encodeURIComponent(id)}/decide`, {
+    method: "POST", includeAdmin: true, body: { approve },
+  });
+}
+
+export function revokeAgentGrant(id: string) {
+  return apiRequest<{ request: AgentGrantRequest }>(`/admin/agent-grants/${encodeURIComponent(id)}/revoke`, {
+    method: "POST", includeAdmin: true,
+  });
+}
+
 export interface AgentSession {
   id: string;
   title: string;

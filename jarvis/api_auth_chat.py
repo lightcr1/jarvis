@@ -506,6 +506,27 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         )
         return {"ok": True}
 
+    def _capture_owner_idea(text: str, *, role: str, user_id: str | None) -> dict | None:
+        """Only an explicit command from a logged-in owner creates a proposal."""
+        match = _re.fullmatch(r"(Business-Idee|Projektidee|Jarvis-Idee|Idee):\s*(.+)", text, _re.I | _re.S)
+        if not match:
+            return None
+        if role != "admin" or not user_id:
+            return {"reply": "Melde dich als Besitzer an, um eine Projektidee zu speichern."}
+        title = match.group(2).strip()
+        if not title or len(title) > 2000:
+            return {"reply": "Beschreibe deine Idee bitte in maximal 2000 Zeichen."}
+        prefix = match.group(1).lower()
+        kind = "other_project" if prefix == "projektidee" else "platform" if prefix == "jarvis-idee" else "business"
+        idea = current("agent_grant_store").propose_idea(
+            source="owner", kind=kind, title=title[:140], summary=title,
+            benefit="To be researched", risks="To be assessed",
+            next_step="Research and propose a safe plan",
+        )
+        current("audit_log").write("agent.idea.owner_submitted", {"idea_id": idea["id"], "user_id": user_id})
+        return {"reply": "Idee notiert. Ich prüfe Nutzen, Risiken und nächste Schritte. Externe Aktionen brauchen weiterhin Freigaben.",
+                "data": {"idea_id": idea["id"]}}
+
     @router.post("/chat", response_model=ChatOut)
     def chat(
         payload: ChatIn,
@@ -546,6 +567,12 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         rl_key = effective_user_id or (x_jarvis_guest_key or "anon")
         if not _rate.allow(f"chat:{rl_key}", limit=30, window=60.0):
             raise HTTPException(429, "Rate limit exceeded — slow down")
+
+        captured = _capture_owner_idea(text, role=role, user_id=effective_user_id)
+        if captured is not None:
+            current("chat_history").append_message(session_id, "user", text, owner_key=owner_key, owner_user_id=effective_user_id)
+            current("chat_history").append_message(session_id, "jarvis", captured["reply"], owner_key=owner_key, owner_user_id=effective_user_id)
+            return {**captured, "session_id": session_id}
 
         token = deps["bearer_token_from_header"](authorization)
         if token and not is_token_active(current("tokens"), token):
@@ -803,6 +830,14 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
             def _rl():
                 yield f"data: {_json.dumps({'type': 'error', 'detail': 'Rate limit exceeded — slow down'})}\n\n"
             return StreamingResponse(_rl(), media_type="text/event-stream")
+
+        captured = _capture_owner_idea(text, role=role, user_id=effective_user_id)
+        if captured is not None:
+            current("chat_history").append_message(session_id, "user", text, owner_key=owner_key, owner_user_id=effective_user_id)
+            current("chat_history").append_message(session_id, "jarvis", captured["reply"], owner_key=owner_key, owner_user_id=effective_user_id)
+            def _idea(result=captured, sid=session_id):
+                yield f"data: {_json.dumps({'type': 'done', **result, 'session_id': sid})}\n\n"
+            return StreamingResponse(_idea(), media_type="text/event-stream")
 
         token = deps["bearer_token_from_header"](authorization)
         if token and not is_token_active(current("tokens"), token):

@@ -70,6 +70,7 @@ def run_chat_with_tools(
             tool_result = execute_tool(
                 tool, ctx, call.arguments,
                 audit_log=audit_log, membership_store=membership_store, permission_store=permission_store,
+                agent_grant_store=ctx.deps.get("agent_grant_store"),
             )
         if (tool_result.get("data") or {}).get("route") == "tool_confirmation_required":
             # Don't feed a confirmation prompt back into the LLM as a tool result —
