@@ -18,5 +18,7 @@ def test_gateway_has_fixed_upstream_and_default_deny():
     config = (ROOT / "deploy/openhands/inference-gateway.conf").read_text()
     assert "proxy_pass http://controller:8080/agent/v1/;" in config
     assert "location / { return 403; }" in config
+    assert "^/jarvis-agent/" in config
+    assert "/admin" not in config
     assert "proxy_pass $" not in config
     assert "resolver" not in config

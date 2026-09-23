@@ -5,6 +5,9 @@ services:
     restart: unless-stopped
     ports:
       - "${OPENHANDS_BIND_IP:-127.0.0.1}:${OPENHANDS_PORT:-8000}:8000"
+    environment:
+      # Request-only capability: cannot approve actions or reveal server-side service tokens.
+      JARVIS_AGENT_REQUEST_TOKEN: ${JARVIS_AGENT_REQUEST_TOKEN:?Set JARVIS_AGENT_REQUEST_TOKEN}
     volumes:
       - type: bind
         source: ${OPENHANDS_STATE_DIR:?Set OPENHANDS_STATE_DIR}
