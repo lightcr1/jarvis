@@ -18,6 +18,17 @@ def test_german_persona_is_localized_not_appended():
     assert "TONE:" not in prompt
 
 
+def test_assistant_goals_and_approval_boundaries_in_both_languages():
+    english = build_system_prompt(language="en")
+    german = build_system_prompt(language="de")
+    assert "business ideas" in english
+    assert "Large projects" in english
+    assert "payments" in english
+    assert "Business-Ideen" in german
+    assert "Große Projekte" in german
+    assert "Zahlungen" in german
+
+
 def test_unknown_language_falls_back_to_english():
     prompt = build_system_prompt(language="fr")
     assert "You are J.A.R.V.I.S." in prompt
