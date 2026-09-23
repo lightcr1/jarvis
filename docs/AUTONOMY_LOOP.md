@@ -90,8 +90,9 @@ Einmalausfuehrungen und begrenzte Recherche gueltig. Der typisierte Client
 `scripts/agent/jarvis_gateway.py` kapselt diese Aufrufe. Der isolierte
 Inference-Gateway erlaubt dafuer nur explizite `/jarvis-agent/...`-Muster und
 blockiert Admin-, Chat- und beliebige HTTP-Pfade. Tokenleak oder Request-Spam
-bleiben Risiken: Token regelmaessig rotieren, API rate-limiten und Audit
-ueberwachen. Ist ein Request-Token auf dem
+bleiben Risiken: Alle Agenten-Endpunkte sind pro Request-Token gedrosselt
+(Anfragen schreibender Typen 10–15/min, Suche 30/min, Status 60/min, Einmal-
+Ausfuehrung 5/min). Token regelmassig rotieren, Audit ueberwachen. Ist ein Request-Token auf dem
 Loop-Host eingerichtet und die Jarvis-API erreichbar, liest der Loop bis zu
 fuenf offene Besitzerideen und gibt sie als **unvertraute Daten** an die
 naechste OpenHands-Runde weiter, ohne das Token ins Modell-Prompt zu kopieren.
