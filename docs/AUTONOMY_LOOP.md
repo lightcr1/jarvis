@@ -92,7 +92,12 @@ Inference-Gateway erlaubt dafuer nur explizite `/jarvis-agent/...`-Muster und
 blockiert Admin-, Chat- und beliebige HTTP-Pfade. Tokenleak oder Request-Spam
 bleiben Risiken: Alle Agenten-Endpunkte sind pro Request-Token gedrosselt
 (Anfragen schreibender Typen 10–15/min, Suche 30/min, Status 60/min, Einmal-
-Ausfuehrung 5/min). Token regelmassig rotieren, Audit ueberwachen. Ist ein Request-Token auf dem
+Ausfuehrung 5/min). Token regelmassig rotieren, Audit ueberwachen.
+Vor der Aktivierung der vollen Kette prueft `scripts/agent/preflight_grants.py`
+lesend: Besitzer-ID, Request-Token und die Trennung von Service-Tokens, die
+Grants-Datenbank, den Git-Index auf verdaechtige Secrets sowie aktive
+billbare Runpod-Aktionen; fehlt etwas, endet das Skript mit Fehlercode.
+Ist ein Request-Token auf dem
 Loop-Host eingerichtet und die Jarvis-API erreichbar, liest der Loop bis zu
 fuenf offene Besitzerideen und gibt sie als **unvertraute Daten** an die
 naechste OpenHands-Runde weiter, ohne das Token ins Modell-Prompt zu kopieren.
