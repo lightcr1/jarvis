@@ -26,6 +26,8 @@ def main() -> int:
     idea = sub.add_parser("propose-idea"); idea.add_argument("kind"); idea.add_argument("title"); idea.add_argument("summary"); idea.add_argument("benefit"); idea.add_argument("risks"); idea.add_argument("next_step")
     grant = sub.add_parser("request-grant"); grant.add_argument("kind"); grant.add_argument("target"); grant.add_argument("operation"); grant.add_argument("reason"); grant.add_argument("--duration", type=int, default=3600)
     status = sub.add_parser("grant-status"); status.add_argument("id")
+    project = sub.add_parser("request-project"); project.add_argument("kind"); project.add_argument("target"); project.add_argument("title"); project.add_argument("operations", nargs="+"); project.add_argument("--duration", type=int, default=7*24*3600)
+    project_status = sub.add_parser("project-status"); project_status.add_argument("id")
     meta = sub.add_parser("repo-metadata"); meta.add_argument("repository")
     pr = sub.add_parser("request-pr"); pr.add_argument("repository"); pr.add_argument("title"); pr.add_argument("body"); pr.add_argument("head"); pr.add_argument("base")
     execute = sub.add_parser("execute-action"); execute.add_argument("id")
@@ -33,6 +35,8 @@ def main() -> int:
     if cmd == "propose-idea": result = call("POST", "/ideas", values)
     elif cmd == "request-grant": result = call("POST", "/grants/requests", {"duration_seconds": values.pop("duration"), **values})
     elif cmd == "grant-status": result = call("GET", f"/grants/requests/{urllib.parse.quote(args.id, safe='')}")
+    elif cmd == "request-project": result = call("POST", "/projects", {"duration_seconds": values.pop("duration"), **values})
+    elif cmd == "project-status": result = call("GET", f"/projects/{urllib.parse.quote(args.id, safe='')}")
     elif cmd == "repo-metadata":
         owner, repo = args.repository.split("/", 1); result = call("GET", f"/repositories/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}/metadata")
     elif cmd == "request-pr": result = call("POST", "/actions/github-pull-request", values)

@@ -530,6 +530,18 @@ export function reviewAgentIdea(id: string, status: "shortlisted" | "dismissed")
   });
 }
 
+export interface AgentProject {
+  id: string; kind: string; target: string; title: string; operations: string;
+  status: string; created_at: number; expires_at: number;
+}
+export function fetchAgentProjects() { return apiRequest<{ projects: AgentProject[] }>("/admin/agent-projects", { includeAdmin: true }); }
+export function decideAgentProject(id: string, approve: boolean) {
+  return apiRequest<{ project: AgentProject }>(`/admin/agent-projects/${encodeURIComponent(id)}/decide`, { method: "POST", includeAdmin: true, body: { approve } });
+}
+export function revokeAgentProject(id: string) {
+  return apiRequest<{ project: AgentProject }>(`/admin/agent-projects/${encodeURIComponent(id)}/revoke`, { method: "POST", includeAdmin: true });
+}
+
 export interface AgentOneTimeAction {
   id: string; kind: string; target: string; payload: string; digest: string;
   status: string; created_at: number; expires_at: number;

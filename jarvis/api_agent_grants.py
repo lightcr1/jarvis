@@ -38,6 +38,14 @@ class OwnerIdea(BaseModel):
     summary: str = Field(max_length=2000)
 
 
+class ProjectRequest(BaseModel):
+    kind: str = Field(max_length=32)
+    target: str = Field(max_length=180)
+    title: str = Field(max_length=200)
+    operations: list[str] = Field(min_length=1, max_length=20)
+    duration_seconds: int = Field(default=7 * 24 * 3600, ge=3600, le=30 * 24 * 3600)
+
+
 class PullRequestAction(BaseModel):
     repository: str = Field(max_length=201)
     title: str = Field(max_length=200)
@@ -137,6 +145,43 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
             raise HTTPException(502, str(exc)) from exc
         audit("agent.repository.metadata_read", "agent", {"repository": target})
         return {"metadata": result}
+
+    @router.post("/agent/projects", status_code=201)
+    def request_project(body: ProjectRequest, x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        try:
+            item = current("agent_grant_store").request_project(**body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        audit("agent.project.requested", "agent", {"project_id": item["id"]})
+        return {"project": item}
+
+    @router.get("/agent/projects/{project_id}")
+    def project_status(project_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        item = current("agent_grant_store").get_project(project_id)
+        if item is None: raise HTTPException(404, "project not found")
+        return {"project": item}
+
+    @router.get("/admin/agent-projects")
+    def projects(x_jarvis_session: str | None = Header(default=None)):
+        owner(x_jarvis_session); return {"projects": current("agent_grant_store").list_projects()}
+
+    @router.post("/admin/agent-projects/{project_id}/decide")
+    def decide_project(project_id: str, body: GrantDecision, x_jarvis_session: str | None = Header(default=None)):
+        actor = owner(x_jarvis_session)
+        item = current("agent_grant_store").decide_project(project_id, actor=actor, approve=body.approve)
+        if item is None: raise HTTPException(409, "project missing, expired, or already decided")
+        audit("agent.project.decided", actor, {"project_id": project_id, "approved": body.approve})
+        return {"project": item}
+
+    @router.post("/admin/agent-projects/{project_id}/revoke")
+    def revoke_project(project_id: str, x_jarvis_session: str | None = Header(default=None)):
+        actor = owner(x_jarvis_session)
+        item = current("agent_grant_store").revoke_project(project_id, actor=actor)
+        if item is None: raise HTTPException(409, "project missing or not approved")
+        audit("agent.project.revoked", actor, {"project_id": project_id})
+        return {"project": item}
 
     @router.post("/agent/actions/github-pull-request", status_code=201)
     def request_pull_request(body: PullRequestAction, x_jarvis_agent_request_token: str | None = Header(default=None)):

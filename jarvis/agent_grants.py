@@ -40,6 +40,12 @@ class AgentGrantStore:
                 decided_at INTEGER, decided_by TEXT, revoked_at INTEGER
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS grants_lookup ON requests(kind,target,operation,status)")
+            db.execute("""CREATE TABLE IF NOT EXISTS projects (
+                id TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL,
+                title TEXT NOT NULL, operations TEXT NOT NULL, status TEXT NOT NULL,
+                created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+                decided_at INTEGER, decided_by TEXT, revoked_at INTEGER
+            )""")
             db.execute("""CREATE TABLE IF NOT EXISTS one_time_actions (
                 id TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL,
                 payload TEXT NOT NULL, digest TEXT NOT NULL, status TEXT NOT NULL,
@@ -162,6 +168,50 @@ class AgentGrantStore:
             changed = db.execute("SELECT changes()").fetchone()[0]
         return self.get_idea(idea_id) if changed else None
 
+    def request_project(self, *, kind: str, target: str, title: str,
+                        operations: list[str], duration_seconds: int = 7 * 24 * 3600) -> dict:
+        if not title.strip() or len(title) > 200 or not operations or len(operations) > 20:
+            raise ValueError("bounded project title and operations required")
+        normalized = sorted(set(operations))
+        for operation in normalized:
+            self._validate(kind, target, operation)
+        if not 3600 <= duration_seconds <= 30 * 24 * 3600:
+            raise ValueError("project duration outside allowed range")
+        now = int(self.clock()); identifier = uuid.uuid4().hex
+        with self._connect() as db:
+            db.execute("""INSERT INTO projects
+                (id,kind,target,title,operations,status,created_at,expires_at)
+                VALUES (?,?,?,?,?,'pending',?,?)""",
+                (identifier, kind, target, title.strip(), json.dumps(normalized), now, now + duration_seconds))
+        return self.get_project(identifier)
+
+    def get_project(self, identifier: str) -> dict | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM projects WHERE id=?", (identifier,)).fetchone()
+        return dict(row) if row else None
+
+    def list_projects(self) -> list[dict]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM projects ORDER BY created_at DESC LIMIT 100").fetchall()
+        return [dict(row) for row in rows]
+
+    def decide_project(self, identifier: str, *, actor: str, approve: bool) -> dict | None:
+        now = int(self.clock())
+        with self._connect() as db:
+            db.execute("""UPDATE projects SET status=?, decided_at=?, decided_by=?
+                WHERE id=? AND status='pending' AND expires_at>?""",
+                ("approved" if approve else "rejected", now, actor, identifier, now))
+            changed = db.execute("SELECT changes()").fetchone()[0]
+        return self.get_project(identifier) if changed else None
+
+    def revoke_project(self, identifier: str, *, actor: str) -> dict | None:
+        now = int(self.clock())
+        with self._connect() as db:
+            db.execute("""UPDATE projects SET status='revoked', revoked_at=?, decided_by=?
+                WHERE id=? AND status='approved'""", (now, actor, identifier))
+            changed = db.execute("SELECT changes()").fetchone()[0]
+        return self.get_project(identifier) if changed else None
+
     @staticmethod
     def _action_digest(kind: str, target: str, payload: dict) -> tuple[str, str]:
         encoded = json.dumps({"kind": kind, "target": target, "payload": payload},
@@ -227,8 +277,13 @@ class AgentGrantStore:
             self._validate(kind, target, operation)
         except ValueError:
             return False
+        now = int(self.clock())
         with self._connect() as db:
             row = db.execute("""SELECT 1 FROM requests WHERE kind=? AND target=?
                 AND operation=? AND status='approved' AND expires_at>? LIMIT 1""",
-                (kind, target, operation, int(self.clock()))).fetchone()
-        return row is not None
+                (kind, target, operation, now)).fetchone()
+            if row is not None:
+                return True
+            projects = db.execute("""SELECT operations FROM projects WHERE kind=? AND target=?
+                AND status='approved' AND expires_at>?""", (kind, target, now)).fetchall()
+        return any(operation in json.loads(project["operations"]) for project in projects)

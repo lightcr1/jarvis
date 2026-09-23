@@ -28,6 +28,27 @@ def test_grant_lifecycle_exact_scope_expiry_and_revoke(tmp_path):
     assert not store.authorize(kind="workspace", target="workspace-A", operation="edit_docs")
 
 
+def test_approved_project_groups_exact_safe_operations_and_is_revocable(tmp_path):
+    store = AgentGrantStore(tmp_path / "projects.sqlite3", clock=lambda: 1000)
+    project = store.request_project(kind="other_project", target="owner/repo", title="Documentation sprint",
+                                    operations=["read_metadata", "edit_docs"], duration_seconds=3600)
+    assert not store.authorize(kind="other_project", target="owner/repo", operation="edit_docs")
+    store.decide_project(project["id"], actor="owner", approve=True)
+    assert store.authorize(kind="other_project", target="owner/repo", operation="edit_docs")
+    assert store.authorize(kind="other_project", target="owner/repo", operation="read_metadata")
+    assert not store.authorize(kind="other_project", target="owner/repo", operation="deploy")
+    assert not store.authorize(kind="other_project", target="other/repo", operation="edit_docs")
+    store.revoke_project(project["id"], actor="owner")
+    assert not store.authorize(kind="other_project", target="owner/repo", operation="edit_docs")
+    try:
+        store.request_project(kind="other_project", target="owner/repo", title="Unsafe",
+                              operations=["edit_docs", "payment"])
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("reserved project operation accepted")
+
+
 def test_reject_reserved_and_wildcard_operations(tmp_path):
     store = AgentGrantStore(tmp_path / "grants.sqlite3")
     for kind, target, operation in (

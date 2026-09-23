@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { fetchAutonomyStatus, updateAutonomyStatus, fetchAgentGrants, decideAgentGrant, revokeAgentGrant, fetchAgentIdeas, submitOwnerIdea, reviewAgentIdea, fetchAgentActions, decideAgentAction, type AgentIdea, type AgentOneTimeAction, type AgentGrantRequest, type AutonomyStatus } from "../../../shared/api/admin";
+import { fetchAutonomyStatus, updateAutonomyStatus, fetchAgentGrants, decideAgentGrant, revokeAgentGrant, fetchAgentIdeas, submitOwnerIdea, reviewAgentIdea, fetchAgentActions, decideAgentAction, fetchAgentProjects, decideAgentProject, revokeAgentProject, type AgentIdea, type AgentProject, type AgentOneTimeAction, type AgentGrantRequest, type AutonomyStatus } from "../../../shared/api/admin";
 import { useJ } from "../../../screens/jarvis-shared";
 
 export function AutonomyPage() {
@@ -13,6 +13,7 @@ export function AutonomyPage() {
   const [ideaKind, setIdeaKind] = useState("business");
   const [ideaError, setIdeaError] = useState("");
   const [actions, setActions] = useState<AgentOneTimeAction[]>([]);
+  const [projects, setProjects] = useState<AgentProject[]>([]);
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -89,6 +90,15 @@ export function AutonomyPage() {
     catch (e) { setGrantError(e instanceof Error ? e.message : "Aktionsentscheidung fehlgeschlagen."); }
     finally { setSaving(false); }
   }, [refreshActions]);
+
+  const refreshProjects = useCallback(async () => setProjects((await fetchAgentProjects()).projects), []);
+  useEffect(() => { void refreshProjects(); }, [refreshProjects]);
+  const changeProject = useCallback(async (id: string, action: "approve" | "reject" | "revoke") => {
+    setSaving(true);
+    try { if (action === "revoke") await revokeAgentProject(id); else await decideAgentProject(id, action === "approve"); await refreshProjects(); }
+    catch (e) { setGrantError(e instanceof Error ? e.message : "Projektentscheidung fehlgeschlagen."); }
+    finally { setSaving(false); }
+  }, [refreshProjects]);
 
   const changeGrant = useCallback(async (id: string, action: "approve" | "reject" | "revoke") => {
     setSaving(true);
@@ -224,6 +234,16 @@ export function AutonomyPage() {
             </div>}
           </div>
         ))}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Freigegebene Projektrahmen</div>
+        <p style={{ color: J.textMuted, fontSize: 12 }}>Mehrere exakt benannte, unkritische Operationen können gemeinsam freigegeben und jederzeit widerrufen werden.</p>
+        {projects.map((project) => <div key={project.id} style={{ borderTop: `1px solid ${J.border}`, padding: "10px 0" }}>
+          <div><b>{project.title}</b>: {project.target} · {project.status}</div><div style={{ fontSize: 12 }}>{project.operations}</div>
+          {project.status === "pending" && <><button disabled={saving} onClick={() => void changeProject(project.id, "approve")}>Projekt genehmigen</button>{" "}<button disabled={saving} onClick={() => void changeProject(project.id, "reject")}>Ablehnen</button></>}
+          {project.status === "approved" && <button disabled={saving} onClick={() => void changeProject(project.id, "revoke")}>Projekt widerrufen</button>}
+        </div>)}
       </div>
 
       <div style={card}>

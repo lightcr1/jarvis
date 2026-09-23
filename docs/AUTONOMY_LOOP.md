@@ -96,6 +96,15 @@ Ohne Token funktioniert der bisherige Repo-/Issue-Workflow weiter, aber die
 Admin-Queue ist fuer den Loop nicht sichtbar. Das Token muss erst separat
 bereitgestellt werden; PR/Merge tun das nicht.
 
+Groessere Vorhaben koennen als Projektrahmen mit bis zu 20 exakt benannten,
+unkritischen Operationen und maximal 30 Tagen Laufzeit beantragt werden. Nach
+der Besitzerfreigabe akzeptiert `authorize()` diese Operationen ohne einzelne
+Rueckfrage; Ziel, Operationen und Laufzeit sind sichtbar und der gesamte Rahmen
+ist widerrufbar. Wildcards und reservierte Kategorien bleiben verboten. Eine
+Projektfreigabe erweitert niemals automatisch das technische Toolset: Nur
+Gateways, die `authorize()` selbst vor der Nebenwirkung aufrufen, koennen sie
+nutzen.
+
 **Wichtig:** Dieser Kern ist noch keine Freigabe fuer Shell, GitHub, E-Mail
 oder Zahlungen. Ein neues ausfuehrendes Tool muss im vertrauenswuerdigen
 Gateway erst Aktion und Ziel selbst klassifizieren und `authorize()` vor jeder
