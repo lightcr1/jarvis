@@ -317,7 +317,7 @@ def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: in
             "kind": "Agent",
             "llm": {
                 "model": "code",
-                "base_url": "http://controller:8080/agent/v1",
+                "base_url": "http://inference-gateway:8080/agent/v1",
                 "api_key": agent_token,
                 "is_subscription": False,
                 "stream": False,

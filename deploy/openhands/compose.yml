@@ -14,8 +14,7 @@ services:
         source: ${OPENHANDS_JARVIS_PROJECT_DIR:?Set OPENHANDS_JARVIS_PROJECT_DIR}
         target: /projects/jarvis
     networks:
-      - default
-      - runpod-internal
+      - agent-isolated
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -24,7 +23,27 @@ services:
     mem_limit: ${OPENHANDS_MEMORY_LIMIT:-8g}
     cpus: ${OPENHANDS_CPU_LIMIT:-4}
 
+  inference-gateway:
+    image: nginx:alpine@sha256:62ff2089abf5a9ed33bd232895bef5e22f7bb4b200675cec49a5ebc48e3d4ac8
+    restart: unless-stopped
+    user: "101:101"
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=8m,noexec,nosuid,mode=1777
+      - /var/run:size=1m,noexec,nosuid,mode=1777
+    volumes:
+      - ./inference-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+    networks:
+      - agent-isolated
+      - runpod-internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+
 networks:
+  agent-isolated:
+    internal: true
   runpod-internal:
     external: true
     name: ${RUNPOD_NETWORK_NAME:-runpod_default}

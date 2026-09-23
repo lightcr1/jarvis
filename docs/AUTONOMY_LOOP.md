@@ -41,9 +41,16 @@ Schutz und Policies muessen ausserhalb des Prompts durchgesetzt werden.
 
 Der OpenHands-Compose-Draft mountet nur den Jarvis-Clone statt des gesamten
 Projekt-Elternverzeichnisses, entfernt alle Linux-Capabilities und setzt
-Prozess-, RAM- und CPU-Limits. Das verhindert keinen normalen ausgehenden
-Netzwerkverkehr aus OpenHands; fuer echte Egress-Allowlisten ist eine separate
-Firewall/Proxy-Grenze ausserhalb des vom Agenten beschreibbaren Repos noetig.
+Prozess-, RAM- und CPU-Limits. Agent Canvas haengt nur im internen
+`agent-isolated`-Netz ohne direkten Internet- oder Runpod-Netzzugang. Ein
+separater, read-only und capability-loser Nginx-Gateway ist dual-homed und
+leitet ausschliesslich `/agent/v1/` an den Controller weiter; alle anderen
+Pfade liefern 403. Der OpenHands-LLM-Endpunkt muss deshalb
+`http://inference-gateway:8080/agent/v1` sein. Das begrenzt den Compose-
+Container, muss aber praktisch verifiziert werden, weil OpenHands je nach
+Execution-Backend weitere Arbeitscontainer starten kann. Diese duerfen weder
+andere Netzwerke noch Docker-Socket/Hostzugriff erhalten. Eine Host-Firewall
+bleibt als aeussere, vom Agenten nicht beschreibbare zweite Grenze empfohlen.
 
 Die festen Pfade und LAN-Endpunkte in diesem Skript sind installationsspezifisch.
 Die Laufzeitdateien (`autonomy-state.json`, Log), `.env`-Dateien und Tokens
