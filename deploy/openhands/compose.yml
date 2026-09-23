@@ -9,16 +9,20 @@ services:
       - type: bind
         source: ${OPENHANDS_STATE_DIR:?Set OPENHANDS_STATE_DIR}
         target: /home/openhands/.openhands
+      # Mount only the reviewed Jarvis clone, never the parent containing other projects.
       - type: bind
-        source: ${OPENHANDS_PROJECTS_DIR:?Set OPENHANDS_PROJECTS_DIR}
-        target: /projects
+        source: ${OPENHANDS_JARVIS_PROJECT_DIR:?Set OPENHANDS_JARVIS_PROJECT_DIR}
+        target: /projects/jarvis
     networks:
       - default
       - runpod-internal
     security_opt:
       - no-new-privileges:true
-    extra_hosts:
-      - host.docker.internal:host-gateway
+    cap_drop:
+      - ALL
+    pids_limit: 512
+    mem_limit: ${OPENHANDS_MEMORY_LIMIT:-8g}
+    cpus: ${OPENHANDS_CPU_LIMIT:-4}
 
 networks:
   runpod-internal:

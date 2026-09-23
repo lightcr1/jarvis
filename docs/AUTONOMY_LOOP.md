@@ -39,6 +39,12 @@ Schutz und Policies muessen ausserhalb des Prompts durchgesetzt werden.
 4. Die naechste Cron-Runde und das lokale Log kontrollieren; bei Fehler die
    gesicherte Datei zurueckspielen. Keine Runpod-Ressource fuer den Test starten.
 
+Der OpenHands-Compose-Draft mountet nur den Jarvis-Clone statt des gesamten
+Projekt-Elternverzeichnisses, entfernt alle Linux-Capabilities und setzt
+Prozess-, RAM- und CPU-Limits. Das verhindert keinen normalen ausgehenden
+Netzwerkverkehr aus OpenHands; fuer echte Egress-Allowlisten ist eine separate
+Firewall/Proxy-Grenze ausserhalb des vom Agenten beschreibbaren Repos noetig.
+
 Die festen Pfade und LAN-Endpunkte in diesem Skript sind installationsspezifisch.
 Die Laufzeitdateien (`autonomy-state.json`, Log), `.env`-Dateien und Tokens
 duerfen nicht versioniert oder als Agenten-Secrets verfuegbar gemacht werden.
