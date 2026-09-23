@@ -1,10 +1,12 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { fetchAutonomyStatus, updateAutonomyStatus, type AutonomyStatus } from "../../../shared/api/admin";
+import { fetchAutonomyStatus, updateAutonomyStatus, fetchAgentGrants, decideAgentGrant, revokeAgentGrant, type AgentGrantRequest, type AutonomyStatus } from "../../../shared/api/admin";
 import { useJ } from "../../../screens/jarvis-shared";
 
 export function AutonomyPage() {
   const J = useJ();
   const [status, setStatus] = useState<AutonomyStatus | null>(null);
+  const [grants, setGrants] = useState<AgentGrantRequest[]>([]);
+  const [grantError, setGrantError] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -24,6 +26,31 @@ export function AutonomyPage() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const refreshGrants = useCallback(async () => {
+    try {
+      const result = await fetchAgentGrants();
+      setGrants(result.requests);
+      setGrantError("");
+    } catch (e) {
+      setGrantError(e instanceof Error ? e.message : "Freigaben konnten nicht geladen werden.");
+    }
+  }, []);
+
+  useEffect(() => { void refreshGrants(); }, [refreshGrants]);
+
+  const changeGrant = useCallback(async (id: string, action: "approve" | "reject" | "revoke") => {
+    setSaving(true);
+    try {
+      if (action === "revoke") await revokeAgentGrant(id);
+      else await decideAgentGrant(id, action === "approve");
+      await refreshGrants();
+    } catch (e) {
+      setGrantError(e instanceof Error ? e.message : "Freigabe fehlgeschlagen.");
+    } finally {
+      setSaving(false);
+    }
+  }, [refreshGrants]);
 
   const toggle = useCallback(async (enabled: boolean) => {
     setSaving(true);
@@ -115,6 +142,34 @@ export function AutonomyPage() {
           Der Notiztext wird beim nächsten Toggle zusammen mit dem Schalter
           gespeichert und steht im Audit-Log.
         </p>
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Projektfreigaben (begrenzter Freigabekern)</div>
+        <p style={{ color: J.textMuted, fontSize: 12 }}>
+          Hier kannst du konkrete Ziele und Operationen genehmigen oder widerrufen. Das ist
+          keine pauschale Berechtigung für Zahlungen, Nachrichten oder beliebige externe Tools;
+          ausführende Werkzeuge brauchen eine separate technische Prüfung.
+        </p>
+        {grantError && <p role="alert" style={{ color: "#ef4444" }}>{grantError}</p>}
+        <button type="button" onClick={() => void refreshGrants()}>Aktualisieren</button>
+        {grants.length === 0 && <p style={{ color: J.textMuted }}>Keine Anfragen vorhanden.</p>}
+        {grants.map((grant) => (
+          <div key={grant.id} style={{ borderTop: `1px solid ${J.border}`, padding: "10px 0" }}>
+            <div><b>{grant.kind}</b>: {grant.target} – {grant.operation}</div>
+            <div style={{ fontSize: 12, color: J.textMuted }}>{grant.reason}</div>
+            <div style={{ fontSize: 12 }}>Status: {grant.status} · Gültig bis: {new Date(grant.expires_at * 1000).toLocaleString()}</div>
+            {grant.status === "pending" && (
+              <div>
+                <button disabled={saving} type="button" onClick={() => void changeGrant(grant.id, "approve")}>Genehmigen</button>{" "}
+                <button disabled={saving} type="button" onClick={() => void changeGrant(grant.id, "reject")}>Ablehnen</button>
+              </div>
+            )}
+            {grant.status === "approved" && (
+              <button disabled={saving} type="button" onClick={() => void changeGrant(grant.id, "revoke")}>Widerrufen</button>
+            )}
+          </div>
+        ))}
       </div>
 
       <div style={card}>

@@ -37,6 +37,27 @@ Schutz und Policies muessen ausserhalb des Prompts durchgesetzt werden.
 Die festen Pfade und LAN-Endpunkte in diesem Skript sind installationsspezifisch.
 Die Laufzeitdateien (`autonomy-state.json`, Log), `.env`-Dateien und Tokens
 duerfen nicht versioniert oder als Agenten-Secrets verfuegbar gemacht werden.
-Dauerhafte Projektfreigaben und externe Aktionen erfordern einen separaten,
-technisch erzwungenen und widerrufbaren Freigabe-Workflow; dieser Loop allein
-stellt ihn nicht bereit.
+## Projektfreigaben (API und Grenzen)
+
+Jarvis bietet einen getrennten, SQLite-gestuetzten Freigabekern fuer genaue
+Projektart, Ziel und Operation: Agenten koennen mit einem **eigenen**
+`JARVIS_AGENT_REQUEST_TOKEN` unter `POST /agent/grants/requests` anfragen und
+unter `GET /agent/grants/requests/{id}` den Status lesen. Fehlt der Token, sind
+beide Agentenendpunkte geschlossen. Der Besitzer kann nach Anmeldung in der
+Admin-UI unter Autonomie oder via `/admin/agent-grants` genehmigen, ablehnen
+und widerrufen. Freigaben verfallen spaetestens nach 30 Tagen; Ausnahmen fuer
+Geld, Veroeffentlichung, Nachrichten, Loeschung oder Sicherheitsregeln sind
+nicht ueber diesen allgemeinen Grant freigebbar. Die Anfragen liegen unter
+`JARVIS_AGENT_GRANTS_PATH` (Standard `/var/lib/jarvis/agent_grants.sqlite3`),
+getrennt vom Repository. Token und Datenbank nicht in den Agenten-Workspace
+mounten; nur einen begrenzten Request-Token ueber einen sicheren Kanal
+bereitstellen. Admin-Sessions darf der Agent nie erhalten.
+
+**Wichtig:** Dieser Kern ist noch keine Freigabe fuer Shell, GitHub, E-Mail
+oder Zahlungen. Ein neues ausfuehrendes Tool muss im vertrauenswuerdigen
+Gateway erst Aktion und Ziel selbst klassifizieren und `authorize()` vor jeder
+Nebenwirkung aufrufen; ein vom Agenten gemeldetes Label ist nicht verlaesslich.
+Bis ein solches Gateway fuer eine Aktion existiert, bleibt sie technisch
+unmoeglich, unabhaengig von einem gespeicherten Grant. Fremde Repos brauchen
+zusatzlich bereitgestellte Zugriffe, Business-Projekte einen definierten
+Auftrag und fuer finanzielle/oeffentliche Aktionen separate Einzelfreigaben.

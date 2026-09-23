@@ -214,6 +214,17 @@ def build_agent_monitor_deps(state: object) -> dict:
     }
 
 
+def build_agent_grants_deps(state: object) -> dict:
+    import os
+    return {
+        "agent_grant_store": live_attr(state, "agent_grant_store"),
+        "get_identity_session": state._get_identity_session,
+        "normalize_role": state.normalize_role,
+        "audit_admin_event": state._audit_admin_event,
+        "agent_request_token": os.getenv("JARVIS_AGENT_REQUEST_TOKEN", ""),
+    }
+
+
 def build_autonomy_deps(state: object) -> dict:
     return {
         "require_admin_access": state.require_admin_access,

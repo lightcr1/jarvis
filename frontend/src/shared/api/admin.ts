@@ -501,6 +501,34 @@ export function updateAutonomyStatus(enabled: boolean, note: string) {
   });
 }
 
+export interface AgentGrantRequest {
+  id: string;
+  kind: string;
+  target: string;
+  operation: string;
+  reason: string;
+  status: string;
+  created_at: number;
+  expires_at: number;
+  decided_by: string | null;
+}
+
+export function fetchAgentGrants() {
+  return apiRequest<{ requests: AgentGrantRequest[] }>("/admin/agent-grants", { includeAdmin: true });
+}
+
+export function decideAgentGrant(id: string, approve: boolean) {
+  return apiRequest<{ request: AgentGrantRequest }>(`/admin/agent-grants/${encodeURIComponent(id)}/decide`, {
+    method: "POST", includeAdmin: true, body: { approve },
+  });
+}
+
+export function revokeAgentGrant(id: string) {
+  return apiRequest<{ request: AgentGrantRequest }>(`/admin/agent-grants/${encodeURIComponent(id)}/revoke`, {
+    method: "POST", includeAdmin: true,
+  });
+}
+
 export interface AgentSession {
   id: string;
   title: string;
