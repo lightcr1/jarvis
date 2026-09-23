@@ -8,6 +8,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .router_dependencies import LiveRef
+from .github_gateway import GithubGatewayError, canonical_repo, public_repository_metadata
 
 
 class GrantRequest(BaseModel):
@@ -105,6 +106,25 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         if item is None:
             raise HTTPException(404, "idea not found")
         return {"idea": item}
+
+    @router.get("/agent/repositories/{repo_owner}/{repo_name}/metadata")
+    def github_metadata(repo_owner: str, repo_name: str,
+                        x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        try:
+            target = canonical_repo(repo_owner, repo_name)
+        except GithubGatewayError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if not current("agent_grant_store").authorize(
+            kind="other_project", target=target, operation="read_metadata",
+        ):
+            raise HTTPException(403, "owner grant required for this repository")
+        try:
+            result = public_repository_metadata(repo_owner, repo_name)
+        except GithubGatewayError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        audit("agent.repository.metadata_read", "agent", {"repository": target})
+        return {"metadata": result}
 
     @router.get("/admin/ideas")
     def list_ideas(x_jarvis_session: str | None = Header(default=None)):

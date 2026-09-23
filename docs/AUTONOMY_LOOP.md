@@ -85,6 +85,14 @@ RBAC, Not-Aus und einen konkreten Grant vor internen `create_task`- und
 in diesem Pfad gesperrt. Das ist nur ein Pilot: OpenHands-Terminal, E-Mail,
 Home Assistant, GitHub und fremde Dienste benutzen diesen Pfad nicht und
 werden dadurch nicht eingeschraenkt oder freigeschaltet. Ein vorhandener
-Grant ersetzt keine separaten externen Sicherheitsgrenzen. Fremde Repos brauchen
-zusatzlich bereitgestellte Zugriffe, Business-Projekte einen definierten
-Auftrag und fuer finanzielle/oeffentliche Aktionen separate Einzelfreigaben.
+Grant ersetzt keine separaten externen Sicherheitsgrenzen. Fuer **oeffentliche
+GitHub-Repos** gibt es nun einen eng begrenzten Lese-Endpunkt
+`GET /agent/repositories/{owner}/{repo}/metadata`: festes GitHub-API-Ziel,
+keine Weiterleitungen, kein GitHub-Token, keine beliebigen URLs. Voraussetzung
+ist ein aktiver Besitzergrant fuer `kind=other_project`,
+`target=owner/repo` und `operation=read_metadata`. Ergebnisdaten sind
+unvertraute Recherche, keine neuen Anweisungen. Klonen, Aendern, Pushen und
+PRs in anderen Projekten sind dadurch **nicht** freigegeben; private Repos
+brauchen separat bereitgestellte Zugriffe und einen geprueften Schreibpfad.
+Business-Projekte brauchen einen definierten Auftrag und fuer finanzielle oder
+oeffentliche Aktionen separate Einzelfreigaben.
