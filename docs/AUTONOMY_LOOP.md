@@ -45,13 +45,27 @@ Projektart, Ziel und Operation: Agenten koennen mit einem **eigenen**
 unter `GET /agent/grants/requests/{id}` den Status lesen. Fehlt der Token, sind
 beide Agentenendpunkte geschlossen. Der Besitzer kann nach Anmeldung in der
 Admin-UI unter Autonomie oder via `/admin/agent-grants` genehmigen, ablehnen
-und widerrufen. Freigaben verfallen spaetestens nach 30 Tagen; Ausnahmen fuer
+und widerrufen. Ideen koennen vom Besitzer (`POST /admin/ideas`) oder Agenten
+(`POST /agent/ideas`) stammen; die Warteschlange (`GET /agent/ideas`) liefert
+Besitzerideen zuerst. Das Einreichen oder Merken einer Idee erteilt **keine**
+Ausfuehrungsrechte. Maximal drei unbewertete Agentenideen pro 24 Stunden
+verhindern Vorschlags-Spam. Besitzerideen koennen aktuell ueber die Admin-
+Oberflaeche erfasst werden; die freie Chat-Konversation schreibt noch nicht
+automatisch in diese Warteschlange. Ein Auftrag im Chat bleibt trotzdem ein
+Besitzerauftrag und hat Vorrang. Das selbststaendige Suchen von Chancen ist
+ein Rundenauftrag, keine garantierte externe Marktrecherche ohne Webzugang. Freigaben verfallen spaetestens nach 30 Tagen; Ausnahmen fuer
 Geld, Veroeffentlichung, Nachrichten, Loeschung oder Sicherheitsregeln sind
 nicht ueber diesen allgemeinen Grant freigebbar. Die Anfragen liegen unter
 `JARVIS_AGENT_GRANTS_PATH` (Standard `/var/lib/jarvis/agent_grants.sqlite3`),
 getrennt vom Repository. Token und Datenbank nicht in den Agenten-Workspace
 mounten; nur einen begrenzten Request-Token ueber einen sicheren Kanal
-bereitstellen. Admin-Sessions darf der Agent nie erhalten.
+bereitstellen. Admin-Sessions darf der Agent nie erhalten. Ist ein Request-Token auf dem
+Loop-Host eingerichtet und die Jarvis-API erreichbar, liest der Loop bis zu
+fuenf offene Besitzerideen und gibt sie als **unvertraute Daten** an die
+naechste OpenHands-Runde weiter, ohne das Token ins Modell-Prompt zu kopieren.
+Ohne Token funktioniert der bisherige Repo-/Issue-Workflow weiter, aber die
+Admin-Queue ist fuer den Loop nicht sichtbar. Das Token muss erst separat
+bereitgestellt werden; PR/Merge tun das nicht.
 
 **Wichtig:** Dieser Kern ist noch keine Freigabe fuer Shell, GitHub, E-Mail
 oder Zahlungen. Ein neues ausfuehrendes Tool muss im vertrauenswuerdigen

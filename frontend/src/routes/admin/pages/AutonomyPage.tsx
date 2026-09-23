@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { fetchAutonomyStatus, updateAutonomyStatus, fetchAgentGrants, decideAgentGrant, revokeAgentGrant, type AgentGrantRequest, type AutonomyStatus } from "../../../shared/api/admin";
+import { fetchAutonomyStatus, updateAutonomyStatus, fetchAgentGrants, decideAgentGrant, revokeAgentGrant, fetchAgentIdeas, submitOwnerIdea, reviewAgentIdea, type AgentIdea, type AgentGrantRequest, type AutonomyStatus } from "../../../shared/api/admin";
 import { useJ } from "../../../screens/jarvis-shared";
 
 export function AutonomyPage() {
@@ -7,6 +7,11 @@ export function AutonomyPage() {
   const [status, setStatus] = useState<AutonomyStatus | null>(null);
   const [grants, setGrants] = useState<AgentGrantRequest[]>([]);
   const [grantError, setGrantError] = useState("");
+  const [ideas, setIdeas] = useState<AgentIdea[]>([]);
+  const [ideaTitle, setIdeaTitle] = useState("");
+  const [ideaSummary, setIdeaSummary] = useState("");
+  const [ideaKind, setIdeaKind] = useState("business");
+  const [ideaError, setIdeaError] = useState("");
   const [note, setNote] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -38,6 +43,42 @@ export function AutonomyPage() {
   }, []);
 
   useEffect(() => { void refreshGrants(); }, [refreshGrants]);
+
+  const refreshIdeas = useCallback(async () => {
+    try {
+      setIdeas((await fetchAgentIdeas()).ideas);
+      setIdeaError("");
+    } catch (e) {
+      setIdeaError(e instanceof Error ? e.message : "Ideen konnten nicht geladen werden.");
+    }
+  }, []);
+  useEffect(() => { void refreshIdeas(); }, [refreshIdeas]);
+
+  const submitIdea = useCallback(async () => {
+    setSaving(true);
+    try {
+      await submitOwnerIdea(ideaKind, ideaTitle.trim(), ideaSummary.trim());
+      setIdeaTitle("");
+      setIdeaSummary("");
+      await refreshIdeas();
+    } catch (e) {
+      setIdeaError(e instanceof Error ? e.message : "Idee konnte nicht angelegt werden.");
+    } finally {
+      setSaving(false);
+    }
+  }, [ideaKind, ideaTitle, ideaSummary, refreshIdeas]);
+
+  const reviewIdea = useCallback(async (id: string, status: "shortlisted" | "dismissed") => {
+    setSaving(true);
+    try {
+      await reviewAgentIdea(id, status);
+      await refreshIdeas();
+    } catch (e) {
+      setIdeaError(e instanceof Error ? e.message : "Entscheidung fehlgeschlagen.");
+    } finally {
+      setSaving(false);
+    }
+  }, [refreshIdeas]);
 
   const changeGrant = useCallback(async (id: string, action: "approve" | "reject" | "revoke") => {
     setSaving(true);
@@ -142,6 +183,37 @@ export function AutonomyPage() {
           Der Notiztext wird beim nächsten Toggle zusammen mit dem Schalter
           gespeichert und steht im Audit-Log.
         </p>
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Ideen und Projekte</div>
+        <p style={{ color: J.textMuted, fontSize: 12 }}>
+          Eigene Ideen und Vorschläge von Jarvis landen hier. Eine Idee auf die Merkliste
+          zu setzen erlaubt noch keine externen Aktionen oder Ausgaben.
+        </p>
+        {ideaError && <p role="alert" style={{ color: "#ef4444" }}>{ideaError}</p>}
+        <form onSubmit={(e) => { e.preventDefault(); void submitIdea(); }}>
+          <select aria-label="Art der Idee" value={ideaKind} onChange={(e) => setIdeaKind(e.target.value)}>
+            <option value="business">Business</option><option value="platform">Jarvis-Plattform</option>
+            <option value="integration">Integration</option><option value="other_project">Anderes Projekt</option>
+          </select>{" "}
+          <input aria-label="Titel der Idee" required maxLength={140} value={ideaTitle} onChange={(e) => setIdeaTitle(e.target.value)} placeholder="Meine Idee" />{" "}
+          <input aria-label="Beschreibung der Idee" required maxLength={2000} value={ideaSummary} onChange={(e) => setIdeaSummary(e.target.value)} placeholder="Was soll Jarvis untersuchen?" />{" "}
+          <button disabled={saving} type="submit">Idee einreichen</button>
+        </form>
+        <button type="button" onClick={() => void refreshIdeas()}>Aktualisieren</button>
+        {ideas.length === 0 && <p style={{ color: J.textMuted }}>Noch keine Ideen.</p>}
+        {ideas.map((idea) => (
+          <div key={idea.id} style={{ borderTop: `1px solid ${J.border}`, padding: "10px 0" }}>
+            <div><b>{idea.title}</b> ({idea.source === "owner" ? "Besitzer" : "Jarvis"}, {idea.kind}) · {idea.status}</div>
+            <div style={{ fontSize: 12 }}>{idea.summary}</div>
+            <div style={{ fontSize: 12, color: J.textMuted }}>Nutzen: {idea.benefit} · Risiken: {idea.risks} · Nächster Schritt: {idea.next_step}</div>
+            {idea.status === "proposed" && <div>
+              <button disabled={saving} onClick={() => void reviewIdea(idea.id, "shortlisted")}>Merkliste</button>{" "}
+              <button disabled={saving} onClick={() => void reviewIdea(idea.id, "dismissed")}>Verwerfen</button>
+            </div>}
+          </div>
+        ))}
       </div>
 
       <div style={card}>

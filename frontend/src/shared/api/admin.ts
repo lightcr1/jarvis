@@ -501,6 +501,35 @@ export function updateAutonomyStatus(enabled: boolean, note: string) {
   });
 }
 
+export interface AgentIdea {
+  id: string;
+  source: "agent" | "owner";
+  kind: string;
+  title: string;
+  summary: string;
+  benefit: string;
+  risks: string;
+  next_step: string;
+  status: string;
+  created_at: number;
+}
+
+export function fetchAgentIdeas() {
+  return apiRequest<{ ideas: AgentIdea[] }>("/admin/ideas", { includeAdmin: true });
+}
+
+export function submitOwnerIdea(kind: string, title: string, summary: string) {
+  return apiRequest<{ idea: AgentIdea }>("/admin/ideas", {
+    method: "POST", includeAdmin: true, body: { kind, title, summary },
+  });
+}
+
+export function reviewAgentIdea(id: string, status: "shortlisted" | "dismissed") {
+  return apiRequest<{ idea: AgentIdea }>(`/admin/ideas/${encodeURIComponent(id)}/review`, {
+    method: "POST", includeAdmin: true, body: { status },
+  });
+}
+
 export interface AgentGrantRequest {
   id: string;
   kind: string;

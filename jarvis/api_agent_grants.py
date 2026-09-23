@@ -22,6 +22,25 @@ class GrantDecision(BaseModel):
     approve: bool
 
 
+class IdeaProposal(BaseModel):
+    kind: str = Field(max_length=32)
+    title: str = Field(max_length=140)
+    summary: str = Field(max_length=2000)
+    benefit: str = Field(max_length=2000)
+    risks: str = Field(max_length=2000)
+    next_step: str = Field(max_length=2000)
+
+
+class OwnerIdea(BaseModel):
+    kind: str = Field(default="business", max_length=32)
+    title: str = Field(max_length=140)
+    summary: str = Field(max_length=2000)
+
+
+class IdeaReview(BaseModel):
+    status: str = Field(pattern="^(shortlisted|dismissed)$")
+
+
 def build_agent_grants_router(deps: dict) -> APIRouter:
     router = APIRouter()
 
@@ -63,6 +82,56 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         if item is None:
             raise HTTPException(404, "request not found")
         return {"request": item}
+
+    @router.post("/agent/ideas", status_code=201)
+    def propose_idea(body: IdeaProposal, x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        try:
+            item = current("agent_grant_store").propose_idea(source="agent", **body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        audit("agent.idea.proposed", "agent", {"idea_id": item["id"]})
+        return {"idea": item}
+
+    @router.get("/agent/ideas")
+    def agent_ideas(x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        return {"ideas": current("agent_grant_store").list_ideas()}
+
+    @router.get("/agent/ideas/{idea_id}")
+    def idea_status(idea_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        item = current("agent_grant_store").get_idea(idea_id)
+        if item is None:
+            raise HTTPException(404, "idea not found")
+        return {"idea": item}
+
+    @router.get("/admin/ideas")
+    def list_ideas(x_jarvis_session: str | None = Header(default=None)):
+        owner(x_jarvis_session)
+        return {"ideas": current("agent_grant_store").list_ideas()}
+
+    @router.post("/admin/ideas", status_code=201)
+    def owner_idea(body: OwnerIdea, x_jarvis_session: str | None = Header(default=None)):
+        actor = owner(x_jarvis_session)
+        try:
+            item = current("agent_grant_store").propose_idea(
+                source="owner", **body.model_dump(), benefit="To be researched",
+                risks="To be assessed", next_step="Research and propose a safe plan",
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        audit("agent.idea.owner_submitted", actor, {"idea_id": item["id"]})
+        return {"idea": item}
+
+    @router.post("/admin/ideas/{idea_id}/review")
+    def review_idea(idea_id: str, body: IdeaReview, x_jarvis_session: str | None = Header(default=None)):
+        actor = owner(x_jarvis_session)
+        item = current("agent_grant_store").review_idea(idea_id, actor=actor, status=body.status)
+        if item is None:
+            raise HTTPException(409, "idea missing or already reviewed")
+        audit("agent.idea.reviewed", actor, {"idea_id": idea_id, "status": body.status})
+        return {"idea": item}
 
     @router.get("/admin/agent-grants")
     def list_grants(x_jarvis_session: str | None = Header(default=None)):

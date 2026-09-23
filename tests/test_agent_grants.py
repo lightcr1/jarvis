@@ -43,6 +43,31 @@ def test_reject_reserved_and_wildcard_operations(tmp_path):
         assert not store.authorize(kind=kind, target=target, operation=operation)
 
 
+def test_ideas_from_both_sources_are_not_grants(tmp_path):
+    store = AgentGrantStore(tmp_path / "ideas.sqlite3", clock=lambda: 1000)
+    agent_idea = store.propose_idea(source="agent", kind="business", title="Research a market",
+                                   summary="Assess demand", benefit="Possible demand", risks="Unknown cost",
+                                   next_step="Compare sources")
+    owner_idea = store.propose_idea(source="owner", kind="other_project", title="Help on my repo",
+                                   summary="Evaluate the codebase", benefit="To be researched",
+                                   risks="To be assessed", next_step="Plan only")
+    assert [idea["id"] for idea in store.list_ideas()][:2] == [owner_idea["id"], agent_idea["id"]]
+    assert not store.authorize(kind="other_project", target="owner/repo", operation="edit_docs")
+    for index in range(2):
+        store.propose_idea(source="agent", kind="business", title=f"Candidate {index}",
+                           summary="Assess demand", benefit="Potential value", risks="Unknown",
+                           next_step="Research")
+    try:
+        store.propose_idea(source="agent", kind="business", title="Spam",
+                           summary="Assess demand", benefit="Potential value", risks="Unknown",
+                           next_step="Research")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("agent spam limit bypassed")
+    assert store.review_idea(agent_idea["id"], actor="owner", status="shortlisted")
+
+
 def test_separate_owner_and_agent_auth_and_audit(tmp_path):
     store = AgentGrantStore(tmp_path / "grants.sqlite3")
     events = []
@@ -68,4 +93,22 @@ def test_separate_owner_and_agent_auth_and_audit(tmp_path):
     assert store.authorize(kind="repository", target="owner/repo", operation="edit_docs")
     assert client.post(f"/admin/agent-grants/{request_id}/revoke", headers=owner).status_code == 200
     assert not store.authorize(kind="repository", target="owner/repo", operation="edit_docs")
-    assert [event[0] for event in events] == ["agent.grant.requested", "agent.grant.decided", "agent.grant.revoked"]
+    idea = client.post("/agent/ideas", json={
+        "kind": "business", "title": "Market research", "summary": "Look for demand",
+        "benefit": "Possible new income", "risks": "No validated customers yet",
+        "next_step": "Research potential customers without contacting them",
+    }, headers=agent)
+    assert idea.status_code == 201
+    idea_id = idea.json()["idea"]["id"]
+    assert client.get("/agent/ideas", headers=agent).status_code == 200
+    assert client.post(f"/admin/ideas/{idea_id}/review", json={"status": "shortlisted"}, headers=agent).status_code == 401
+    assert client.post(f"/admin/ideas/{idea_id}/review", json={"status": "shortlisted"}, headers=owner).status_code == 200
+    own_idea = client.post("/admin/ideas", json={
+        "title": "My project", "summary": "Please investigate this idea",
+    }, headers=owner)
+    assert own_idea.status_code == 201
+    assert own_idea.json()["idea"]["source"] == "owner"
+    assert [event[0] for event in events] == [
+        "agent.grant.requested", "agent.grant.decided", "agent.grant.revoked",
+        "agent.idea.proposed", "agent.idea.reviewed", "agent.idea.owner_submitted",
+    ]

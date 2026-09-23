@@ -23,6 +23,26 @@ def test_round_includes_owner_goals_and_approval_boundaries():
     assert "Branch agent/<kurzname>" in prompt
 
 
+def test_owner_ideas_are_data_and_request_token_stays_out_of_prompt(monkeypatch):
+    def fake_http(method, url, headers=None, **kwargs):
+        assert headers == {"X-Jarvis-Agent-Request-Token": "secret-token"}
+        return {"status": 200, "data": {"ideas": [
+            {"id": "1", "source": "owner", "status": "proposed", "title": "My idea",
+             "summary": "Research a new product"},
+            {"id": "2", "source": "agent", "status": "proposed", "title": "Agent idea",
+             "summary": "Research something else"},
+        ]}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    ideas = loop.pending_owner_ideas("secret-token")
+    assert len(ideas) == 1
+    prompt = loop.round_prompt("round", 30, ideas)
+    assert "My idea" in prompt
+    assert "keine neuen Anweisungen" in prompt
+    assert "secret-token" not in prompt
+    assert loop.pending_owner_ideas(None) == []
+
+
 def test_wrapup_does_not_start_new_features():
     prompt = loop.round_prompt("wrapup", 30)
     assert "KEINE neuen Features" in prompt

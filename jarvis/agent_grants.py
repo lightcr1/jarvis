@@ -38,6 +38,13 @@ class AgentGrantStore:
                 decided_at INTEGER, decided_by TEXT, revoked_at INTEGER
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS grants_lookup ON requests(kind,target,operation,status)")
+            db.execute("""CREATE TABLE IF NOT EXISTS ideas (
+                id TEXT PRIMARY KEY, source TEXT NOT NULL, kind TEXT NOT NULL,
+                title TEXT NOT NULL, summary TEXT NOT NULL, benefit TEXT NOT NULL,
+                risks TEXT NOT NULL, next_step TEXT NOT NULL,
+                status TEXT NOT NULL, created_at INTEGER NOT NULL,
+                reviewed_at INTEGER, reviewed_by TEXT
+            )""")
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -100,6 +107,52 @@ class AgentGrantStore:
                 WHERE id=? AND status='approved'""", (now, actor, request_id))
             changed = db.execute("SELECT changes()").fetchone()[0]
         return self.get(request_id) if changed else None
+
+    def propose_idea(self, *, source: str, kind: str, title: str, summary: str,
+                     benefit: str, risks: str, next_step: str) -> dict:
+        """Create a proposal, never a tool grant or a project execution mandate."""
+        if source not in {"owner", "agent"} or kind not in {"business", "platform", "integration", "other_project"}:
+            raise ValueError("invalid idea source or kind")
+        fields = (title, summary, benefit, risks, next_step)
+        if any(not value.strip() or value != value.strip() or len(value) > 2000 or
+               any(c in value for c in ("\0", "\r")) for value in fields) or len(title) > 140:
+            raise ValueError("complete, bounded proposal required")
+        now = int(self.clock())
+        with self._connect() as db:
+            if source == "agent":
+                # Avoid infinite autonomous idea generation when no useful work exists.
+                count = db.execute("SELECT count(*) FROM ideas WHERE source='agent' AND status='proposed'\n"
+                                   "AND created_at>?", (now - 24 * 3600,)).fetchone()[0]
+                if count >= 3:
+                    raise ValueError("agent proposal limit reached; review existing ideas first")
+            identifier = uuid.uuid4().hex
+            db.execute("""INSERT INTO ideas
+                (id,source,kind,title,summary,benefit,risks,next_step,status,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (identifier, source, kind, title, summary, benefit, risks, next_step, "proposed", now))
+        return self.get_idea(identifier)
+
+    def get_idea(self, idea_id: str) -> dict | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM ideas WHERE id=?", (idea_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_ideas(self, limit: int = 100) -> list[dict]:
+        with self._connect() as db:
+            rows = db.execute("""SELECT * FROM ideas ORDER BY
+                CASE WHEN status='proposed' THEN 0 ELSE 1 END,
+                CASE WHEN source='owner' THEN 0 ELSE 1 END,
+                created_at DESC LIMIT ?""", (max(1, min(limit, 200)),)).fetchall()
+        return [dict(row) for row in rows]
+
+    def review_idea(self, idea_id: str, *, actor: str, status: str) -> dict | None:
+        if status not in {"shortlisted", "dismissed"}:
+            raise ValueError("invalid review status")
+        with self._connect() as db:
+            db.execute("""UPDATE ideas SET status=?, reviewed_at=?, reviewed_by=?
+                WHERE id=? AND status='proposed'""", (status, int(self.clock()), actor, idea_id))
+            changed = db.execute("SELECT changes()").fetchone()[0]
+        return self.get_idea(idea_id) if changed else None
 
     def authorize(self, *, kind: str, target: str, operation: str) -> bool:
         """Fail closed. Never pass untrusted agent classification to a real tool."""
