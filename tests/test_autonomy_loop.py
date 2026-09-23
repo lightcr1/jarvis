@@ -49,6 +49,16 @@ def test_wrapup_does_not_start_new_features():
     assert "ACTIVITY_LOG.md" in prompt
 
 
+def test_openhands_asks_before_risky_actions(monkeypatch):
+    captured = {}
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        captured.update(body or {})
+        return {"status": 201, "data": {"id": "fake-round"}}
+    monkeypatch.setattr(loop, "http", fake_http)
+    assert loop.start_round("fake-api", "fake-model", "round", 30) == "fake-round"
+    assert captured["confirmation_policy"] == {"kind": "ConfirmRisky"}
+
+
 def test_disabled_switch_prevents_round_even_with_live_pod(tmp_path, monkeypatch):
     switch = tmp_path / "autonomy.json"
     switch.write_text('{"enabled": false}', encoding="utf-8")

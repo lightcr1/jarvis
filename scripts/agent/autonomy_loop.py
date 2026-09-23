@@ -329,7 +329,7 @@ def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: in
             ],
         },
         "max_iterations": MAX_ITERATIONS,
-        "confirmation_policy": {"kind": "NeverConfirm"},
+        "confirmation_policy": {"kind": "ConfirmRisky"},
         "initial_message": {
             "role": "user",
             "content": [{"text": round_prompt(kind, idle_stop_minutes, owner_ideas)}],
@@ -459,6 +459,14 @@ def main() -> int:
             else:
                 # Noch busy oder fremde Session aktiv -> weiter warten.
                 save_state(state)
+            return 0
+        if status == "waiting_for_confirmation":
+            # Never manufacture a human approval. Let the controller idle-stop
+            # the pod instead of keeping paid GPU time alive indefinitely.
+            if state.get("last_error") != "agent-waiting-for-owner-approval":
+                log("Runde wartet auf Besitzerfreigabe; kein Agent-Heartbeat")
+            state["last_error"] = "agent-waiting-for-owner-approval"
+            save_state(state)
             return 0
         if status in ENDED_STATUSES:
             close_round(state, api_key, control["control"])
