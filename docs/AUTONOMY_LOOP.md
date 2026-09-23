@@ -100,7 +100,9 @@ bleiben Risiken: Alle Agenten-Endpunkte sind pro Request-Token gedrosselt
 (Anfragen schreibender Typen 10–15/min, Suche 30/min, Status 60/min, Einmal-
 Ausfuehrung 5/min). Token regelmassig rotieren, Audit ueberwachen.
 Vor der Aktivierung der vollen Kette prueft `scripts/agent/preflight_grants.py`
-lesend: Besitzer-ID, Request-Token und die Trennung von Service-Tokens, die
+lesend (liest `/home/media/jarvis.env` selbst per robustem Parser – kein `source`,
+kein `sudo`; `--env` fuer andere Dateien): Besitzer-ID, Request-Token und die
+Trennung von Service-Tokens, die
 Grants-Datenbank, den Git-Index auf verdaechtige Secrets sowie aktive
 billbare Runpod-Aktionen; fehlt etwas, endet das Skript mit Fehlercode.
 Ist ein Request-Token auf dem
