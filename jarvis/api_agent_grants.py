@@ -8,6 +8,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .router_dependencies import LiveRef
+from .rate_limiter import _rate as _rate_limiter
 from .research_gateway import ResearchError, search_web
 from .github_gateway import GithubGatewayError, canonical_repo, create_agent_branch, create_pull_request, public_repository_metadata, write_branch_file
 
@@ -107,6 +108,10 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         if not expected or not token or not hmac.compare_digest(token, expected):
             raise HTTPException(401, "agent request token required")
 
+    def cap(token: str, key: str, limit: int = 30, window: float = 60):
+        if not _rate_limiter.allow(f"agent-{key}:{token}", limit, window):
+            raise HTTPException(429, "agent rate limit reached — slow down")
+
     def audit(event: str, actor: str, data: dict):
         fn: Callable = current("audit_admin_event")
         fn(event, actor, "admin" if actor != "agent" else "service_system", data)
@@ -114,6 +119,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     @router.post("/agent/grants/requests", status_code=201)
     def request_grant(body: GrantRequest, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "grants-request", 15)
         try:
             item = current("agent_grant_store").request(**body.model_dump())
         except ValueError as exc:
@@ -124,6 +130,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     @router.get("/agent/grants/requests/{request_id}")
     def request_status(request_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "grant-status", 60)
         item = current("agent_grant_store").get(request_id)
         if item is None:
             raise HTTPException(404, "request not found")
@@ -132,6 +139,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     @router.post("/agent/ideas", status_code=201)
     def propose_idea(body: IdeaProposal, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "idea-propose", 10)
         try:
             item = current("agent_grant_store").propose_idea(source="agent", **body.model_dump())
         except ValueError as exc:
@@ -142,11 +150,13 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     @router.get("/agent/ideas")
     def agent_ideas(x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "idea-list", 60)
         return {"ideas": current("agent_grant_store").list_ideas()}
 
     @router.get("/agent/ideas/{idea_id}")
     def idea_status(idea_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "idea-status", 60)
         item = current("agent_grant_store").get_idea(idea_id)
         if item is None:
             raise HTTPException(404, "idea not found")
@@ -156,6 +166,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     def github_metadata(repo_owner: str, repo_name: str,
                         x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "repo-lookup", 20)
         try:
             target = canonical_repo(repo_owner, repo_name)
         except GithubGatewayError as exc:
@@ -174,6 +185,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     @router.post("/agent/research/search")
     def research(body: ResearchQuery, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "research", 30)
         store = current("agent_grant_store")
         if not store.authorize(kind="business_research", target=body.project_target, operation="web_search"):
             raise HTTPException(403, "approved research project required")
@@ -187,6 +199,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     @router.post("/agent/projects", status_code=201)
     def request_project(body: ProjectRequest, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "project-request", 15)
         try:
             item = current("agent_grant_store").request_project(**body.model_dump())
         except ValueError as exc:
@@ -197,6 +210,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     @router.get("/agent/projects/{project_id}")
     def project_status(project_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "project-status", 60)
         item = current("agent_grant_store").get_project(project_id)
         if item is None: raise HTTPException(404, "project not found")
         return {"project": item}
@@ -225,6 +239,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     def create_branch(repo_owner: str, repo_name: str, body: BranchCreate,
                       x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "branch-create", 10)
         try: target = canonical_repo(repo_owner, repo_name)
         except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
         if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="create_branch"):
@@ -238,6 +253,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     def write_file(repo_owner: str, repo_name: str, body: BranchFileWrite,
                    x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "file-write", 10)
         try: target = canonical_repo(repo_owner, repo_name)
         except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
         if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="write_branch_file"):
@@ -250,6 +266,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     @router.post("/agent/actions/github-pull-request", status_code=201)
     def request_pull_request(body: PullRequestAction, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "action-request", 10)
         try:
             owner_name, repo_name = body.repository.split("/", 1)
             target = canonical_repo(owner_name, repo_name)
@@ -274,6 +291,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     @router.post("/agent/actions/{action_id}/execute")
     def execute_action(action_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "action-execute", 5)
         item = current("agent_grant_store").consume_one_time_action(action_id)
         if item is None:
             raise HTTPException(403, "approved, unused action required")
