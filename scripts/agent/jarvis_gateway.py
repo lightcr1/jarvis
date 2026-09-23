@@ -26,6 +26,7 @@ def main() -> int:
     idea = sub.add_parser("propose-idea"); idea.add_argument("kind"); idea.add_argument("title"); idea.add_argument("summary"); idea.add_argument("benefit"); idea.add_argument("risks"); idea.add_argument("next_step")
     grant = sub.add_parser("request-grant"); grant.add_argument("kind"); grant.add_argument("target"); grant.add_argument("operation"); grant.add_argument("reason"); grant.add_argument("--duration", type=int, default=3600)
     status = sub.add_parser("grant-status"); status.add_argument("id")
+    search = sub.add_parser("web-search"); search.add_argument("project_target"); search.add_argument("query"); search.add_argument("--limit", type=int, default=5)
     project = sub.add_parser("request-project"); project.add_argument("kind"); project.add_argument("target"); project.add_argument("title"); project.add_argument("operations", nargs="+"); project.add_argument("--duration", type=int, default=7*24*3600)
     project_status = sub.add_parser("project-status"); project_status.add_argument("id")
     meta = sub.add_parser("repo-metadata"); meta.add_argument("repository")
@@ -37,6 +38,7 @@ def main() -> int:
     if cmd == "propose-idea": result = call("POST", "/ideas", values)
     elif cmd == "request-grant": result = call("POST", "/grants/requests", {"duration_seconds": values.pop("duration"), **values})
     elif cmd == "grant-status": result = call("GET", f"/grants/requests/{urllib.parse.quote(args.id, safe='')}")
+    elif cmd == "web-search": result = call("POST", "/research/search", values)
     elif cmd == "request-project": result = call("POST", "/projects", {"duration_seconds": values.pop("duration"), **values})
     elif cmd == "project-status": result = call("GET", f"/projects/{urllib.parse.quote(args.id, safe='')}")
     elif cmd == "repo-metadata":

@@ -142,5 +142,12 @@ Binaere Dateien, beliebige Git-Befehle und direkte Pushes nach `dev`/`main`
 sind nicht Teil dieses Gateways. Private Repos
 funktionieren nur, wenn der serverseitige Fine-Grained Token genau dafuer
 berechtigt wurde.
-Business-Projekte brauchen einen definierten Auftrag und fuer finanzielle oder
-oeffentliche Aktionen separate Einzelfreigaben.
+Fuer Business-Recherche kann ein genehmigter Projektrahmen der Art
+`business_research` die Operation `web_search` fuer ein genaues Projektziel
+freigeben. Der Backend-Gateway spricht ausschliesslich die feste Brave-Search-
+API mit dem serverseitigen `JARVIS_BRAVE_SEARCH_TOKEN` an, blockiert Redirects,
+begrenzt Query und Ergebniszahl und gibt Ergebnisse als unvertraute Daten aus.
+Ohne konfigurierten Suchanbieter bleibt die Suche geschlossen. Recherche ist
+keine Erlaubnis, Personen zu kontaktieren, Inhalte zu veroeffentlichen oder
+Geld auszugeben; finanzielle und oeffentliche Aktionen brauchen separate
+Einzelfreigaben und einen eigenen typisierten Provider-Gateway.

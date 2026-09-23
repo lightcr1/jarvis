@@ -8,6 +8,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .router_dependencies import LiveRef
+from .research_gateway import ResearchError, search_web
 from .github_gateway import GithubGatewayError, canonical_repo, create_agent_branch, create_pull_request, public_repository_metadata, write_branch_file
 
 
@@ -36,6 +37,12 @@ class OwnerIdea(BaseModel):
     kind: str = Field(default="business", max_length=32)
     title: str = Field(max_length=140)
     summary: str = Field(max_length=2000)
+
+
+class ResearchQuery(BaseModel):
+    project_target: str = Field(max_length=180)
+    query: str = Field(max_length=300)
+    limit: int = Field(default=5, ge=1, le=10)
 
 
 class ProjectRequest(BaseModel):
@@ -157,6 +164,16 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
             raise HTTPException(502, str(exc)) from exc
         audit("agent.repository.metadata_read", "agent", {"repository": target})
         return {"metadata": result}
+
+    @router.post("/agent/research/search")
+    def research(body: ResearchQuery, x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        if not current("agent_grant_store").authorize(kind="business_research", target=body.project_target, operation="web_search"):
+            raise HTTPException(403, "approved research project required")
+        try: results = search_web(body.query, current("web_search_token"), limit=body.limit)
+        except ResearchError as exc: raise HTTPException(502, str(exc)) from exc
+        audit("agent.research.searched", "agent", {"project_target": body.project_target, "query_length": len(body.query), "result_count": len(results)})
+        return {"results": results, "untrusted": True}
 
     @router.post("/agent/projects", status_code=201)
     def request_project(body: ProjectRequest, x_jarvis_agent_request_token: str | None = Header(default=None)):

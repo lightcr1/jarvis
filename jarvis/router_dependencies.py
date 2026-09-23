@@ -224,6 +224,7 @@ def build_agent_grants_deps(state: object) -> dict:
         "audit_admin_event": state._audit_admin_event,
         "agent_request_token": os.getenv("JARVIS_AGENT_REQUEST_TOKEN", ""),
         "github_write_token": os.getenv("JARVIS_GITHUB_WRITE_TOKEN", ""),
+        "web_search_token": os.getenv("JARVIS_BRAVE_SEARCH_TOKEN", ""),
     }
 
 
