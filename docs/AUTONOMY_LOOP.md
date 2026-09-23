@@ -52,7 +52,14 @@ Prozess-, RAM- und CPU-Limits. Agent Canvas haengt nur im internen
 separater, read-only und capability-loser Nginx-Gateway ist dual-homed und
 leitet ausschliesslich `/agent/v1/` an den Controller weiter; alle anderen
 Pfade liefern 403. Der OpenHands-LLM-Endpunkt muss deshalb
-`http://inference-gateway:8080/agent/v1` sein. Das begrenzt den Compose-
+`http://inference-gateway:8080/agent/v1` sein. Fuer den Zugriff auf das Canvas
+aus dem LAN publiziert der zusaetzliche `canvas-edge` (nginx, dual-homed)
+ausschliesslich Host-Port `OPENHANDS_EDGE_PORT` (Standard 8001) und leitet nur
+an `http://jarvis-openhands:8000` weiter; der Agent selbst publiziert keinen
+Host-Port. Grund: Interne Docker-Netze publizieren auf diesem Host keine Ports
+und Host-Port 8000 ist durch `jarvis.service` (Jarvis-Web) belegt. Der
+Autonomy-Loop spricht OpenHands deshalb unter `http://10.10.40.100:8001` an.
+Das begrenzt den Compose-
 Container, muss aber praktisch verifiziert werden, weil OpenHands je nach
 Execution-Backend weitere Arbeitscontainer starten kann. Diese duerfen weder
 andere Netzwerke noch Docker-Socket/Hostzugriff erhalten. Eine Host-Firewall

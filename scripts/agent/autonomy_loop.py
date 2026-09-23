@@ -53,7 +53,7 @@ AUTONOMY_SWITCH = Path("/home/media/jarvis-openhands/projects/jarvis/config/auto
 WORKSPACE_REPO = "/projects/jarvis"
 
 CONTROLLER_BASE = "https://10.10.40.100:8443"
-OPENHANDS_BASE = "http://10.10.40.100:8000"
+OPENHANDS_BASE = "http://10.10.40.100:8001"
 JARVIS_BASE = "http://10.10.40.100:8100"
 COOLDOWN_SECONDS = 150               # short pause between normal rounds
 USER_BUSY_SECONDS = 90               # <-> owner interaction counts as busy
