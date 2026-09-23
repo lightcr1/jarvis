@@ -15,6 +15,7 @@ def _app(store, monkeypatch, calls):
     app.include_router(build_agent_grants_router({
         "agent_grant_store": store, "get_identity_session": lambda token: {"user_id": "owner", "role": "admin"} if token == "owner" else None,
         "normalize_role": lambda role: role, "agent_request_token": "agent", "github_write_token": "server-secret",
+        "owner_user_id": "owner",
         "audit_admin_event": lambda *args: None,
     }))
     return TestClient(app)

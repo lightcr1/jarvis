@@ -63,7 +63,10 @@ Projektart, Ziel und Operation: Agenten koennen mit einem **eigenen**
 unter `GET /agent/grants/requests/{id}` den Status lesen. Fehlt der Token, sind
 beide Agentenendpunkte geschlossen. Der Besitzer kann nach Anmeldung in der
 Admin-UI unter Autonomie oder via `/admin/agent-grants` genehmigen, ablehnen
-und widerrufen. Ideen koennen vom Besitzer (`POST /admin/ideas`) oder Agenten
+und widerrufen. Entscheidungen sind an die in `JARVIS_OWNER_USER_ID`
+konfigurierte Besitzer-ID gebunden: Ohne diese Variable sind alle
+Besitzer-Entscheidungen gesperrt (HTTP 503), andere Admin-Konten erhalten 403.
+Ideen koennen vom Besitzer (`POST /admin/ideas`) oder Agenten
 (`POST /agent/ideas`) stammen; die Warteschlange (`GET /agent/ideas`) liefert
 Besitzerideen zuerst. Das Einreichen oder Merken einer Idee erteilt **keine**
 Ausfuehrungsrechte. Maximal drei unbewertete Agentenideen pro 24 Stunden

@@ -106,9 +106,10 @@ def test_separate_owner_and_agent_auth_and_audit(tmp_path):
     app = FastAPI()
     app.include_router(build_agent_grants_router({
         "agent_grant_store": store,
-        "get_identity_session": lambda token: {"user_id": "owner", "role": "admin"} if token == "owner" else None,
+        "get_identity_session": lambda token: {"user_id": token, "role": "admin"} if token else None,
         "normalize_role": lambda role: role,
         "agent_request_token": "agent-request-only",
+        "owner_user_id": "owner",
         "audit_admin_event": lambda *args: events.append(args),
     }))
     client = TestClient(app)
@@ -122,6 +123,9 @@ def test_separate_owner_and_agent_auth_and_audit(tmp_path):
     url = f"/admin/agent-grants/{request_id}/decide"
     assert client.post(url, json={"approve": True}, headers=agent).status_code == 401
     assert client.post(url, json={"approve": True}, headers=owner).status_code == 200
+    assert store.authorize(kind="repository", target="owner/repo", operation="edit_docs")
+    stranger = {"X-Jarvis-Session": "other-admin"}
+    assert client.post(f"/admin/agent-grants/{request_id}/revoke", headers=stranger).status_code == 403
     assert store.authorize(kind="repository", target="owner/repo", operation="edit_docs")
     assert client.post(f"/admin/agent-grants/{request_id}/revoke", headers=owner).status_code == 200
     assert not store.authorize(kind="repository", target="owner/repo", operation="edit_docs")

@@ -94,7 +94,13 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
             raise HTTPException(401, "login required")
         if current("normalize_role")(session.get("role")) != "admin":
             raise HTTPException(403, "owner role required")
-        return str(session.get("user_id") or session.get("id") or "")
+        actor = str(session.get("user_id") or session.get("id") or "")
+        configured_owner = current("owner_user_id")
+        if not configured_owner:
+            raise HTTPException(503, "JARVIS_OWNER_USER_ID is not configured")
+        if not hmac.compare_digest(actor, configured_owner):
+            raise HTTPException(403, "configured owner required")
+        return actor
 
     def agent(token: str | None):
         expected = current("agent_request_token")
