@@ -39,7 +39,7 @@ fi
 
 cp "$DEPLOY_DIR/.env.example" "$ENV_FILE"
 sed -i "s|^OPENHANDS_STATE_DIR=.*|OPENHANDS_STATE_DIR=$INSTALL_ROOT/state|" "$ENV_FILE"
-sed -i "s|^OPENHANDS_PROJECTS_DIR=.*|OPENHANDS_PROJECTS_DIR=$INSTALL_ROOT/projects|" "$ENV_FILE"
+sed -i "s|^OPENHANDS_JARVIS_PROJECT_DIR=.*|OPENHANDS_JARVIS_PROJECT_DIR=$INSTALL_ROOT/projects/jarvis|" "$ENV_FILE"
 chmod 0600 "$ENV_FILE"
 
 docker compose --env-file "$ENV_FILE" -f "$DEPLOY_DIR/compose.yml" config --quiet
@@ -48,5 +48,5 @@ printf '%s\n' \
   "Start: docker compose --env-file $ENV_FILE -f $DEPLOY_DIR/compose.yml up -d" \
   "UI: http://127.0.0.1:8000/canvas" \
   "LLM model: openai/code" \
-  "LLM base URL (inside Docker): http://controller:8080/code/v1" \
+  "LLM base URL (inside Docker): http://inference-gateway:8080/agent/v1" \
   "LLM API key: use MODEL_ACCESS_TOKEN from $RUNPOD_ENV"

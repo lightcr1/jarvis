@@ -35,6 +35,7 @@ _ENV_PATHS = [
     "JARVIS_ADMIN_PASSWORD_STORE_PATH", "JARVIS_USER_PREFERENCES_PATH", "JARVIS_FILES_STORE_PATH",
     "JARVIS_USER_FILES_PATH", "JARVIS_USER_LIMITS_STORE_PATH", "JARVIS_ADMIN_SETTINGS_PATH",
     "JARVIS_MEMORY_PATH", "JARVIS_RAG_CACHE_PATH", "JARVIS_TASKS_STORE_PATH",
+    "JARVIS_AGENT_GRANTS_PATH",
 ]
 
 
@@ -58,6 +59,7 @@ class ChatToolCallingTests(unittest.TestCase):
         jarvisappv4.file_store = jarvisappv4.FileStore()
         jarvisappv4.memory_store = jarvisappv4.MemoryStore()
         jarvisappv4.rag_store = jarvisappv4.RagStore()
+        jarvisappv4.agent_grant_store = jarvisappv4.AgentGrantStore()
         jarvisappv4.file_service = jarvisappv4.FileService(
             store=jarvisappv4.file_store,
             user_store=jarvisappv4.user_store,
@@ -105,6 +107,23 @@ class ChatToolCallingTests(unittest.TestCase):
     def _patched_provider(self, responses: list[ChatResult]):
         fake = _FakeToolProvider(responses)
         return patch("jarvis.providers.get_provider_instance", return_value=fake), fake
+
+    def test_explicit_owner_chat_idea_is_queued_but_guest_cannot_submit(self):
+        jarvisappv4.ensure_default_admin_seeded()
+        login = self.client.post("/auth/login", json={"username": "admin", "password": "admin123"})
+        self.assertEqual(200, login.status_code)
+        headers = {"X-Jarvis-Session": login.json()["session_token"]}
+        response = self.client.post("/chat", headers=headers, json={"text": "Business-Idee: Lokale Marktanalyse"})
+        self.assertEqual(200, response.status_code)
+        self.assertEqual(1, len(jarvisappv4.agent_grant_store.list_ideas()))
+        self.assertIn("Idee notiert", response.json()["reply"])
+        guest = self.client.post("/chat", json={"text": "Business-Idee: Gastidee"})
+        self.assertEqual(200, guest.status_code)
+        self.assertEqual(1, len(jarvisappv4.agent_grant_store.list_ideas()))
+        streamed = self.client.post("/chat/stream", headers=headers, json={"text": "Projektidee: Neues Repo prüfen"})
+        self.assertEqual(200, streamed.status_code)
+        self.assertIn("Idee notiert", streamed.text)
+        self.assertEqual(2, len(jarvisappv4.agent_grant_store.list_ideas()))
 
     def test_list_folder_tool_returns_real_files_not_hallucinated(self):
         session_token = self._create_user_with_permissions("filesuser", ["files.read", "files.write", "assistant.chat"])
