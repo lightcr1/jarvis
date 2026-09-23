@@ -40,6 +40,9 @@ class AgentGrantStore:
                 decided_at INTEGER, decided_by TEXT, revoked_at INTEGER
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS grants_lookup ON requests(kind,target,operation,status)")
+            db.execute("""CREATE TABLE IF NOT EXISTS research_usage (
+                project_target TEXT NOT NULL, used_at INTEGER NOT NULL
+            )""")
             db.execute("""CREATE TABLE IF NOT EXISTS projects (
                 id TEXT PRIMARY KEY, kind TEXT NOT NULL, target TEXT NOT NULL,
                 title TEXT NOT NULL, operations TEXT NOT NULL, status TEXT NOT NULL,
@@ -211,6 +214,17 @@ class AgentGrantStore:
                 WHERE id=? AND status='approved'""", (now, actor, identifier))
             changed = db.execute("SELECT changes()").fetchone()[0]
         return self.get_project(identifier) if changed else None
+
+    def consume_research_quota(self, project_target: str, *, daily_limit: int = 20) -> bool:
+        """Reserve quota before a provider call; failed calls stay charged (fail safe)."""
+        now = int(self.clock())
+        with self._connect() as db:
+            db.execute("DELETE FROM research_usage WHERE used_at<=?", (now - 24 * 3600,))
+            used = db.execute("SELECT count(*) FROM research_usage WHERE project_target=?", (project_target,)).fetchone()[0]
+            if used >= max(1, min(daily_limit, 100)):
+                return False
+            db.execute("INSERT INTO research_usage(project_target,used_at) VALUES (?,?)", (project_target, now))
+        return True
 
     @staticmethod
     def _action_digest(kind: str, target: str, payload: dict) -> tuple[str, str]:

@@ -146,7 +146,9 @@ Fuer Business-Recherche kann ein genehmigter Projektrahmen der Art
 `business_research` die Operation `web_search` fuer ein genaues Projektziel
 freigeben. Der Backend-Gateway spricht ausschliesslich die feste Brave-Search-
 API mit dem serverseitigen `JARVIS_BRAVE_SEARCH_TOKEN` an, blockiert Redirects,
-begrenzt Query und Ergebniszahl und gibt Ergebnisse als unvertraute Daten aus.
+begrenzt Query und Ergebniszahl, reserviert vor dem Provider-Aufruf eine harte
+Quote von 20 Suchen je Projekt und rollierenden 24 Stunden und gibt Ergebnisse
+als unvertraute Daten aus.
 Ohne konfigurierten Suchanbieter bleibt die Suche geschlossen. Recherche ist
 keine Erlaubnis, Personen zu kontaktieren, Inhalte zu veroeffentlichen oder
 Geld auszugeben; finanzielle und oeffentliche Aktionen brauchen separate

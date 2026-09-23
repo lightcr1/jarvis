@@ -168,8 +168,11 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     @router.post("/agent/research/search")
     def research(body: ResearchQuery, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
-        if not current("agent_grant_store").authorize(kind="business_research", target=body.project_target, operation="web_search"):
+        store = current("agent_grant_store")
+        if not store.authorize(kind="business_research", target=body.project_target, operation="web_search"):
             raise HTTPException(403, "approved research project required")
+        if not store.consume_research_quota(body.project_target):
+            raise HTTPException(429, "daily research quota reached")
         try: results = search_web(body.query, current("web_search_token"), limit=body.limit)
         except ResearchError as exc: raise HTTPException(502, str(exc)) from exc
         audit("agent.research.searched", "agent", {"project_target": body.project_target, "query_length": len(body.query), "result_count": len(results)})

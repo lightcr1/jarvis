@@ -49,6 +49,17 @@ def test_approved_project_groups_exact_safe_operations_and_is_revocable(tmp_path
         raise AssertionError("reserved project operation accepted")
 
 
+def test_research_quota_is_bounded_and_recovers_after_day(tmp_path):
+    now = [1000]
+    store = AgentGrantStore(tmp_path / "quota.sqlite3", clock=lambda: now[0])
+    assert store.consume_research_quota("business:a", daily_limit=2)
+    assert store.consume_research_quota("business:a", daily_limit=2)
+    assert not store.consume_research_quota("business:a", daily_limit=2)
+    assert store.consume_research_quota("business:b", daily_limit=2)
+    now[0] += 24 * 3600 + 1
+    assert store.consume_research_quota("business:a", daily_limit=2)
+
+
 def test_reject_reserved_and_wildcard_operations(tmp_path):
     store = AgentGrantStore(tmp_path / "grants.sqlite3")
     for kind, target, operation in (
