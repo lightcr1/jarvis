@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 
 from .router_dependencies import LiveRef
 from .rate_limiter import _rate as _rate_limiter
+from .jarvis_engine import emergency_stop_enabled
 from .research_gateway import ResearchError, search_web
 from .github_gateway import GithubGatewayError, canonical_repo, create_agent_branch, create_pull_request, public_repository_metadata, write_branch_file
 
@@ -118,6 +119,10 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         if not _rate_limiter.allow(f"agent-{key}:{token}", limit, window):
             raise HTTPException(429, "agent rate limit reached — slow down")
 
+    def require_operational():
+        if emergency_stop_enabled():
+            raise HTTPException(503, "emergency stop active — agent actions paused")
+
     def audit(event: str, actor: str, data: dict):
         fn: Callable = current("audit_admin_event")
         fn(event, actor, "admin" if actor != "agent" else "service_system", data)
@@ -192,6 +197,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     def research(body: ResearchQuery, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
         cap(x_jarvis_agent_request_token, "research", 30)
+        require_operational()
         store = current("agent_grant_store")
         if not store.authorize(kind="business_research", target=body.project_target, operation="web_search"):
             raise HTTPException(403, "approved research project required")
@@ -246,6 +252,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
                       x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
         cap(x_jarvis_agent_request_token, "branch-create", 10)
+        require_operational()
         try: target = canonical_repo(repo_owner, repo_name)
         except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
         if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="create_branch"):
@@ -260,6 +267,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
                    x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
         cap(x_jarvis_agent_request_token, "file-write", 10)
+        require_operational()
         try: target = canonical_repo(repo_owner, repo_name)
         except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
         if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="write_branch_file"):
@@ -273,6 +281,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     def request_pull_request(body: PullRequestAction, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
         cap(x_jarvis_agent_request_token, "action-request", 10)
+        require_operational()
         try:
             owner_name, repo_name = body.repository.split("/", 1)
             target = canonical_repo(owner_name, repo_name)
@@ -289,6 +298,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     def request_email_send(body: EmailSendAction, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
         cap(x_jarvis_agent_request_token, "action-request", 10)
+        require_operational()
         try:
             item = current("agent_grant_store").request_one_time_action(
                 kind="email_send", target=body.to.lower(), payload=body.model_dump())
@@ -310,6 +320,7 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
     def execute_action(action_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
         cap(x_jarvis_agent_request_token, "action-execute", 5)
+        require_operational()
         item = current("agent_grant_store").consume_one_time_action(action_id)
         if item is None:
             raise HTTPException(403, "approved, unused action required")

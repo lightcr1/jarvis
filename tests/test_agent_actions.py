@@ -80,6 +80,27 @@ def test_email_send_is_owner_approved_single_use_and_masks_contents(tmp_path, mo
         raise AssertionError("invalid email payload accepted")
 
 
+def test_emergency_stop_blocks_agent_execution(tmp_path, monkeypatch):
+    import os
+    store = AgentGrantStore(tmp_path / "actions.sqlite3")
+    app = FastAPI(); app.include_router(build_agent_grants_router({
+        "agent_grant_store": store, "get_identity_session": lambda t: {"user_id": "owner", "role": "admin"} if t == "owner" else None,
+        "normalize_role": lambda r: r, "agent_request_token": "agent", "github_write_token": "",
+        "owner_user_id": "owner", "email_service": None, "audit_admin_event": lambda *a: None,
+    }))
+    client = TestClient(app); agent = {"X-Jarvis-Agent-Request-Token": "agent"}; owner = {"X-Jarvis-Session": "owner"}
+    response = client.post("/agent/actions/github-pull-request", headers=agent, json={
+        "repository": "owner/repo", "title": "T", "body": "B", "head": "agent/x", "base": "dev"})
+    action = response.json()["action"]
+    client.post(f"/admin/agent-actions/{action['id']}/decide", headers=owner, json={"approve": True})
+    monkeypatch.setenv("JARVIS_EMERGENCY_STOP", "1")
+    response = client.post(f"/agent/actions/{action['id']}/execute", headers=agent)
+    assert response.status_code == 503
+    assert "emergency stop active" in response.json()["detail"]
+    monkeypatch.delenv("JARVIS_EMERGENCY_STOP")
+    assert client.post(f"/agent/actions/{action['id']}/execute", headers=agent).status_code == 502  # no write token
+
+
 def test_changed_or_dangerous_pull_request_is_not_covered(tmp_path):
     store = AgentGrantStore(tmp_path / "actions.sqlite3")
     valid = {"title": "T", "body": "B", "head": "agent/x", "base": "dev"}

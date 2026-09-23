@@ -120,6 +120,13 @@ Projektfreigabe erweitert niemals automatisch das technische Toolset: Nur
 Gateways, die `authorize()` selbst vor der Nebenwirkung aufrufen, koennen sie
 nutzen.
 
+Aktiver Not-Aus (`jarvis_engine.emergency_stop_enabled`) sperrt zusaetzlich die
+Agenten-API: Ausfuehrung, Schreibaktionen und Recherche antworten dann 503;
+Anfragen und Status bleiben fuer den Besitzer lesbar. Neue Provider folgen der
+Checkliste in `docs/INTEGRATIONS_GUIDE.md`; optional kann Open WebUI
+ausdrueckliche `...-Idee:`-Formulare ueber `integrations/openwebui/idea_inbox.py`
+an die Queue weiterreichen (nicht automatisch fuer freie Chat-Nachrichten).
+
 **Wichtig:** Dieser Kern ist noch keine Freigabe fuer Shell, GitHub, E-Mail
 oder Zahlungen. Ein neues ausfuehrendes Tool muss im vertrauenswuerdigen
 Gateway erst Aktion und Ziel selbst klassifizieren und `authorize()` vor jeder
