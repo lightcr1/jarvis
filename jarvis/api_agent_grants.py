@@ -66,6 +66,12 @@ class BranchFileWrite(BaseModel):
     message: str = Field(max_length=200)
 
 
+class EmailSendAction(BaseModel):
+    to: str = Field(max_length=200)
+    subject: str = Field(max_length=200)
+    body: str = Field(max_length=20000)
+
+
 class PullRequestAction(BaseModel):
     repository: str = Field(max_length=201)
     title: str = Field(max_length=200)
@@ -279,6 +285,18 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         audit("agent.action.requested", "agent", {"action_id": item["id"], "digest": item["digest"]})
         return {"action": item}
 
+    @router.post("/agent/actions/email-send", status_code=201)
+    def request_email_send(body: EmailSendAction, x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "action-request", 10)
+        try:
+            item = current("agent_grant_store").request_one_time_action(
+                kind="email_send", target=body.to.lower(), payload=body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        audit("agent.action.requested", "agent", {"action_id": item["id"], "digest": item["digest"]})
+        return {"action": item}
+
     @router.post("/admin/agent-actions/{action_id}/decide")
     def decide_action(action_id: str, body: ActionDecision, x_jarvis_session: str | None = Header(default=None)):
         actor = owner(x_jarvis_session)
@@ -296,12 +314,31 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         if item is None:
             raise HTTPException(403, "approved, unused action required")
         payload = __import__("json").loads(item["payload"])
-        owner_name, repo_name = item["target"].split("/", 1)
-        try:
-            result = create_pull_request(owner_name, repo_name, payload, current("github_write_token"))
-        except GithubGatewayError as exc:
-            audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"]})
-            raise HTTPException(502, str(exc)) from exc
+        if item["kind"] == "github_create_pr":
+            owner_name, repo_name = item["target"].split("/", 1)
+            try:
+                result = create_pull_request(owner_name, repo_name, payload, current("github_write_token"))
+            except GithubGatewayError as exc:
+                audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"]})
+                raise HTTPException(502, str(exc)) from exc
+        elif item["kind"] == "email_send":
+            owner_user_id = current("owner_user_id")
+            email_service = current("email_service")
+            if not owner_user_id or email_service is None:
+                audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"], "error": "email_not_configured"})
+                raise HTTPException(502, "owner email account not configured")
+            try:
+                draft = email_service.create_draft(
+                    {"to": payload["to"], "subject": payload["subject"], "body": payload["body"]},
+                    user_id=owner_user_id, role="admin")
+                sent = email_service.send_draft(
+                    draft["draft"]["id"], user_id=owner_user_id, role="admin", confirm=True)
+                result = {"sent": sent["status"], "to": payload["to"]}
+            except Exception as exc:  # noqa: BLE001 - gateway surfaces service errors
+                audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"], "error": str(exc)[:200]})
+                raise HTTPException(502, str(exc)) from exc
+        else:
+            raise HTTPException(422, "unsupported action kind")
         audit("agent.action.executed", "agent", {"action_id": action_id, "digest": item["digest"], "result": result})
         return {"result": result}
 

@@ -41,6 +41,45 @@ def test_exact_pull_request_needs_owner_and_is_single_use(tmp_path, monkeypatch)
     assert len(calls) == 1
 
 
+def test_email_send_is_owner_approved_single_use_and_masks_contents(tmp_path, monkeypatch):
+    store = AgentGrantStore(tmp_path / "actions.sqlite3")
+    calls = []
+
+    class _Email:
+        def create_draft(self, payload, *, user_id, role):
+            calls.append(("draft", payload["to"]))
+            return {"draft": {"id": "d-1"}}
+
+        def send_draft(self, draft_id, *, user_id, role, confirm):
+            calls.append(("send", draft_id, confirm))
+            return {"status": "sent"}
+
+    app = FastAPI(); app.include_router(build_agent_grants_router({
+        "agent_grant_store": store, "get_identity_session": lambda t: {"user_id": "owner", "role": "admin"} if t == "owner" else None,
+        "normalize_role": lambda r: r, "agent_request_token": "agent", "github_write_token": "",
+        "owner_user_id": "owner", "email_service": _Email(), "audit_admin_event": lambda *a: None,
+    }))
+    client = TestClient(app); agent = {"X-Jarvis-Agent-Request-Token": "agent"}; owner = {"X-Jarvis-Session": "owner"}
+    payload = {"to": "someone@example.com", "subject": "Update", "body": "Here is the report."}
+    response = client.post("/agent/actions/email-send", headers=agent, json=payload)
+    assert response.status_code == 201
+    action = response.json()["action"]
+    assert "Here is the report" in action["payload"]  # owner reviews the full content
+    url = f"/agent/actions/{action['id']}/execute"
+    assert client.post(url, headers=agent).status_code == 403
+    assert client.post(f"/admin/agent-actions/{action['id']}/decide", headers=owner, json={"approve": True}).status_code == 200
+    assert client.post(url, headers=agent).status_code == 200
+    assert calls == [("draft", "someone@example.com"), ("send", "d-1", True)]
+    assert client.post(url, headers=agent).status_code == 403
+    assert calls == [("draft", "someone@example.com"), ("send", "d-1", True)]
+    try:
+        store.request_one_time_action(kind="email_send", target="someone@example.com", payload={**payload, "to": "not-an-email"})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("invalid email payload accepted")
+
+
 def test_changed_or_dangerous_pull_request_is_not_covered(tmp_path):
     store = AgentGrantStore(tmp_path / "actions.sqlite3")
     valid = {"title": "T", "body": "B", "head": "agent/x", "base": "dev"}

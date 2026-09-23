@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import sqlite3
 import time
 import uuid
@@ -19,6 +20,20 @@ from pathlib import Path
 RESERVED = frozenset({"payment", "billing", "purchase", "contract", "publish", "external_message",
                       "delete", "security", "credentials", "policy", "runpod", "deployment"})
 SAFE_KINDS = frozenset({"repository", "integration", "workspace", "business_research", "other_project"})
+
+
+def validate_email_payload(payload: dict) -> None:
+    if set(payload) != {"to", "subject", "body"}:
+        raise ValueError("exact email fields required")
+    limits = {"to": 200, "subject": 200, "body": 20000}
+    for key, limit in limits.items():
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip() or value != value.strip() or len(value) > limit or any(c in value for c in ("\0", "\r")):
+            raise ValueError(f"invalid email {key}")
+    if not re.fullmatch(r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}", payload["to"].lower()):
+        raise ValueError("valid email recipient required")
+    if any(c in payload["subject"] for c in ("\n",)):
+        raise ValueError("subject must be one line")
 
 
 class AgentGrantStore:
@@ -233,13 +248,20 @@ class AgentGrantStore:
         return json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")), hashlib.sha256(encoded.encode()).hexdigest()
 
     def request_one_time_action(self, *, kind: str, target: str, payload: dict) -> dict:
-        if kind != "github_create_pr" or not isinstance(payload, dict):
+        if kind == "github_create_pr":
+            if not isinstance(payload, dict):
+                raise ValueError("unsupported one-time action")
+            from .github_gateway import canonical_repo, validate_pull_request
+            owner, repository = target.split("/", 1) if target.count("/") == 1 else ("", "")
+            if canonical_repo(owner, repository) != target:
+                raise ValueError("canonical target required")
+            validate_pull_request(payload)
+        elif kind == "email_send":
+            validate_email_payload(payload)
+            if not re.fullmatch(r"[a-z0-9._-]+@[a-z0-9.-]+\.[a-z]{2,}", target.lower()):
+                raise ValueError("valid email target required")
+        else:
             raise ValueError("unsupported one-time action")
-        from .github_gateway import canonical_repo, validate_pull_request
-        owner, repository = target.split("/", 1) if target.count("/") == 1 else ("", "")
-        if canonical_repo(owner, repository) != target:
-            raise ValueError("canonical target required")
-        validate_pull_request(payload)
         body, digest = self._action_digest(kind, target, payload)
         now = int(self.clock())
         identifier = uuid.uuid4().hex

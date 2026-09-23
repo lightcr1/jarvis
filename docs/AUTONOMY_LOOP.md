@@ -139,7 +139,15 @@ eine neue Freigabe. Der serverseitige `JARVIS_GITHUB_WRITE_TOKEN` wird nie an
 den Agenten gegeben und muss als Fine-Grained Token nur fuer explizit erlaubte
 Repos konfiguriert werden; ohne Token schlaegt die Aktion geschlossen fehl.
 Da die Freigabe vor dem API-Aufruf atomar verbraucht wird, braucht auch ein
-fehlgeschlagener GitHub-Aufruf eine neue Freigabe. Innerhalb eines genehmigten Projektrahmens kann die Operation `create_branch`
+fehlgeschlagener GitHub-Aufruf eine neue Freigabe. Eine weitere
+Einmalaktion ist der E-Mail-Versand (`request-email` im Agent-Client): Jarvis
+reicht Empfaenger, Betreff und Text ein; die Admin-UI zeigt den vollstaendigen
+Inhalt und den Digest. Nach Besitzerfreigabe wird genau dieser Verlauf einmal
+ueber das bestehende E-Mail-Konto des Besitzers gesendet; Wiederholung oder
+Abweichung brauchen eine neue Freigabe. Ohne konfiguriertes Besitzer-E-Mail-
+Konto schlaegt die Ausfuehrung geschlossen fehl. Empfaengeradresse, Laengen
+und Einzeiligkeitsregeln fuer den Betreff werden vor dem Speichern geprueft.
+Innerhalb eines genehmigten Projektrahmens kann die Operation `create_branch`
 einen neuen `agent/*`-Branch aus `dev` oder `main` erzeugen. Mit der getrennten
 Operation `write_branch_file` kann Jarvis ueber den typisierten Gateway einzelne
 Textdateien bis 256 KiB in einen bereits vorhandenen `agent/*`-Branch
