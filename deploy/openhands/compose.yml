@@ -8,6 +8,12 @@ services:
     environment:
       # Request-only capability: cannot approve actions or reveal server-side service tokens.
       JARVIS_AGENT_REQUEST_TOKEN: ${JARVIS_AGENT_REQUEST_TOKEN:?Set JARVIS_AGENT_REQUEST_TOKEN}
+      # Kontrollierter Ausgang ins Internet ueber den Allowlist-Proxy.
+      # Nur pypi.org, files.pythonhosted.org, github.com & Download-Hosts.
+      HTTP_PROXY: ${PROXY_URL:-http://allowlist-proxy:3128}
+      HTTPS_PROXY: ${PROXY_URL:-http://allowlist-proxy:3128}
+      # Interne Dienste und lokale Pfade niemals ueber den Proxy.
+      NO_PROXY: ${NO_PROXY:-inference-gateway,canvas-edge,controller,openhands,127.0.0.1,localhost,::1}
     volumes:
       - type: bind
         source: ${OPENHANDS_STATE_DIR:?Set OPENHANDS_STATE_DIR}
@@ -32,6 +38,7 @@ services:
     # host ports on this daemon, and host port 8000 is used by jarvis.service.
     image: nginx:alpine@sha256:62ff2089abf5a9ed33bd232895bef5e22f7bb4b200675cec49a5ebc48e3d4ac8
     restart: unless-stopped
+    user: "101:101"
     ports:
       - "0.0.0.0:${OPENHANDS_EDGE_PORT:-8001}:8080"
     read_only: true
@@ -65,6 +72,37 @@ services:
       - no-new-privileges:true
     cap_drop:
       - ALL
+
+  allowlist-proxy:
+    # Strikt auf die Allowlist beschraenkter HTTP(S)-Proxy fuer den Agenten.
+    # Dual-homed: intern erreichbar (agent-isolated), Internet nur ueber
+    # runpod-internal. Ohne eigene Registry-Anbindung wird das Image lokal
+    # gebaut (klein, python:3.12-alpine).
+    build:
+      context: ./allowlist-proxy
+    image: ${ALLOWLIST_PROXY_IMAGE:-allowlist-proxy:local}
+    restart: unless-stopped
+    environment:
+      # Quell-IP fuer ausgehende Verbindungen (runpod_default-IP). Leer:
+      # der Proxy erkennt die Egress-IP zur Laufzeit automatisch.
+      EGRESS_IP: ${EGRESS_IP:-}
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,mode=1777
+    networks:
+      - agent-isolated
+      - runpod-internal
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 256
+    mem_limit: 128m
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.create_connection(('127.0.0.1',3128),2); s.close()"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
 networks:
   agent-isolated:
