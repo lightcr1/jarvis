@@ -5,7 +5,14 @@ from __future__ import annotations
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from .agent_monitor import decide_owner_request, list_owner_requests, list_sessions, session_status
+from .agent_monitor import (
+    MonitorError,
+    decide_owner_request,
+    list_owner_requests,
+    list_sessions,
+    session_action,
+    session_status,
+)
 
 
 class RequestDecision(BaseModel):
@@ -57,6 +64,29 @@ def build_agent_monitor_router(deps: dict) -> APIRouter:
             "sessions": [s for s in (session_status(s) for s in sessions) if s["id"]],
             "count": len(sessions),
         }
+
+    @router.post("/agent/sessions/{conv_id}/{action}")
+    def act_on_session(
+        conv_id: str,
+        action: str,
+        x_jarvis_session: str | None = Header(default=None),
+        x_jarvis_user_id: str | None = None,
+        x_jarvis_role: str | None = None,
+        authorization: str | None = None,
+    ):
+        """Pause/Run/Interrupt einer OpenHands-Session (nur eigene Runden)."""
+        actor_id, actor_role = _admin_guard(
+            x_jarvis_session, x_jarvis_user_id, x_jarvis_role, authorization
+        )
+        api_key = current("openhands_api_key")
+        try:
+            session_action(api_key, conv_id, action)
+        except MonitorError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        fn = current("audit_admin_event")
+        fn("agent.session.action", actor_id, actor_role,
+           {"conversation_id": conv_id, "action": action})
+        return {"ok": True, "action": action}
 
     @router.get("/agent/requests")
     def get_requests(

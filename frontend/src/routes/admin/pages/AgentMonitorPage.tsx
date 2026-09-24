@@ -3,6 +3,7 @@ import {
   fetchAgentSessions,
   fetchOwnerRequests,
   decideOwnerRequest,
+  agentSessionAction,
   type AgentSession,
   type OwnerRequest,
 } from "../../../shared/api/admin";
@@ -56,6 +57,26 @@ export function AgentMonitorPage() {
     }
   }, [load]);
 
+  const actOn = useCallback(async (s: AgentSession, action: "pause" | "run" | "interrupt") => {
+    setFeedback("");
+    try {
+      await agentSessionAction(s.id, action);
+      setFeedback(`Session ${s.id.slice(0, 8)} → ${{ pause: "pausiert", run: "fortgesetzt", interrupt: "stoppt" }[action]}`);
+      setTimeout(() => void load(), 1500);
+    } catch (e) {
+      setFeedback(`Fehler: ${e instanceof Error ? e.message : "Aktion fehlgeschlagen"}`);
+    }
+  }, [load]);
+
+  const statusIcon = (s: AgentSession) => {
+    if (s.status === "running" || s.status === "active" || s.status === "starting" || s.status === "pending") return "🟢";
+    if (s.status === "paused") return "⏸️";
+    if (s.status === "waiting_for_confirmation") return "🟡";
+    if (s.status === "error") return "🔴";
+    if (s.status === "finished") return "✅";
+    return "⚪";
+  };
+
   const card: React.CSSProperties = {
     background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 6, padding: "14px 16px", marginBottom: 12,
   };
@@ -87,11 +108,31 @@ export function AgentMonitorPage() {
           <div key={s.id || s.title} style={{ padding: "8px 0", borderBottom: `1px solid ${J.border}`, fontSize: 14 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
               <span style={{ cursor: "pointer", flex: 1 }} onClick={() => setExpanded(expanded === s.id ? null : s.id)}>
-                {s.status === "running" || s.status === "active" ? "🟢" : "⏸️"} {s.title}
+                {statusIcon(s)} {s.title}
+                {s.kind === "autonomy" && (
+                  <span style={badge(s.focus === "ideas" ? "#a78bfa" : "#38bdf8")}>
+                    {s.focus === "ideas" ? "✨ Ideen" : "🔧 Engineering"}
+                  </span>
+                )}
+                {s.status === "waiting_for_confirmation" && (
+                  <span style={badge("#fbbf24")}>wartet auf dich</span>
+                )}
               </span>
-              <span style={{ color: J.textMuted, fontSize: 12 }}>
+              <span style={{ color: J.textMuted, fontSize: 12, whiteSpace: "nowrap" }}>
                 {s.status} · {fmtTs(s.updated_at)}
               </span>
+              {s.kind === "autonomy" && (
+                <span style={{ whiteSpace: "nowrap" }}>
+                  {s.status === "running" || s.status === "starting" || s.status === "pending" ? (
+                    <button onClick={() => actOn(s, "pause")} style={{ marginRight: 4, padding: "4px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, cursor: "pointer", fontSize: 12 }}>⏸️ Pause</button>
+                  ) : (s.status === "paused" ? (
+                    <button onClick={() => actOn(s, "run")} style={{ marginRight: 4, padding: "4px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: "#22c55e", color: "#fff", cursor: "pointer", fontSize: 12 }}>▶️ Fortsetzen</button>
+                  ) : null)}
+                  <button onClick={() => actOn(s, "interrupt")} title="Sofort stoppen (beendet die Runde)" style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: "#b83232", color: "#fff", cursor: "pointer", fontSize: 12 }}>
+                    ⏹ Stopp
+                  </button>
+                </span>
+              )}
             </div>
           </div>
         ))}

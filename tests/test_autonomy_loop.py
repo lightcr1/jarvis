@@ -96,3 +96,24 @@ def test_owner_activity_blocks_new_round(tmp_path, monkeypatch):
     monkeypatch.setattr(loop, "start_round", lambda *_: (_ for _ in ()).throw(
         AssertionError("owner is active; background round must wait")))
     assert loop.main() == 0
+
+
+def test_parallel_focus_switches_between_rounds(monkeypatch):
+    """Zweite parallele Runde bekommt den komplementaeren Fokus (ideas),
+    wenn bereits eine engineering-Runde laeuft."""
+    # Runde 1: engineering (keine laufende Runde -> engineering)
+    active_a = {"sess-a": {"kind": "round", "paused": False, "focus": "engineering"}}
+    focus_b = "ideas" if "engineering" in {m.get("focus", "engineering") for m in active_a.values()} else "engineering"
+    assert focus_b == "ideas"
+    # Umgekehrt: laeuft ideas, startet engineering
+    active_b = {"sess-b": {"kind": "round", "paused": False, "focus": "ideas"}}
+    focus_c = "ideas" if "engineering" in {m.get("focus", "engineering") for m in active_b.values()} else "engineering"
+    assert focus_c == "engineering"
+
+
+def test_round_prompt_contains_focus(monkeypatch):
+    prompt_eng = loop.round_prompt("round", 30)
+    prompt_ideas = loop.round_prompt("round", 30, focus="ideas")
+    assert "Engineering" in prompt_eng
+    assert "Ideen" in prompt_ideas
+    assert "AGENTS.md" in prompt_eng and "AGENTS.md" in prompt_ideas

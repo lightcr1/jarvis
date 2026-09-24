@@ -37,15 +37,17 @@ class MonitorError(RuntimeError):
 # OpenHands session listing
 # --------------------------------------------------------------------------
 
-def _oh_request(path: str, api_key: str | None = None) -> dict:
+def _oh_request(path: str, api_key: str | None = None, method: str = "GET",
+               body: dict | None = None) -> dict:
     base = os.getenv("OPENHANDS_API_BASE", DEFAULT_OPENHANDS_BASE)
     key = api_key or os.getenv("OPENHANDS_API_KEY") or os.getenv("OPENHANDS_API_KEY_FILE")
     if key and not api_key and key.startswith("file:"):
         key = open(key[5:]).read().strip()
-    headers = {}
+    headers = {"Content-Type": "application/json"}
     if key:
         headers["X-Session-API-Key"] = key
-    req = urllib.request.Request(base + path, headers=headers)
+    data = json.dumps(body).encode() if body is not None else None
+    req = urllib.request.Request(base + path, headers=headers, data=data, method=method)
     try:
         with urllib.request.urlopen(req, timeout=6) as resp:
             return json.loads(resp.read().decode("utf-8", errors="replace"))
@@ -72,17 +74,31 @@ def list_sessions(api_key: str | None = None) -> list[dict]:
 
 
 def session_status(session: dict) -> dict:
-    """Compact status of one session (metadata only)."""
+    """Compact status of one session (metadata only). Der Canvas liefert den
+    Zustand im Feld `execution_status`; fuer alte Antworten bleiben die
+    Fallbacks erhalten."""
     conv_id = session.get("conversation_id") or session.get("id") or ""
-    status = session.get("status") or session.get("state", "unknown")
+    status = (session.get("execution_status")
+              or session.get("status") or session.get("state", "unknown"))
     title = session.get("title") or session.get("agent_name") or f"Session {conv_id[:8]}"
+    tags = session.get("tags") or {}
     return {
         "id": conv_id,
         "title": str(title)[:120],
-        "status": status,
+        "status": str(status),
+        "kind": str(tags.get("kind") or "unspecified"),
+        "focus": str(tags.get("focus") or "unspecified"),
         "updated_at": session.get("updated_at") or session.get("created_at") or None,
         "selected_agent": session.get("selected_agent") or "",
+        "branch": str((session.get("workspace") or {}).get("working_dir") or ""),
     }
+
+
+def session_action(api_key: str, conv_id: str, action: str) -> None:
+    """Pause/run/interrupt einer Session (nur eigenen Loop-Sessions im Admin-UI)."""
+    if action not in ("pause", "run", "interrupt"):
+        raise MonitorError(f"Ungueltige Aktion: {action}")
+    _oh_request(f"/api/conversations/{conv_id}/{action}", api_key, method="POST", body={})
 
 
 # --------------------------------------------------------------------------
