@@ -587,8 +587,18 @@ export interface AgentSession {
   id: string;
   title: string;
   status: string;
+  kind?: string;        // 'autonomy' | 'unspecified' | ...
+  focus?: string;       // 'engineering' | 'ideas' (aus Loop-Tags)
   updated_at?: string;
   selected_agent?: string;
+  branch?: string;
+}
+
+export function agentSessionAction(convId: string, action: "pause" | "run" | "interrupt") {
+  return apiRequest<{ ok: boolean; action: string }>(
+    `/agent/sessions/${encodeURIComponent(convId)}/${action}`,
+    { method: "POST", includeAdmin: true },
+  );
 }
 
 export interface OwnerRequest {
