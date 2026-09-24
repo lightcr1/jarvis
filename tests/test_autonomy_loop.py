@@ -49,14 +49,23 @@ def test_wrapup_does_not_start_new_features():
     assert "ACTIVITY_LOG.md" in prompt
 
 
-def test_openhands_asks_before_risky_actions(monkeypatch):
+def test_round_runs_without_tool_confirmations(monkeypatch):
+    """Autonomy rounds use NeverConfirm: tool confirmations block even plain
+    file reads in the canvas and would stall unattended rounds. Protection for
+    protected/external actions lives in AGENTS.md boundaries, the request-only
+    gateway token and the absence of CONTROL_TOKEN/GitHub credentials in the
+    canvas, not in per-action UI confirmations."""
     captured = {}
     def fake_http(method, url, headers=None, body=None, **kwargs):
         captured.update(body or {})
         return {"status": 201, "data": {"id": "fake-round"}}
     monkeypatch.setattr(loop, "http", fake_http)
     assert loop.start_round("fake-api", "fake-model", "round", 30) == "fake-round"
-    assert captured["confirmation_policy"] == {"kind": "ConfirmRisky"}
+    assert captured["confirmation_policy"] == {"kind": "NeverConfirm"}
+    tools = {t["name"] for t in captured["agent"]["tools"]}
+    assert tools == {"terminal", "file_editor", "task_tracker"}
+    assert captured["agent"]["llm"]["model"] == "openai/code"
+    assert captured["agent"]["condenser"]["kind"] == "LLMSummarizingCondenser"
 
 
 def test_disabled_switch_prevents_round_even_with_live_pod(tmp_path, monkeypatch):

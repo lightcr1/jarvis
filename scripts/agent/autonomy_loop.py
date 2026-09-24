@@ -317,20 +317,32 @@ def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: in
         "agent": {
             "kind": "Agent",
             "llm": {
-                "model": "code",
+                "model": "openai/code",
                 "base_url": "http://inference-gateway:8080/agent/v1",
                 "api_key": agent_token,
                 "is_subscription": False,
                 "stream": False,
             },
+            "condenser": {
+                "kind": "LLMSummarizingCondenser",
+                "llm": {
+                    "model": "openai/code",
+                    "base_url": "http://inference-gateway:8080/agent/v1",
+                    "api_key": agent_token,
+                    "is_subscription": False,
+                    "stream": False,
+                },
+                "max_size": 200,
+                "keep_first": 2,
+            },
             "tools": [
-                {"name": "TerminalTool", "params": {}},
-                {"name": "FileEditorTool", "params": {}},
-                {"name": "TaskTrackerTool", "params": {}},
+                {"name": "terminal", "params": {}},
+                {"name": "file_editor", "params": {}},
+                {"name": "task_tracker", "params": {}},
             ],
         },
         "max_iterations": MAX_ITERATIONS,
-        "confirmation_policy": {"kind": "ConfirmRisky"},
+        "confirmation_policy": {"kind": "NeverConfirm"},
         "initial_message": {
             "role": "user",
             "content": [{"text": round_prompt(kind, idle_stop_minutes, owner_ideas)}],
