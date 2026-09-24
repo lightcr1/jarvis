@@ -206,6 +206,16 @@ def get_activity(control_token: str) -> dict | None:
     return result["data"]
 
 
+def model_ready(control_token: str) -> bool:
+    """Ist das Modell im Pod wirklich geladen und antwortend?
+    Der Pod kann laut Runpod-API schon RUNNING sein, waehrend das LLM im
+    Pod noch laedt (10-20 Min). Runden, die in dieser Ladezeit starten,
+    scheitern sonst mit 404 (NotFoundError)."""
+    result = http("GET", f"{CONTROLLER_BASE}/api/model/ready",
+                  headers={"X-Control-Token": control_token})
+    return bool(result.get("data", {}).get("ready"))
+
+
 def stop_pod(control_token: str) -> bool:
     result = http("POST", f"{CONTROLLER_BASE}/api/pod/stop",
                   headers={"X-Control-Token": control_token})
@@ -568,6 +578,12 @@ def main() -> int:
         return 0             # kurze Pause zwischen zwei Runden
     elif len(running_now) == MAX_PARALLEL_ROUNDS:
         return 0             # beide Slots belegt (doppelte Sicherung)
+    elif not model_ready(control["control"]):
+        # Pod ist RUNNING, aber das Modell laedt noch (10-20 Min nach Start/
+        # Recreate). Runden, die jetzt starten, crashen sonst mit 404.
+        state["last_error"] = "model-laedt-noch (model/ready false)"
+        save_state(state)
+        return 0
     else:
         kind = "round"       # und direkt weiterarbeiten (auch parallel)
 
