@@ -353,6 +353,7 @@ def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: in
     payload = {
         "workspace": {"working_dir": WORKSPACE_REPO, "kind": "LocalWorkspace"},
         "worktree": True,
+        "tags": {"kind": "autonomy", "focus": focus},
         "agent": {
             "kind": "Agent",
             "llm": {
