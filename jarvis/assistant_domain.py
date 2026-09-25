@@ -804,6 +804,7 @@ def try_skill(
     get_provider=None,
     get_gemini=None,
     get_openai=None,
+    autonomy_task_store=None,
 ) -> dict[str, object] | None:
     t = text.strip().lower()
 
@@ -849,23 +850,38 @@ def try_skill(
             lines.append(f"Location set to {location}. Say 'weather' for a full forecast.")
         if notes_count:
             lines.append(f"You have {notes_count} note(s) on file.")
+        agent_summary = None
+        if autonomy_task_store is not None:
+            try:
+                agent_summary = autonomy_task_store.daily_summary()
+            except Exception:  # noqa: BLE001 - briefing must never fail on the agent store
+                agent_summary = None
+            if agent_summary and agent_summary.get("rounds"):
+                outcomes = agent_summary.get("outcomes", {})
+                lines.append(
+                    f"The coding agent finished {agent_summary['rounds']} round(s) in the last "
+                    f"24 hours ({outcomes.get('done', 0)} done, {outcomes.get('submitted', 0)} "
+                    f"submitted, {outcomes.get('blocked', 0)} blocked)."
+                )
+                if agent_summary.get("latest"):
+                    lines.append(f"Latest agent note: {str(agent_summary['latest'])[:200]}")
         reply = f"{salutation} " + " ".join(lines)
-        return {
-            "reply": reply,
-            "data": {
-                "route": "briefing",
-                "salutation": salutation,
-                "time": time_str,
-                "date": date_str,
-                "load1": load1,
-                "load_pct": round(load_pct, 1),
-                "mem_pct": round(mem_pct, 1),
-                "disk_pct": round(disk_pct, 1),
-                "uptime": uptime_raw,
-                "notes_count": notes_count,
-                "location": location,
-            },
+        data = {
+            "route": "briefing",
+            "salutation": salutation,
+            "time": time_str,
+            "date": date_str,
+            "load1": load1,
+            "load_pct": round(load_pct, 1),
+            "mem_pct": round(mem_pct, 1),
+            "disk_pct": round(disk_pct, 1),
+            "uptime": uptime_raw,
+            "notes_count": notes_count,
+            "location": location,
         }
+        if agent_summary is not None:
+            data["agent_summary"] = agent_summary
+        return {"reply": reply, "data": data}
 
     if t in {"uptime", "server uptime"}:
         out = run_cmd(["/usr/bin/uptime", "-p"])

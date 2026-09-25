@@ -344,3 +344,21 @@ class AutonomyTaskStore:
         report["files_changed"] = json.loads(report.get("files_changed") or "[]")
         report["tests"] = json.loads(report.get("tests") or "[]")
         return report
+
+    def daily_summary(self, *, since: int | None = None, now: int | None = None) -> dict:
+        """Kurzer, TTS-tauglicher Report der letzten 24h (7.4)."""
+        current = int(self.clock() if now is None else now)
+        since = current - 24 * 3600 if since is None else int(since)
+        with self._connect() as db:
+            rows = db.execute("""SELECT outcome, summary FROM round_reports
+                WHERE created_at>=? ORDER BY created_at DESC, rowid DESC""", (since,)).fetchall()
+            task_rows = db.execute("SELECT status, count(*) AS c FROM autonomy_tasks GROUP BY status").fetchall()
+        outcomes: dict[str, int] = {}
+        for row in rows:
+            outcomes[row["outcome"]] = outcomes.get(row["outcome"], 0) + 1
+        return {
+            "rounds": len(rows),
+            "outcomes": outcomes,
+            "latest": str(rows[0]["summary"]) if rows else "",
+            "tasks_by_status": {row["status"]: int(row["c"]) for row in task_rows},
+        }

@@ -728,6 +728,7 @@ def try_skill(text: str, role: str = "admin", token: str | None = None, granted_
         get_provider=get_provider,
         get_gemini=get_gemini,
         get_openai=get_openai,
+        autonomy_task_store=autonomy_task_store,
     )
 
 
