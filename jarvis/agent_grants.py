@@ -15,6 +15,8 @@ import time
 import uuid
 from pathlib import Path
 
+from .capabilities import TIERS, digest_params
+
 # These categories require separate, action-specific human confirmation in the
 # actual tool gateway. A grant here never authorizes them.
 RESERVED = frozenset({"payment", "billing", "purchase", "contract", "publish", "external_message",
@@ -75,6 +77,15 @@ class AgentGrantStore:
                 created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
                 decided_at INTEGER, decided_by TEXT, consumed_at INTEGER
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS approval_requests (
+                id TEXT PRIMARY KEY, capability TEXT NOT NULL, target TEXT NOT NULL,
+                params TEXT NOT NULL, digest TEXT NOT NULL, tier TEXT NOT NULL,
+                reason TEXT NOT NULL, status TEXT NOT NULL, created_by TEXT NOT NULL,
+                created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+                decided_at INTEGER, decided_by TEXT, channel TEXT,
+                always INTEGER NOT NULL DEFAULT 0
+            )""")
+            db.execute("CREATE INDEX IF NOT EXISTS approval_requests_status ON approval_requests(status,created_at)")
             db.execute("""CREATE TABLE IF NOT EXISTS standing_grants (
                 id TEXT PRIMARY KEY, capability TEXT NOT NULL, target_pattern TEXT NOT NULL,
                 tier TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL,
@@ -319,6 +330,73 @@ class AgentGrantStore:
             raise ValueError("action digest mismatch")
         return item
 
+
+
+    # -- kanaaluebergreifende Freigabe-Anfragen (Abschnitt 3.3) -----------
+
+    def request_approval(self, *, capability: str, target: str = "", params: dict | None = None,
+                         tier: str = "T2", reason: str = "", created_by: str = "agent",
+                         duration_seconds: int = 3600) -> dict:
+        capability = str(capability or "").strip()
+        if not capability or len(capability) > 120 or not re.fullmatch(r"[A-Za-z0-9_.*\-]+", capability):
+            raise ValueError("valid capability required")
+        if tier not in TIERS:
+            tier = "T2"
+        if not 60 <= int(duration_seconds) <= 7 * 24 * 3600:
+            raise ValueError("duration outside allowed range")
+        target = str(target or "")[:300]
+        body = json.dumps(params or {}, ensure_ascii=False, sort_keys=True)
+        if len(body) > 20000:
+            raise ValueError("params too large")
+        now = int(self.clock())
+        identifier = uuid.uuid4().hex
+        with self._connect() as db:
+            db.execute("""INSERT INTO approval_requests
+                (id,capability,target,params,digest,tier,reason,status,created_by,
+                 created_at,expires_at,always)
+                VALUES (?,?,?,?,?,?,?,'pending',?,?,?,0)""",
+                (identifier, capability, target, body, digest_params(params), tier,
+                 str(reason or "")[:1000], str(created_by or "agent"), now, now + int(duration_seconds)))
+        return self.get_approval(identifier)
+
+    def get_approval(self, request_id: str) -> dict | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM approval_requests WHERE id=?", (request_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_approvals(self, status: str | None = None, limit: int = 200) -> list[dict]:
+        query = "SELECT * FROM approval_requests"
+        params: list = []
+        if status:
+            query += " WHERE status=?"
+            params.append(status)
+        query += " ORDER BY created_at DESC, id DESC LIMIT ?"
+        params.append(max(1, min(limit, 500)))
+        with self._connect() as db:
+            rows = db.execute(query, params).fetchall()
+        return [dict(row) for row in rows]
+
+    def decide_approval(self, request_id: str, *, actor: str, approve: bool,
+                        channel: str = "admin", always: bool = False,
+                        grant_store=None) -> dict | None:
+        """Erste authentifizierte Antwort gilt (atomar). 'Immer' erzeugt eine
+        stehende Freigabe (nur T1/T2)."""
+        now = int(self.clock())
+        with self._connect() as db:
+            db.execute("""UPDATE approval_requests SET status=?, decided_at=?, decided_by=?,
+                channel=?, always=? WHERE id=? AND status='pending' AND expires_at>?""",
+                ("approved" if approve else "rejected", now, actor, str(channel or "admin"),
+                 1 if always else 0, request_id, now))
+            changed = db.execute("SELECT changes()").fetchone()[0]
+        if not changed:
+            return None
+        request = self.get_approval(request_id)
+        assert request is not None
+        if approve and always and grant_store is not None and request["tier"] in ("T1", "T2"):
+            grant_store.create_standing_grant(capability=request["capability"],
+                                              target_pattern=request["target"] or "*",
+                                              tier=request["tier"], actor=actor)
+        return request
 
     # -- stehende Freigaben (Freigabe-Kern, Abschnitt 3.2) ----------------
 

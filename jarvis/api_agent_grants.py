@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from .router_dependencies import LiveRef
 from .rate_limiter import _rate as _rate_limiter
 from .jarvis_engine import emergency_stop_enabled
-from .capabilities import load_capabilities
+from .capabilities import load_capabilities, tier_for
 from .research_gateway import ResearchError, search_searxng, search_web
 from .github_gateway import GithubGatewayError, canonical_repo, create_agent_branch, create_pull_request, public_repository_metadata, submit_patch, write_branch_file
 
@@ -97,6 +97,19 @@ class PullRequestAction(BaseModel):
 
 class ActionDecision(BaseModel):
     approve: bool
+
+
+class ApprovalRequestIn(BaseModel):
+    capability: str = Field(max_length=120)
+    target: str = Field(default="", max_length=300)
+    params: dict = Field(default_factory=dict)
+    reason: str = Field(default="", max_length=1000)
+    duration_seconds: int = Field(default=3600, ge=60, le=7 * 24 * 3600)
+
+
+class ApprovalDecision(BaseModel):
+    approve: bool
+    always: bool = False
 
 
 class StandingGrantCreate(BaseModel):
@@ -519,6 +532,60 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         if item is None:
             raise HTTPException(409, "request missing or not approved")
         audit("agent.grant.revoked", actor, {"request_id": request_id})
+        return {"request": item}
+
+    @router.post("/agent/approval-requests", status_code=201)
+    async def request_approval_endpoint(body: ApprovalRequestIn,
+                                        x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "approval-request", 20)
+        try:
+            item = current("agent_grant_store").request_approval(
+                capability=body.capability, target=body.target, params=body.params,
+                tier=tier_for(body.capability), reason=body.reason,
+                created_by="agent", duration_seconds=body.duration_seconds)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        audit("agent.approval.requested", "agent",
+              {"request_id": item["id"], "capability": body.capability, "digest": item["digest"]})
+        broadcaster = optional("alert_broadcaster")
+        owner_id = str(optional("owner_user_id") or "")
+        if broadcaster is not None and owner_id:
+            try:
+                await broadcaster.notify_user(owner_id, {
+                    "type": "approval_request", "severity": "warning", "user_id": owner_id,
+                    "message": f"Freigabe noetig ({item['tier']}): {body.capability} {body.target}".strip(),
+                    "request_id": item["id"], "digest": item["digest"],
+                })
+            except Exception:  # noqa: BLE001 - notification must never break the request
+                pass
+        return {"request": item}
+
+    @router.get("/agent/approval-requests/{request_id}")
+    def approval_status(request_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "approval-status", 60)
+        item = current("agent_grant_store").get_approval(request_id)
+        if item is None:
+            raise HTTPException(404, "request not found")
+        return {"request": item}
+
+    @router.get("/admin/approval-requests")
+    def list_approvals(status: str | None = "pending", x_jarvis_session: str | None = Header(default=None)):
+        owner(x_jarvis_session)
+        return {"requests": current("agent_grant_store").list_approvals(status=status)}
+
+    @router.post("/admin/approval-requests/{request_id}/decide")
+    def decide_approval(request_id: str, body: ApprovalDecision,
+                        x_jarvis_session: str | None = Header(default=None)):
+        actor = owner(x_jarvis_session)
+        item = current("agent_grant_store").decide_approval(
+            request_id, actor=actor, approve=body.approve, channel="admin",
+            always=body.always, grant_store=current("agent_grant_store"))
+        if item is None:
+            raise HTTPException(409, "request missing, expired, or already decided")
+        audit("agent.approval.decided", actor,
+              {"request_id": request_id, "approved": body.approve, "always": body.always})
         return {"request": item}
 
     @router.get("/admin/standing-grants")
