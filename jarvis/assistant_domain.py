@@ -8,6 +8,7 @@ import operator as _operator
 import os
 import platform
 import re
+from .untrusted import wrap_untrusted
 import secrets
 import socket
 import ssl as _ssl
@@ -3138,14 +3139,18 @@ def rag_needs_smart_llm(text: str) -> bool:
     )
 
 
+def format_rag_context(hits: list[dict], limit: int = 8) -> str:
+    """RAG-Treffer als markierte, unvertraute Daten (Abschnitt 3.4)."""
+    lines = [
+        f"[{index}] source={hit.get('source','')} title={hit.get('title','')} text={hit.get('text','')}"
+        for index, hit in enumerate(hits[:limit], start=1)
+    ]
+    return wrap_untrusted("rag", "\n".join(lines))
+
+
 def rag_llm_answer(user_text: str, hits: list[dict], *, get_provider, get_gemini, get_openai) -> str:
     provider = get_provider()
-    context_lines = []
-    for index, hit in enumerate(hits[:8], start=1):
-        context_lines.append(
-            f"[{index}] source={hit.get('source','')} title={hit.get('title','')} text={hit.get('text','')}"
-        )
-    context_blob = "\n".join(context_lines)
+    context_blob = format_rag_context(hits)
 
     prompt = (
         "You are J.A.R.V.I.S. Use only the provided RAG context. "
