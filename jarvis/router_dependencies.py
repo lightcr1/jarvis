@@ -217,6 +217,7 @@ def build_agent_monitor_deps(state: object) -> dict:
 
 def build_agent_grants_deps(state: object) -> dict:
     import os
+    from .api_alerts import get_alert_broadcaster
     return {
         "agent_grant_store": live_attr(state, "agent_grant_store"),
         "patch_review_store": live_attr(state, "patch_review_store"),
@@ -230,6 +231,7 @@ def build_agent_grants_deps(state: object) -> dict:
         "searxng_url": os.getenv("JARVIS_SEARXNG_URL", ""),
         "owner_user_id": os.getenv("JARVIS_OWNER_USER_ID", "").strip(),
         "email_service": live_attr(state, "email_service"),
+        "alert_broadcaster": get_alert_broadcaster(),
     }
 
 
