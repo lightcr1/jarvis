@@ -66,11 +66,13 @@ DEFAULT_CONFIG: dict[str, str] = {
     "COOLDOWN_SECONDS": "150",      # short pause between normal rounds
     "USER_BUSY_SECONDS": "90",      # <-> owner interaction counts as busy
     "HEARTBEAT_INTERVAL": "60",
-    "MAX_ITERATIONS": "120",        # bound a single round
+    "MAX_ITERATIONS": "120",        # Fallback, wenn keine Aufgabengroesse bekannt
+    "MAX_ITERATIONS_SMALL": "40",
+    "MAX_ITERATIONS_MEDIUM": "80",
     "MAX_PARALLEL_ROUNDS": "2",     # max. gleichzeitige Autonomie-Runden
     "KEEP_FINISHED_CONVERSATIONS": "10",
     "WORKTREE_MAX_AGE_SECONDS": str(24 * 3600),
-    "CONDENSER_MAX_SIZE": "200",
+    "CONDENSER_MAX_SIZE": "60",      # Events; bei 32k-Kontext deutlich frueher als 200
     "CONDENSER_KEEP_FIRST": "2",
     "CONTROLLER_CA_FILE": "",       # leer = CERT_NONE-Fallback mit Warnung
 }
@@ -121,6 +123,8 @@ COOLDOWN_SECONDS = int(_config["COOLDOWN_SECONDS"])
 USER_BUSY_SECONDS = int(_config["USER_BUSY_SECONDS"])
 HEARTBEAT_INTERVAL = int(_config["HEARTBEAT_INTERVAL"])
 MAX_ITERATIONS = int(_config["MAX_ITERATIONS"])
+MAX_ITERATIONS_SMALL = int(_config["MAX_ITERATIONS_SMALL"])
+MAX_ITERATIONS_MEDIUM = int(_config["MAX_ITERATIONS_MEDIUM"])
 MAX_PARALLEL_ROUNDS = int(_config["MAX_PARALLEL_ROUNDS"])
 KEEP_FINISHED_CONVERSATIONS = int(_config["KEEP_FINISHED_CONVERSATIONS"])
 WORKTREE_MAX_AGE_SECONDS = int(_config["WORKTREE_MAX_AGE_SECONDS"])
@@ -142,6 +146,15 @@ def log(message: str) -> None:
     except OSError:
         pass
     print(line, file=sys.stderr)
+
+
+def iterations_for_size(size: str | None) -> int:
+    """Iterationsbudget pro Aufgabengroesse (siehe Backlog 3.1)."""
+    if size == "small":
+        return MAX_ITERATIONS_SMALL
+    if size == "medium":
+        return MAX_ITERATIONS_MEDIUM
+    return MAX_ITERATIONS
 
 
 def warn_if_insecure_tls() -> None:
@@ -606,7 +619,8 @@ def round_prompt(kind: str, idle_stop_minutes: int, owner_ideas: list[dict[str, 
 
 
 def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: int,
-                owner_ideas: list[dict[str, str]] | None = None, focus: str = "engineering") -> str | None:
+                owner_ideas: list[dict[str, str]] | None = None, focus: str = "engineering",
+                max_iterations: int | None = None) -> str | None:
     payload = {
         "workspace": {"working_dir": WORKSPACE_REPO, "kind": "LocalWorkspace"},
         "worktree": True,
@@ -638,7 +652,7 @@ def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: in
                 {"name": "task_tracker", "params": {}},
             ],
         },
-        "max_iterations": MAX_ITERATIONS,
+        "max_iterations": max_iterations or MAX_ITERATIONS,
         "confirmation_policy": {"kind": "NeverConfirm"},
         "initial_message": {
             "role": "user",

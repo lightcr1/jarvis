@@ -440,3 +440,28 @@ def test_round_prompt_references_compact_context():
     assert "docs/agent/CONTEXT.md" in prompt
     assert "docs/agent/areas/" in prompt
     assert "NIEMALS komplett" in prompt
+
+
+# ---------------------------------------------------------------------------
+# 2.2 Condenser- und Iterationsbudget
+# ---------------------------------------------------------------------------
+
+
+def test_iterations_for_size():
+    assert loop.iterations_for_size("small") == loop.MAX_ITERATIONS_SMALL
+    assert loop.iterations_for_size("medium") == loop.MAX_ITERATIONS_MEDIUM
+    assert loop.iterations_for_size(None) == loop.MAX_ITERATIONS
+    assert loop.iterations_for_size("unknown") == loop.MAX_ITERATIONS
+    assert loop.MAX_ITERATIONS_SMALL < loop.MAX_ITERATIONS_MEDIUM
+
+
+def test_start_round_accepts_explicit_iteration_budget(monkeypatch):
+    captured = {}
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        captured.update(body or {})
+        return {"status": 201, "data": {"id": "fake"}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    assert loop.start_round("api", "model", "round", 30, max_iterations=40) == "fake"
+    assert captured["max_iterations"] == 40
