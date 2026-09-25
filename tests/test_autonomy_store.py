@@ -41,3 +41,12 @@ def test_policy_roundtrip_and_validation(tmp_path):
     # set_mode erhaelt die Policy-Felder.
     store.set_mode(True, actor="owner")
     assert store.policy()["max_gpu_hours_per_day"] == 6
+
+
+def test_policy_supports_gpu_cost(tmp_path):
+    store = AutonomyStore(tmp_path / "autonomy.json")
+    status = store.set_policy(actor="owner", gpu_cost_per_hour=0.44)
+    assert status["gpu_cost_per_hour"] == 0.44
+    assert store.policy()["gpu_cost_per_hour"] == 0.44
+    with pytest.raises(ValueError):
+        store.set_policy(actor="owner", gpu_cost_per_hour=-1)

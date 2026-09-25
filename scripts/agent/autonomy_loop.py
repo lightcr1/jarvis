@@ -196,6 +196,17 @@ def _round_seconds(started_at: str | None) -> float:
     return max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
 
 
+def _gpu_rate() -> float:
+    """GPU-Preis aus config/autonomy.json, sonst Env-Default GPU_COST_PER_HOUR."""
+    rate = autonomy_policy().get("gpu_cost_per_hour")
+    if rate is None:
+        return GPU_COST_PER_HOUR
+    try:
+        return max(0.0, float(rate))
+    except (TypeError, ValueError):
+        return GPU_COST_PER_HOUR
+
+
 def _iso_epoch(value: str | None) -> int | None:
     if not value:
         return None
@@ -313,6 +324,7 @@ def autonomy_policy() -> dict:
         "max_gpu_hours_per_day": cfg.get("max_gpu_hours_per_day"),
         "allowed_windows": cfg.get("allowed_windows") or [],
         "max_rounds_per_pod_session": cfg.get("max_rounds_per_pod_session"),
+        "gpu_cost_per_hour": cfg.get("gpu_cost_per_hour"),
     }
 
 
@@ -905,7 +917,7 @@ def close_round(state: dict, api_key: str, control_token: str, session_id: str,
             "gpu_seconds": round(duration, 1),
             "prompt_tokens": int((round_usage or {}).get("prompt_tokens", 0)),
             "completion_tokens": int((round_usage or {}).get("completion_tokens", 0)),
-            "cost_estimate": round(duration / 3600 * GPU_COST_PER_HOUR, 5),
+            "cost_estimate": round(duration / 3600 * _gpu_rate(), 5),
             "status": str(kind),
         })
     state["last_kind"] = kind

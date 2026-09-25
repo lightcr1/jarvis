@@ -1,0 +1,12 @@
+# Compose-Override fuer die containerisierte Jarvis-App.
+#
+# Teilt config/autonomy.json zwischen der App und dem Host-Autonomy-Loop:
+# der Loop liest genau diesen Host-Pfad (AUTONOMY_SWITCH). So wirken der
+# Autonomy-Schalter sowie Budgets, Zeitfenster und GPU-Kosten aus der Admin-UI
+# sofort im Loop. Host-Pfad per JARVIS_AUTONOMY_FILE_HOST ueberschreibbar.
+services:
+  jarvis:
+    environment:
+      JARVIS_AUTONOMY_FILE: /var/lib/jarvis/autonomy.json
+    volumes:
+      - ${JARVIS_AUTONOMY_FILE_HOST:-../config/autonomy.json}:/var/lib/jarvis/autonomy.json
