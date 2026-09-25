@@ -26,8 +26,15 @@ ALLOWED="$ALLOWED" "${PYTHON:-python3}" -c '
 import json, os, sys
 networks = json.load(sys.stdin) if not sys.stdin.isatty() else {}
 allowed = {item.strip() for item in os.environ["ALLOWED"].split(",") if item.strip()}
+
+
+def matches(name, allowed):
+    # Docker prefixet Netzwerke mit dem Compose-Projekt (z. B. openhands_agent-isolated).
+    return any(name == entry or name.endswith("_" + entry) for entry in allowed)
+
+
 names = sorted(networks.keys())
-extra = [name for name in names if name not in allowed]
+extra = [name for name in names if not matches(name, allowed)]
 print(f"Netzwerke: {names} | erlaubt: {sorted(allowed)}")
 if extra:
     print(f"VERLETZUNG: unerwartete Netzwerke: {extra}", file=sys.stderr)
