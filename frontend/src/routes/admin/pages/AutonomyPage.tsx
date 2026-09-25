@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from "react";
-import { fetchAutonomyStatus, updateAutonomyStatus, fetchAgentGrants, decideAgentGrant, revokeAgentGrant, fetchAgentIdeas, submitOwnerIdea, reviewAgentIdea, fetchAgentActions, decideAgentAction, fetchAgentProjects, decideAgentProject, revokeAgentProject, type AgentIdea, type AgentProject, type AgentOneTimeAction, type AgentGrantRequest, type AutonomyStatus } from "../../../shared/api/admin";
+import { fetchAutonomyStatus, updateAutonomyStatus, fetchAgentGrants, decideAgentGrant, revokeAgentGrant, fetchAgentIdeas, submitOwnerIdea, reviewAgentIdea, fetchAgentActions, decideAgentAction, fetchAgentProjects, decideAgentProject, revokeAgentProject, type AgentIdea, type AgentProject, type AgentOneTimeAction, type AgentGrantRequest, type AutonomyStatus, fetchStandingGrants, createStandingGrant, revokeStandingGrant, fetchCapabilities, type StandingGrant, type CapabilityInfo } from "../../../shared/api/admin";
 import { useJ } from "../../../screens/jarvis-shared";
 
 export function AutonomyPage() {
@@ -19,6 +19,12 @@ export function AutonomyPage() {
   const [gpuCost, setGpuCost] = useState("");
   const [windows, setWindows] = useState("");
   const [maxRounds, setMaxRounds] = useState("");
+  const [standingGrants, setStandingGrants] = useState<StandingGrant[]>([]);
+  const [capabilities, setCapabilities] = useState<CapabilityInfo[]>([]);
+  const [grantCapability, setGrantCapability] = useState("");
+  const [grantTarget, setGrantTarget] = useState("*");
+  const [grantTier, setGrantTier] = useState("T2");
+  const [grantMsg, setGrantMsg] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
@@ -38,9 +44,40 @@ export function AutonomyPage() {
     }
   }, []);
 
+  const loadGrants = useCallback(async () => {
+    try {
+      const [g, c] = await Promise.all([fetchStandingGrants(), fetchCapabilities()]);
+      setStandingGrants(g.grants);
+      setCapabilities(c.capabilities);
+    } catch { /* Freigabe-Kern noch nicht erreichbar */ }
+  }, []);
+
   useEffect(() => {
     void load();
-  }, [load]);
+    void loadGrants();
+  }, [load, loadGrants]);
+
+  const addGrant = useCallback(async () => {
+    setGrantMsg("");
+    try {
+      await createStandingGrant(grantCapability.trim(), grantTarget.trim() || "*", grantTier);
+      setGrantCapability("");
+      setGrantMsg("Stehende Freigabe angelegt.");
+      void loadGrants();
+    } catch (e) {
+      setGrantMsg(`Fehler: ${e instanceof Error ? e.message : "anlegen fehlgeschlagen"}`);
+    }
+  }, [grantCapability, grantTarget, grantTier, loadGrants]);
+
+  const removeGrant = useCallback(async (id: string) => {
+    setGrantMsg("");
+    try {
+      await revokeStandingGrant(id);
+      void loadGrants();
+    } catch (e) {
+      setGrantMsg(`Fehler: ${e instanceof Error ? e.message : "widerrufen fehlgeschlagen"}`);
+    }
+  }, [loadGrants]);
 
   const refreshGrants = useCallback(async () => {
     try {
@@ -239,6 +276,49 @@ export function AutonomyPage() {
           style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, cursor: "pointer", fontSize: 13 }}>
           Budget speichern
         </button>
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Stehende Freigaben (T1/T2)</div>
+        <p style={{ color: J.textMuted, fontSize: 12, margin: "0 0 8px" }}>
+          „Immer erlauben für …“: deckt genau diese Capability/Ziel ab, ist jederzeit widerrufbar.
+          T3 (Geld, E-Mail raus, Löschen, Rechte, Pod-Kosten) ist nie per stehender Freigabe erlaubt.
+        </p>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <input list="capability-list" value={grantCapability} onChange={(e) => setGrantCapability(e.target.value)}
+            placeholder="Capability, z. B. service.restart"
+            style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, width: 240 }} />
+          <datalist id="capability-list">
+            {capabilities.map((c) => <option key={c.name} value={c.name}>{c.tier}{c.description ? ` — ${c.description}` : ""}</option>)}
+          </datalist>
+          <input value={grantTarget} onChange={(e) => setGrantTarget(e.target.value)}
+            placeholder="Zielmuster, z. B. jarvis*"
+            style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, width: 180 }} />
+          <select value={grantTier} onChange={(e) => setGrantTier(e.target.value)}
+            style={{ padding: "6px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text }}>
+            <option value="T1">T1</option>
+            <option value="T2">T2</option>
+          </select>
+          <button disabled={saving || !grantCapability.trim()} onClick={() => void addGrant()}
+            style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, cursor: "pointer", fontSize: 13 }}>
+            Freigabe anlegen
+          </button>
+        </div>
+        {grantMsg && <div style={{ fontSize: 12, color: J.textMuted, marginBottom: 6 }}>{grantMsg}</div>}
+        {standingGrants.length === 0 && <p style={{ color: J.textMuted, fontSize: 13 }}>Noch keine stehenden Freigaben.</p>}
+        {standingGrants.map((g) => (
+          <div key={g.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: `1px solid ${J.border}`, fontSize: 13 }}>
+            <span>
+              <b>{g.capability}</b> · Ziel {g.target_pattern} · {g.tier} · {g.status} · {g.uses}× genutzt
+            </span>
+            {g.status === "approved" && (
+              <button onClick={() => void removeGrant(g.id)}
+                style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: "#b83232", color: "#fff", cursor: "pointer", fontSize: 12 }}>
+                Widerrufen
+              </button>
+            )}
+          </div>
+        ))}
       </div>
 
       <div style={card}>
