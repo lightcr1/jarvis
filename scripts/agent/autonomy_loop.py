@@ -73,6 +73,7 @@ DEFAULT_CONFIG: dict[str, str] = {
     "MAX_ITERATIONS_MEDIUM": "80",
     "MAX_PARALLEL_ROUNDS": "2",     # max. gleichzeitige Autonomie-Runden
     "KEEP_FINISHED_CONVERSATIONS": "10",
+    "STUCK_CYCLES": "10",           # aufeinanderfolgende Zyklen ohne Session-Update
     "WORKTREE_MAX_AGE_SECONDS": str(24 * 3600),
     "CONDENSER_MAX_SIZE": "60",      # Events; bei 32k-Kontext deutlich frueher als 200
     "CONDENSER_KEEP_FIRST": "2",
@@ -129,6 +130,7 @@ MAX_ITERATIONS_SMALL = int(_config["MAX_ITERATIONS_SMALL"])
 MAX_ITERATIONS_MEDIUM = int(_config["MAX_ITERATIONS_MEDIUM"])
 MAX_PARALLEL_ROUNDS = int(_config["MAX_PARALLEL_ROUNDS"])
 KEEP_FINISHED_CONVERSATIONS = int(_config["KEEP_FINISHED_CONVERSATIONS"])
+STUCK_CYCLES = int(_config["STUCK_CYCLES"])
 WORKTREE_MAX_AGE_SECONDS = int(_config["WORKTREE_MAX_AGE_SECONDS"])
 CONDENSER_MAX_SIZE = int(_config["CONDENSER_MAX_SIZE"])
 CONDENSER_KEEP_FIRST = int(_config["CONDENSER_KEEP_FIRST"])
@@ -399,6 +401,24 @@ def resume_conversation(api_key: str, conv_id: str) -> bool:
     result = http("POST", f"{OPENHANDS_BASE}/api/conversations/{conv_id}/run",
                   headers={"X-Session-API-Key": api_key}, body={})
     return result["status"] in (200, 202)
+
+
+def interrupt_conversation(api_key: str, conv_id: str) -> bool:
+    """Cancel the in-flight request instantly (used for stuck rounds)."""
+    result = http("POST", f"{OPENHANDS_BASE}/api/conversations/{conv_id}/interrupt",
+                  headers={"X-Session-API-Key": api_key}, body={})
+    return result["status"] in (200, 202)
+
+
+def track_stuck(meta: dict, session: dict) -> bool:
+    """True if a running session made no progress for STUCK_CYCLES cycles (4.4)."""
+    updated = str(session.get("updated_at") or session.get("created_at") or "")
+    if meta.get("last_seen_updated_at") != updated:
+        meta["last_seen_updated_at"] = updated
+        meta["stuck_cycles"] = 0
+        return False
+    meta["stuck_cycles"] = int(meta.get("stuck_cycles", 0)) + 1
+    return meta["stuck_cycles"] >= STUCK_CYCLES
 
 
 def delete_conversation(api_key: str, conv_id: str) -> None:
@@ -887,6 +907,15 @@ def main() -> int:
                     meta["paused"] = True
                 save_state(state)
             else:
+                if track_stuck(meta, actual):
+                    log(f"Runde {str(session_id_key)[:8]} haengt (keine Fortschritte) - Abbruch")
+                    interrupt_conversation(api_key, str(session_id_key))
+                    ensure_round_report(env.get("JARVIS_AGENT_REQUEST_TOKEN"), meta.get("task_id"),
+                                        str(meta.get("round_id") or session_id_key),
+                                        summary="Runde haengt (Stuck-Erkennung des Loops).")
+                    close_round(state, api_key, control["control"], str(session_id_key),
+                                str(meta.get("kind") or "round"))
+                    continue
                 # Runde am Leben halten (alle aktiven bekommen Heartbeat).
                 heartbeat(control["control"])
                 save_state(state)

@@ -562,3 +562,61 @@ def test_main_claims_task_and_records_meta(tmp_path, monkeypatch):
     meta = state["active_sessions"]["conv-1"]
     assert meta["task_id"] == "t1"
     assert meta["round_id"] == captured["round_id"]
+
+
+# ---------------------------------------------------------------------------
+# 4.4 Haenger-Erkennung
+# ---------------------------------------------------------------------------
+
+
+def test_track_stuck_resets_on_progress():
+    meta = {}
+    assert loop.track_stuck(meta, {"updated_at": "t1"}) is False
+    assert loop.track_stuck(meta, {"updated_at": "t1"}) is False
+    assert meta["stuck_cycles"] == 1
+    assert loop.track_stuck(meta, {"updated_at": "t2"}) is False
+    assert meta["stuck_cycles"] == 0
+
+
+def test_track_stuck_after_cycles():
+    meta = {}
+    assert loop.track_stuck(meta, {"updated_at": "same"}) is False  # erste Beobachtung
+    stuck = False
+    for _ in range(loop.STUCK_CYCLES):
+        stuck = loop.track_stuck(meta, {"updated_at": "same"})
+    assert stuck is True
+
+
+def test_main_interrupts_stuck_round(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "_parse_env", lambda _: {
+        "CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake",
+        "JARVIS_AGENT_REQUEST_TOKEN": "agent",
+    })
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING", "pod-1"))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 200})
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: [{
+        "id": "sess-stuck", "execution_status": "running", "updated_at": "same",
+        "tags": {"kind": "autonomy", "focus": "engineering"},
+    }])
+    monkeypatch.setattr(loop, "MAX_PARALLEL_ROUNDS", 1)
+    monkeypatch.setattr(loop, "heartbeat", lambda _: None)
+    interrupted = []
+    monkeypatch.setattr(loop, "interrupt_conversation",
+                        lambda api, cid: interrupted.append(cid) or True)
+    monkeypatch.setattr(loop, "ensure_round_report", lambda *a, **k: None)
+    monkeypatch.setattr(loop, "start_round", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("kein neuer Start nach Stuck")))
+    _write_state(loop.STATE_PATH, {
+        "pod_id": "pod-1", "wrapup_done": False,
+        "active_sessions": {"sess-stuck": {
+            "kind": "round", "paused": False, "focus": "engineering",
+            "last_seen_updated_at": "same", "stuck_cycles": loop.STUCK_CYCLES - 1,
+        }},
+    })
+
+    assert loop.main() == 0
+    assert interrupted == ["sess-stuck"]
+    state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
+    assert "sess-stuck" not in state["active_sessions"]

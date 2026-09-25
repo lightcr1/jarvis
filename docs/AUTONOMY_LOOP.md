@@ -108,7 +108,9 @@ Agent darf nur ueber `scripts/agent/jarvis_gateway.py propose-task` vorschlagen
 Nach `MAX_TASK_ATTEMPTS=3` erfolglosen Versuchen wird eine Aufgabe `blocked`.
 Ein leerer Backlog startet eine Discovery-Runde (maximal 3 Vorschlaege, keine
 Codeaenderung). Der Loop reicht die letzte Uebergabenotiz mit und erzeugt bei
-fehlendem Bericht einen Minimalbericht (`outcome=unknown`).
+fehlendem Bericht einen Minimalbericht (`outcome=unknown`). Runden ohne
+Session-Fortschritt ueber `STUCK_CYCLES` Zyklen werden abgebrochen (Interrupt +
+Bericht).
 
 Neue Gateway-Pfade (`/jarvis-agent/tasks…`) sind im Inference-Gateway nur fuer
 `next`, `claim`, `report` und den Vorschlag freigegeben; die Aenderung an
