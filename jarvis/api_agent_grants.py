@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 from .router_dependencies import LiveRef
 from .rate_limiter import _rate as _rate_limiter
 from .jarvis_engine import emergency_stop_enabled
-from .research_gateway import ResearchError, search_web
+from .research_gateway import ResearchError, search_searxng, search_web
 from .github_gateway import GithubGatewayError, canonical_repo, create_agent_branch, create_pull_request, public_repository_metadata, submit_patch, write_branch_file
 
 
@@ -222,7 +222,12 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
             raise HTTPException(403, "approved research project required")
         if not store.consume_research_quota(body.project_target):
             raise HTTPException(429, "daily research quota reached")
-        try: results = search_web(body.query, current("web_search_token"), limit=body.limit)
+        provider = str(optional("search_provider") or "brave").strip().lower()
+        try:
+            if provider == "searxng":
+                results = search_searxng(body.query, optional("searxng_url") or "", limit=body.limit)
+            else:
+                results = search_web(body.query, current("web_search_token"), limit=body.limit)
         except ResearchError as exc: raise HTTPException(502, str(exc)) from exc
         audit("agent.research.searched", "agent", {"project_target": body.project_target, "query_length": len(body.query), "result_count": len(results)})
         return {"results": results, "untrusted": True}
