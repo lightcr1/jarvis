@@ -3,10 +3,11 @@ from __future__ import annotations
 import json
 
 from .tool_registry import ToolExecutionContext, execute_tool
+from .untrusted import wrap_untrusted
 
 
 def _append_tool_exchange(provider: str, convo: list[dict], call, tool_result: dict) -> list[dict]:
-    payload = json.dumps(tool_result.get("data", {}))
+    payload = wrap_untrusted("tool", json.dumps(tool_result.get("data", {})))
     if provider == "anthropic":
         return convo + [
             {"role": "assistant", "content": [{"type": "tool_use", "id": call.id, "name": call.name, "input": call.arguments}]},
@@ -72,6 +73,9 @@ def run_chat_with_tools(
                 audit_log=audit_log, membership_store=membership_store, permission_store=permission_store,
                 agent_grant_store=ctx.deps.get("agent_grant_store"),
             )
+        # Tool-Ausgaben sind unvertraute Daten: ab jetzt T2-Aktionen eskalieren.
+        if isinstance(ctx.deps, dict):
+            ctx.deps["untrusted_context"] = True
         if (tool_result.get("data") or {}).get("route") == "tool_confirmation_required":
             # Don't feed a confirmation prompt back into the LLM as a tool result —
             # surface it as the turn's final reply and let the confirm/deny round-trip
