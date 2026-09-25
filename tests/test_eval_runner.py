@@ -78,3 +78,17 @@ def test_run_tasks_skips_check_for_unfinished_round():
     )
     assert report["successes"] == 0
     assert checked == []
+
+
+def test_eval_gate_detects_regression():
+    gate = module.compare_to_baseline({"success_rate": 0.8, "total_tokens": 1000},
+                                      {"success_rate": 1.0, "total_tokens": 1000})
+    assert gate["passed"] is False
+    assert any("success_rate" in r for r in gate["regressions"])
+    assert gate["success_rate_delta"] == -0.2
+
+
+def test_eval_gate_passes_and_respects_token_tolerance():
+    base = {"success_rate": 0.8, "total_tokens": 1000}
+    assert module.compare_to_baseline({"success_rate": 0.9, "total_tokens": 1050}, base)["passed"]
+    assert not module.compare_to_baseline({"success_rate": 0.9, "total_tokens": 1200}, base)["passed"]
