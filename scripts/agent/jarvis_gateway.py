@@ -32,6 +32,7 @@ def main() -> int:
     meta = sub.add_parser("repo-metadata"); meta.add_argument("repository")
     branch = sub.add_parser("create-branch"); branch.add_argument("repository"); branch.add_argument("branch"); branch.add_argument("base")
     write = sub.add_parser("write-file"); write.add_argument("repository"); write.add_argument("path"); write.add_argument("branch"); write.add_argument("local_file"); write.add_argument("message")
+    patch = sub.add_parser("submit-patch"); patch.add_argument("repository"); patch.add_argument("branch"); patch.add_argument("base"); patch.add_argument("patchfile"); patch.add_argument("message")
     email = sub.add_parser("request-email"); email.add_argument("to"); email.add_argument("subject"); email.add_argument("body")
     pr = sub.add_parser("request-pr"); pr.add_argument("repository"); pr.add_argument("title"); pr.add_argument("body"); pr.add_argument("head"); pr.add_argument("base")
     execute = sub.add_parser("execute-action"); execute.add_argument("id")
@@ -53,6 +54,10 @@ def main() -> int:
     elif cmd == "write-file":
         owner, repo = args.repository.split("/", 1); content = open(args.local_file, encoding="utf-8").read()
         result = call("PUT", f"/repositories/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}/files", {"path": args.path, "branch": args.branch, "content": content, "message": args.message})
+    elif cmd == "submit-patch":
+        owner, repo = args.repository.split("/", 1)
+        patch_text = open(args.patchfile, encoding="utf-8").read()
+        result = call("POST", f"/repositories/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}/patches", {"branch": args.branch, "base": args.base, "patch": patch_text, "message": args.message})
     elif cmd == "request-email": result = call("POST", "/actions/email-send", {"to": args.to, "subject": args.subject, "body": args.body})
     elif cmd == "request-pr": result = call("POST", "/actions/github-pull-request", values)
     elif cmd == "task-next":

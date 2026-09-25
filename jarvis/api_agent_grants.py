@@ -11,7 +11,7 @@ from .router_dependencies import LiveRef
 from .rate_limiter import _rate as _rate_limiter
 from .jarvis_engine import emergency_stop_enabled
 from .research_gateway import ResearchError, search_web
-from .github_gateway import GithubGatewayError, canonical_repo, create_agent_branch, create_pull_request, public_repository_metadata, write_branch_file
+from .github_gateway import GithubGatewayError, canonical_repo, create_agent_branch, create_pull_request, public_repository_metadata, submit_patch, write_branch_file
 
 
 class GrantRequest(BaseModel):
@@ -64,6 +64,13 @@ class BranchFileWrite(BaseModel):
     path: str = Field(max_length=300)
     branch: str = Field(max_length=200)
     content: str = Field(max_length=262144)
+    message: str = Field(max_length=200)
+
+
+class PatchSubmit(BaseModel):
+    branch: str = Field(max_length=200)
+    base: str = Field(default="dev", max_length=200)
+    patch: str = Field(max_length=1024 * 1024)
     message: str = Field(max_length=200)
 
 
@@ -275,6 +282,28 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         try: result = write_branch_file(repo_owner, repo_name, token=current("github_write_token"), **body.model_dump())
         except GithubGatewayError as exc: raise HTTPException(502, str(exc)) from exc
         audit("agent.repository.file_written", "agent", {"repository": target, "path": body.path, "branch": body.branch, "commit": result["commit"]})
+        return {"result": result}
+
+    @router.post("/agent/repositories/{repo_owner}/{repo_name}/patches", status_code=201)
+    def submit_repository_patch(repo_owner: str, repo_name: str, body: PatchSubmit,
+                                x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "patch-submit", 5)
+        require_operational()
+        try: target = canonical_repo(repo_owner, repo_name)
+        except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
+        if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="write"):
+            raise HTTPException(403, "approved project operation required")
+        try:
+            payload = body.model_dump()
+            payload["patch_text"] = payload.pop("patch")
+            result = submit_patch(repo_owner, repo_name, token=current("github_write_token"), **payload)
+        except GithubGatewayError as exc:
+            message = str(exc)
+            status = 403 if ("protected path" in message or "denied path" in message) else 422
+            raise HTTPException(status, message) from exc
+        audit("agent.repository.patch_submitted", "agent",
+              {"repository": target, "branch": body.branch, "commit": result["commit"], "paths": result["paths"]})
         return {"result": result}
 
     @router.post("/agent/actions/github-pull-request", status_code=201)
