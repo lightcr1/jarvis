@@ -5,6 +5,7 @@ These tests never contact OpenHands or Runpod and never read host credentials.
 from __future__ import annotations
 
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -117,3 +118,98 @@ def test_round_prompt_contains_focus(monkeypatch):
     assert "Engineering" in prompt_eng
     assert "Ideen" in prompt_ideas
     assert "AGENTS.md" in prompt_eng and "AGENTS.md" in prompt_ideas
+
+
+def test_check_pod_model_ready_fallback_returns_no_pod_id(monkeypatch):
+    """B3: 502 am Status-Endpunkt + ready-Modell -> laufender Pod, pod_id None."""
+    def fake_http(method, url, headers=None, **kwargs):
+        if url.endswith("/api/status"):
+            return {"status": 502, "data": {"error": "bad gateway"}}
+        if url.endswith("/api/model/ready"):
+            return {"status": 200, "data": {"ready": True}}
+        raise AssertionError(f"unerwarteter Aufruf: {url}")
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    assert loop.check_pod("token") == (True, "RUNNING(model-ready)", None)
+
+
+def _write_state(path: Path, state: dict) -> None:
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+
+def test_model_ready_fallback_keeps_active_sessions_and_heartbeats(tmp_path, monkeypatch):
+    """B3: model-ready-Fallback (pod_id=None) darf laufende eigene Runden nicht
+    verwerfen; die Runde muss weiter Heartbeats senden."""
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "_parse_env", lambda _: {
+        "CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake",
+    })
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING(model-ready)", None))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 9999})
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: [{
+        "id": "sess-a", "execution_status": "running",
+        "tags": {"kind": "autonomy", "focus": "engineering"},
+    }])
+    monkeypatch.setattr(loop, "MAX_PARALLEL_ROUNDS", 1)
+    monkeypatch.setattr(loop, "start_round", lambda *_: (_ for _ in ()).throw(
+        AssertionError("laufende Runde belegt den Slot; kein neuer Start")))
+    beats: list[int] = []
+    monkeypatch.setattr(loop, "heartbeat", lambda _: beats.append(1))
+    _write_state(loop.STATE_PATH, {
+        "pod_id": "pod-1",
+        "active_sessions": {"sess-a": {"kind": "round", "paused": False, "focus": "engineering"}},
+        "wrapup_done": False,
+    })
+
+    assert loop.main() == 0
+    assert beats, "fuer die laufende eigene Runde muss ein Heartbeat gesendet werden"
+    state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
+    assert "sess-a" in state["active_sessions"]
+    assert state["pod_id"] == "pod-1"
+
+
+def test_tagged_unknown_session_is_adopted_not_foreign(tmp_path, monkeypatch):
+    """B3: eine getaggte Autonomie-Session, die dem State unbekannt ist, wird
+    adoptiert statt als fremde Aktivitaet gewertet."""
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "_parse_env", lambda _: {
+        "CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake",
+    })
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING", "pod-1"))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 9999})
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: [{
+        "id": "sess-x", "execution_status": "running",
+        "tags": ["kind:autonomy", "focus:ideas"],
+    }])
+    monkeypatch.setattr(loop, "MAX_PARALLEL_ROUNDS", 1)
+    monkeypatch.setattr(loop, "heartbeat", lambda _: None)
+    monkeypatch.setattr(loop, "start_round", lambda *_: (_ for _ in ()).throw(
+        AssertionError("adoptierte Runde belegt den Slot; kein neuer Start")))
+    _write_state(loop.STATE_PATH, {"pod_id": "pod-1", "active_sessions": {}, "wrapup_done": False})
+
+    assert loop.main() == 0
+    state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
+    assert state["active_sessions"]["sess-x"]["focus"] == "ideas"
+
+
+def test_foreign_session_still_blocks_new_round(tmp_path, monkeypatch):
+    """Nicht getaggte, laufende Sessions bleiben fremd und blockieren neue Runden."""
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "_parse_env", lambda _: {
+        "CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake",
+    })
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING", "pod-1"))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 9999})
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: [
+        {"id": "owner-conv", "execution_status": "running", "tags": {}},
+    ])
+    monkeypatch.setattr(loop, "start_round", lambda *_: (_ for _ in ()).throw(
+        AssertionError("fremde Session darf keinen neuen Start zulassen")))
+    _write_state(loop.STATE_PATH, {"pod_id": "pod-1", "active_sessions": {}, "wrapup_done": False})
+
+    assert loop.main() == 0
+    state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
+    assert "owner-conv" not in state["active_sessions"]
