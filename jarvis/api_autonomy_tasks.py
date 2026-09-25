@@ -136,6 +136,18 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
         except Exception:  # noqa: BLE001 - notification must never break the report
             pass
 
+    def post_to_chat(task: dict | None, text: str) -> None:
+        """7.2 Rueckkanal: Rundenbericht/Rueckfrage in den Ursprungs-Chat schreiben."""
+        history = deps.get("chat_history")
+        session_id = str((task or {}).get("origin_session_id") or "")
+        if history is None or not session_id or not text:
+            return
+        try:
+            history.append_message(session_id, "jarvis", text,
+                                   owner_user_id=str(deps.get("owner_user_id") or "") or None)
+        except Exception:  # noqa: BLE001 - Chat-Zustellung darf den Report nicht brechen
+            pass
+
     # ---- Admin ---------------------------------------------------------
 
     @router.get("/admin/autonomy/tasks")
@@ -341,8 +353,15 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         audit("agent.task.reported", "agent", {"task_id": task_id, "outcome": body.outcome})
+        task = store().get_task(task_id)
+        lines = [f"Autonomie-Runde ({body.outcome}): {body.summary}".strip()]
+        if body.next_step:
+            lines.append(f"Naechster Schritt: {body.next_step}")
+        if body.owner_question:
+            lines.append(f"Rueckfrage: {body.owner_question}")
+        post_to_chat(task, "\n".join(lines))
         if body.owner_question or body.outcome == "blocked":
             await notify_owner_question(task_id, body.owner_question or "Aufgabe blockiert")
-        return {"report": report, "task": store().get_task(task_id)}
+        return {"report": report, "task": task}
 
     return router
