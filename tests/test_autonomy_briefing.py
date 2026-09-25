@@ -56,3 +56,28 @@ def test_briefing_survives_broken_store():
     result = try_skill("briefing", **_kwargs(autonomy_task_store=_Broken()))
     assert result is not None
     assert "coding agent finished" not in result["reply"]
+
+
+def test_chat_assigns_task_to_agent_backlog(tmp_path):
+    from jarvis.autonomy_task_store import AutonomyTaskStore
+    store = AutonomyTaskStore(tmp_path / "tasks.sqlite3")
+    result = try_skill("gib dem Agenten die Aufgabe Tests reparieren",
+                       **_kwargs(autonomy_task_store=store))
+    assert result is not None
+    assert result["data"]["route"] == "agent_task"
+    tasks = store.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0]["source"] == "owner" and tasks[0]["status"] == "open"
+    assert "Tests reparieren" in tasks[0]["title"]
+
+
+def test_chat_assigns_task_english(tmp_path):
+    from jarvis.autonomy_task_store import AutonomyTaskStore
+    store = AutonomyTaskStore(tmp_path / "tasks.sqlite3")
+    result = try_skill("agent task: fix the failing tests",
+                       **_kwargs(autonomy_task_store=store))
+    assert result["data"]["task"]["title"] == "fix the failing tests"
+
+
+def test_chat_task_without_store_falls_through():
+    assert try_skill("agent task: fix the failing tests", **_kwargs()) is None
