@@ -244,6 +244,42 @@ def session_id_of(session: dict) -> str:
     return str(session.get("id") or session.get("conversation_id") or "")
 
 
+def session_tags(session: dict) -> dict[str, str]:
+    """Normalise OpenHands conversation tags to a plain string dict.
+
+    The canvas API may return tags as a dict, as a list of dicts or as a list
+    of ``key:value`` strings depending on version. Normalising here keeps the
+    autonomy detection robust across those shapes.
+    """
+    tags = session.get("tags")
+    result: dict[str, str] = {}
+    if isinstance(tags, dict):
+        for key, value in tags.items():
+            result[str(key)] = str(value)
+    elif isinstance(tags, list):
+        for item in tags:
+            if isinstance(item, dict):
+                if "key" in item:
+                    result[str(item.get("key"))] = str(item.get("value"))
+                else:
+                    for key, value in item.items():
+                        result[str(key)] = str(value)
+            elif isinstance(item, str) and ":" in item:
+                key, _, value = item.partition(":")
+                result[key.strip()] = value.strip()
+    return result
+
+
+def is_autonomy_session(session: dict) -> bool:
+    """True for conversations the autonomy loop started (tag kind=autonomy)."""
+    return session_tags(session).get("kind", "").lower() == "autonomy"
+
+
+def autonomy_session_focus(session: dict) -> str:
+    focus = session_tags(session).get("focus", "engineering").lower()
+    return focus if focus in ("engineering", "ideas") else "engineering"
+
+
 ACTIVE_STATUSES = {"running", "paused", "waiting_for_confirmation", "starting", "pending"}
 ENDED_STATUSES = {"finished", "error", "stuck", "deleting", "terminated"}
 
@@ -474,12 +510,18 @@ def main() -> int:
         save_state(state)
         return 0
 
-    if state.get("pod_id") != pod_id:
+    # Neuen Pod-Zyklus nur erkennen, wenn die Runpod-API eine konkrete, andere
+    # pod_id liefert. Der model-ready-Fallback (pod_id=None) darf laufende
+    # eigene Sessions nicht als fremd zuruecksetzen (B3).
+    if pod_id is not None and state.get("pod_id") != pod_id:
         log(f"Neuer Pod-Zyklus (pod_id={pod_id}) - Autonomie-Status zurueckgesetzt")
         state["pod_id"] = pod_id
         state["active_sessions"] = {}
         state["wrapup_done"] = False
         state["pod_stop_requested_at"] = None
+    elif pod_id is None:
+        # Ohne Runpod-API-Abruf die bisherige pod_id beibehalten.
+        pod_id = state.get("pod_id")
 
     activity = get_activity(control["control"])
     user_idle = activity["user_activity_age_s"] if activity else None
@@ -490,13 +532,26 @@ def main() -> int:
 
     sessions = openhands_sessions(api_key)
     sessions_by_id = {session_id_of(s): s for s in sessions}
-    active_by_session = {
-        str(sid): meta for sid, meta in active.items() if str(sid) in sessions_by_id
-    }
-    foreign_active = [
-        s for s in sessions
-        if session_id_of(s) not in active and session_execution_status(s) in ACTIVE_STATUSES
-    ]
+    foreign_active: list[dict] = []
+    for session in sessions:
+        sid = session_id_of(session)
+        if not sid or sid in active:
+            continue
+        status = session_execution_status(session)
+        if status not in ACTIVE_STATUSES:
+            continue
+        if is_autonomy_session(session):
+            # Eigene, aber dem State unbekannte Runde (z.B. nach Loop-Neustart
+            # oder model-ready-Fallback) wieder adoptieren, statt sie faelschlich
+            # als fremde Aktivitaet zu behandeln (B3).
+            log(f"Adoptiere getaggte Autonomie-Session {sid[:8]} ({status})")
+            active[sid] = {
+                "kind": "round",
+                "paused": status == "paused",
+                "focus": autonomy_session_focus(session),
+            }
+            continue
+        foreign_active.append(session)
     user_busy = user_idle < USER_BUSY_SECONDS
 
     # ---- Eigene aktive Sessions einzeln verwalten ----
