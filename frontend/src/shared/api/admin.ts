@@ -490,12 +490,14 @@ export interface AutonomyStatus {
   max_gpu_hours_per_day?: number | null;
   allowed_windows?: string[];
   max_rounds_per_pod_session?: number | null;
+  gpu_cost_per_hour?: number | null;
 }
 
 export interface AutonomyPolicyInput {
   max_gpu_hours_per_day?: number;
   allowed_windows?: string[];
   max_rounds_per_pod_session?: number;
+  gpu_cost_per_hour?: number;
 }
 
 export function fetchAutonomyStatus() {

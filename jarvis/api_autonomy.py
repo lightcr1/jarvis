@@ -12,6 +12,7 @@ class AutonomyUpdate(BaseModel):
     max_gpu_hours_per_day: float | None = Field(default=None, gt=0, le=24 * 31)
     allowed_windows: list[str] | None = Field(default=None, max_length=24)
     max_rounds_per_pod_session: int | None = Field(default=None, ge=0, le=1000)
+    gpu_cost_per_hour: float | None = Field(default=None, ge=0, le=1000)
 
 
 def build_autonomy_router(deps: dict) -> APIRouter:
@@ -69,6 +70,7 @@ def build_autonomy_router(deps: dict) -> APIRouter:
                 max_gpu_hours_per_day=body.max_gpu_hours_per_day,
                 allowed_windows=body.allowed_windows,
                 max_rounds_per_pod_session=body.max_rounds_per_pod_session,
+                gpu_cost_per_hour=body.gpu_cost_per_hour,
             )
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
