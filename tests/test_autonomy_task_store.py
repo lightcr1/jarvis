@@ -192,3 +192,30 @@ def test_external_id_dedupe(tmp_path):
     task = store.create_task(title="Issue", source="issue", external_id="owner/repo#1")
     assert store.find_by_external("owner/repo#1")["id"] == task["id"]
     assert store.find_by_external("owner/repo#2") is None
+
+
+def test_round_metrics_record_and_aggregate(tmp_path):
+    store = _store(tmp_path)
+    store.record_metrics(round_id="r1", task_id="t1", gpu_seconds=3600,
+                         prompt_tokens=100, completion_tokens=50,
+                         cost_estimate=1.5, status="submitted")
+    store.record_metrics(round_id="r2", gpu_seconds=1800, prompt_tokens=40,
+                         completion_tokens=10, cost_estimate=0.75, status="done")
+    aggregate = store.aggregate_metrics(since=0)
+    assert aggregate["rounds"] == 2
+    assert aggregate["total_tokens"] == 200
+    assert aggregate["gpu_hours"] == 1.5
+    assert aggregate["submitted"] == 1
+    assert aggregate["tokens_per_submitted"] == 200
+    assert store.get_metrics("r1")["prompt_tokens"] == 100
+
+
+def test_round_metrics_upsert_and_since_filter(tmp_path):
+    clock = {"now": 1000}
+    store = AutonomyTaskStore(tmp_path / "tasks.sqlite3", clock=lambda: clock["now"])
+    store.record_metrics(round_id="r1", gpu_seconds=10)
+    clock["now"] = 5000
+    store.record_metrics(round_id="r1", gpu_seconds=20, prompt_tokens=5)
+    assert store.get_metrics("r1")["gpu_seconds"] == 20
+    assert store.aggregate_metrics(since=4000)["rounds"] == 1
+    assert store.aggregate_metrics(since=0)["rounds"] == 1

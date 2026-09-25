@@ -76,6 +76,12 @@ class AutonomyTaskStore:
                 created_at INTEGER NOT NULL
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS round_reports_task ON round_reports(task_id,created_at)")
+            db.execute("""CREATE TABLE IF NOT EXISTS round_metrics (
+                round_id TEXT PRIMARY KEY, task_id TEXT, started_at INTEGER, ended_at INTEGER,
+                gpu_seconds REAL NOT NULL, prompt_tokens INTEGER NOT NULL,
+                completion_tokens INTEGER NOT NULL, cost_estimate REAL NOT NULL,
+                status TEXT NOT NULL, created_at INTEGER NOT NULL
+            )""")
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=10)
@@ -354,7 +360,6 @@ class AutonomyTaskStore:
         return report
 
     def daily_summary(self, *, since: int | None = None, now: int | None = None) -> dict:
-        """Kurzer, TTS-tauglicher Report der letzten 24h (7.4)."""
         current = int(self.clock() if now is None else now)
         since = current - 24 * 3600 if since is None else int(since)
         with self._connect() as db:
@@ -369,4 +374,64 @@ class AutonomyTaskStore:
             "outcomes": outcomes,
             "latest": str(rows[0]["summary"]) if rows else "",
             "tasks_by_status": {row["status"]: int(row["c"]) for row in task_rows},
+        }
+
+    # -- round metrics (4.2) --------------------------------------------
+
+    def record_metrics(self, *, round_id: str, task_id: str | None = None,
+                       started_at: int | None = None, ended_at: int | None = None,
+                       gpu_seconds: float = 0.0, prompt_tokens: int = 0,
+                       completion_tokens: int = 0, cost_estimate: float = 0.0,
+                       status: str = "unknown") -> dict:
+        if not round_id:
+            raise ValueError("round_id required")
+        now = int(self.clock())
+        with self._connect() as db:
+            db.execute("""INSERT OR REPLACE INTO round_metrics
+                (round_id,task_id,started_at,ended_at,gpu_seconds,prompt_tokens,
+                 completion_tokens,cost_estimate,status,created_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?)""",
+                (round_id, task_id, started_at, ended_at, max(0.0, float(gpu_seconds)),
+                 max(0, int(prompt_tokens)), max(0, int(completion_tokens)),
+                 max(0.0, float(cost_estimate)), str(status), now))
+        return self.get_metrics(round_id)
+
+    def get_metrics(self, round_id: str) -> dict | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM round_metrics WHERE round_id=?", (round_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_metrics(self, *, limit: int = 100) -> list[dict]:
+        with self._connect() as db:
+            rows = db.execute("""SELECT * FROM round_metrics
+                ORDER BY created_at DESC, rowid DESC LIMIT ?""",
+                (max(1, min(limit, 500)),)).fetchall()
+        return [dict(row) for row in rows]
+
+    def aggregate_metrics(self, *, since: int | None = None) -> dict:
+        query = "SELECT * FROM round_metrics"
+        params: list = []
+        if since is not None:
+            query += " WHERE created_at>=?"
+            params.append(int(since))
+        with self._connect() as db:
+            rows = [dict(row) for row in db.execute(query, params).fetchall()]
+        gpu_seconds = sum(float(r["gpu_seconds"]) for r in rows)
+        prompt = sum(int(r["prompt_tokens"]) for r in rows)
+        completion = sum(int(r["completion_tokens"]) for r in rows)
+        cost = sum(float(r["cost_estimate"]) for r in rows)
+        submitted = sum(1 for r in rows if r["status"] == "submitted")
+        return {
+            "rounds": len(rows),
+            "gpu_seconds": round(gpu_seconds, 1),
+            "gpu_hours": round(gpu_seconds / 3600, 3),
+            "prompt_tokens": prompt,
+            "completion_tokens": completion,
+            "total_tokens": prompt + completion,
+            "cost_estimate": round(cost, 4),
+            "submitted": submitted,
+            "tokens_per_submitted": (round((prompt + completion) / submitted)
+                                     if submitted else None),
+            "patches_per_gpu_hour": (round(submitted / (gpu_seconds / 3600))
+                                     if gpu_seconds > 0 else None),
         }
