@@ -620,3 +620,21 @@ def test_main_interrupts_stuck_round(tmp_path, monkeypatch):
     assert interrupted == ["sess-stuck"]
     state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
     assert "sess-stuck" not in state["active_sessions"]
+
+
+# ---------------------------------------------------------------------------
+# 1.4 Umgebungsbeschreibung gemaess Netzwerkmodus
+# ---------------------------------------------------------------------------
+
+
+def test_environment_context_network_modes(monkeypatch):
+    monkeypatch.setattr(loop, "AGENT_NETWORK_MODE", "isolated")
+    isolated = loop.round_prompt("round", 30)
+    assert "KEIN Internet" in isolated
+    assert "jarvis_gateway.py" in isolated
+
+    monkeypatch.setattr(loop, "AGENT_NETWORK_MODE", "allowlist-proxy")
+    proxied = loop.round_prompt("round", 30)
+    assert "Allowlist-Proxy" in proxied
+    assert "KEIN Internet" not in proxied
+    assert "jarvis_gateway.py" in proxied
