@@ -22,6 +22,17 @@ services:
       - type: bind
         source: ${OPENHANDS_JARVIS_PROJECT_DIR:?Set OPENHANDS_JARVIS_PROJECT_DIR}
         target: /projects/jarvis
+      # Schreibbarer Laufzeit-Ordner fuer die Jarvis-App-Stores im Agent
+      # (App erwartet /var/lib/jarvis; der Agent-User ist nicht root).
+      - type: bind
+        source: ${OPENHANDS_JARVIS_RUNTIME_DIR}
+        target: /var/lib/jarvis
+      # Dauerhafter Python-Abhaengigkeitspfad: pip installiert dorthin;
+      # bleibt so ueber Container-Recreates erhalten (requirements werden
+      # sonst nach jedem Recreate uninstalliert).
+      - type: bind
+        source: ${OPENHANDS_PYUSER_DIR}
+        target: /home/openhands/.local
     networks:
       - agent-isolated
     security_opt:
