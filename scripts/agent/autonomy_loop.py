@@ -37,6 +37,7 @@ import json
 import os
 import re
 import ssl
+import subprocess
 import sys
 import time
 import urllib.error
@@ -60,6 +61,13 @@ USER_BUSY_SECONDS = 90               # <-> owner interaction counts as busy
 HEARTBEAT_INTERVAL = 60
 MAX_ITERATIONS = 120                 # bound a single round
 MAX_PARALLEL_ROUNDS = 2              # max. gleichzeitige Autonomie-Runden
+KEEP_FINISHED_CONVERSATIONS = int(os.environ.get("KEEP_FINISHED_CONVERSATIONS", "10"))
+WORKTREE_REPO_PATH = Path(os.environ.get(
+    "AUTONOMY_WORKTREE_REPO", "/home/media/jarvis-openhands/projects/jarvis"))
+WORKTREE_MAX_AGE_SECONDS = int(os.environ.get("AUTONOMY_WORKTREE_MAX_AGE_SECONDS",
+                                               str(24 * 3600)))
+SESSION_ID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
 
 
 def log(message: str) -> None:
@@ -301,6 +309,119 @@ def delete_conversation(api_key: str, conv_id: str) -> None:
          headers={"X-Session-API-Key": api_key})
 
 
+WRAPUP_HINT = (
+    "Der Besitzer ist lange inaktiv und der Autonomie-Loop faehrt jetzt herunter. "
+    "Schliesse deine aktuelle Arbeit zuegig und sauber ab: keine neuen Aufgaben, "
+    "keine neuen Features und keine neuen Zweige. Committe bzw. reiche sinnvolle "
+    "Aenderungen ein und beende dich danach."
+)
+
+
+def send_message(api_key: str, conv_id: str, text: str, run: bool = False) -> bool:
+    """Queue a user message to an existing conversation (B4).
+
+    Endpoint verified against OpenHands Agent Server 1.49.1
+    (``POST /api/conversations/{id}/events``, ``SendMessageRequest``).
+    """
+    result = http("POST", f"{OPENHANDS_BASE}/api/conversations/{conv_id}/events",
+                  headers={"X-Session-API-Key": api_key},
+                  body={"role": "user", "content": [{"type": "text", "text": text}],
+                        "run": run})
+    return result["status"] in (200, 201, 202)
+
+
+def notify_running_rounds_wrapup(api_key: str, active: dict, sessions_by_id: dict) -> None:
+    """Tell every still-running own round to close down when wrapup starts (B4)."""
+    for sid, meta in list(active.items()):
+        if str(meta.get("kind") or "") == "wrapup":
+            continue
+        session = sessions_by_id.get(str(sid))
+        status = session_execution_status(session) if session else "unknown"
+        if status in ACTIVE_STATUSES:
+            if send_message(api_key, str(sid), WRAPUP_HINT):
+                log(f"Wrapup-Hinweis an Runde {str(sid)[:8]} gesendet")
+
+
+def cleanup_finished_conversations(api_key: str, sessions: list[dict], active: dict,
+                                   keep: int = KEEP_FINISHED_CONVERSATIONS) -> int:
+    """Delete finished own conversations, keeping the newest ``keep`` ones (B5).
+
+    Running/paused/waiting sessions, sessions of other tools and the current
+    active rounds are never deleted.
+    """
+    active_ids = {str(sid) for sid in active}
+    finished = []
+    for session in sessions:
+        sid = session_id_of(session)
+        if not sid or sid in active_ids:
+            continue
+        if not is_autonomy_session(session):
+            continue
+        if session_execution_status(session) not in ENDED_STATUSES:
+            continue
+        finished.append(session)
+
+    def sort_key(item: dict) -> str:
+        return str(item.get("created_at") or item.get("updated_at") or "")
+
+    finished.sort(key=sort_key, reverse=True)
+    deleted = 0
+    for session in finished[max(0, keep):]:
+        delete_conversation(api_key, session_id_of(session))
+        deleted += 1
+    if deleted:
+        log(f"{deleted} beendete Autonomie-Conversation(s) aufgeraeumt (behalte {keep})")
+    return deleted
+
+
+def cleanup_orphan_worktrees(repo_path: Path, active_session_ids: set[str],
+                             max_age_s: float = WORKTREE_MAX_AGE_SECONDS, runner=None,
+                             now: float | None = None) -> int:
+    """Remove autonomy worktrees without an active session older than max_age_s (B5).
+
+    ``runner`` is injectable for tests; it must behave like ``subprocess.run``.
+    The main worktree and worktrees whose path references an active session are
+    never touched.
+    """
+    runner = runner or subprocess.run
+    now = time.time() if now is None else now
+    repo_path = Path(repo_path)
+    if not repo_path.exists():
+        return 0
+    listed = runner(["git", "-C", str(repo_path), "worktree", "list", "--porcelain"],
+                    capture_output=True, text=True)
+    if getattr(listed, "returncode", 1) != 0:
+        return 0
+
+    removed = 0
+    for block in (listed.stdout or "").strip().split("\n\n"):
+        entry: dict[str, str] = {}
+        for line in block.splitlines():
+            key, _, value = line.partition(" ")
+            entry[key] = value.strip()
+        path = entry.get("worktree")
+        if not path or Path(path).resolve() == repo_path.resolve():
+            continue
+        match = SESSION_ID_RE.search(path)
+        if match and match.group(0).lower() in active_session_ids:
+            continue
+        try:
+            age = now - Path(path).stat().st_mtime
+        except OSError:
+            # Verzeichnis existiert nicht mehr -> `git worktree prune` räumt auf.
+            continue
+        if age < max_age_s:
+            continue
+        result = runner(["git", "-C", str(repo_path), "worktree", "remove", "--force", path],
+                        capture_output=True, text=True)
+        if getattr(result, "returncode", 1) == 0:
+            removed += 1
+    runner(["git", "-C", str(repo_path), "worktree", "prune"], capture_output=True, text=True)
+    if removed:
+        log(f"{removed} verwaiste Worktree(s) entfernt")
+    return removed
+
+
 def pending_owner_ideas(request_token: str | None) -> list[dict[str, str]]:
     """Load owner-submitted ideas as data, without passing any API token to the LLM."""
     if not request_token:
@@ -458,7 +579,10 @@ def close_round(state: dict, api_key: str, control_token: str, session_id: str,
     state["last_round_finished_at"] = now_iso()
     state["last_kind"] = kind
     log(f"Runde ({kind}, session={str(session_id)[:8]}) beendet")
-    if kind == "wrapup" or force_stop:
+    # Pod stoppen, sobald der Wrapup ausgeloest wurde UND danach die letzte
+    # eigene Runde endet - unabhaengig davon, ob die Wrapup- oder eine
+    # Normalrunde zuletzt fertig wird (B4).
+    if state.get("wrapup_done") or kind == "wrapup" or force_stop:
         if active:
             # Es laufen noch andere Runden -> Pod weiter laufen lassen.
             save_state(state)
@@ -596,6 +720,10 @@ def main() -> int:
                         str(meta.get("kind") or "round"))
         # Unknown/andere Status: nichts tun, naechste Iteration prueft erneut.
 
+    # Beendete eigene Conversations und verwaiste Worktrees aufraeumen (B5).
+    cleanup_finished_conversations(api_key, sessions, active)
+    cleanup_orphan_worktrees(WORKTREE_REPO_PATH, set(active.keys()))
+
     if foreign_active:
         # Besitzer arbeitet im Canvas oder ein anderer Prozess laeuft.
         return 0
@@ -645,6 +773,9 @@ def main() -> int:
     if kind == "wrapup":
         state["wrapup_done"] = True
         focus = "engineering"
+        # Laufende Normalrunden bekommen den Hinweis, sauber abzuschliessen,
+        # damit der Pod nicht durch Ueberhang-Runden weiterlaeuft (B4).
+        notify_running_rounds_wrapup(api_key, active, sessions_by_id)
     else:
         # Zweite parallele Runde bekommt den komplementaeren Fokus, damit die
         # Sessions nicht am selben Code arbeiten (Engineering vs. Ideen).
