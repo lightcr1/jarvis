@@ -1,34 +1,113 @@
 {
   "_comment": "Vom Besitzer gepflegte Risikostufen (T0-T3). Der Agent kann Stufen nicht aendern. Unbekannte Capabilities fallen auf T2 zurueck. T3 ist nie per stehender Freigabe erlaubt.",
   "capabilities": {
-    "status.read": {"tier": "T0", "description": "Status/Health lesen"},
-    "search.web": {"tier": "T0", "description": "Webrecherche (read-only)"},
-    "files.read": {"tier": "T0", "description": "Dateien lesen"},
-    "memory.read": {"tier": "T0", "description": "Gedaechtnis lesen"},
-
-    "code.write_branch": {"tier": "T1", "description": "Code in einem agent/*-Branch"},
-    "task.create": {"tier": "T1", "description": "Aufgabe/Notiz anlegen"},
-    "draft.create": {"tier": "T1", "description": "Entwurf erstellen"},
-    "vm.sandbox.create": {"tier": "T1", "description": "Sandbox-VM/LXC erstellen"},
-    "vm.sandbox.destroy": {"tier": "T1", "description": "Sandbox-VM/LXC loeschen"},
-    "vm.snapshot": {"tier": "T1", "description": "Snapshot einer verwalteten VM"},
-
-    "service.restart": {"tier": "T2", "description": "Dienst neu starten"},
-    "home_assistant.set": {"tier": "T2", "description": "Home-Assistant-Geraet schalten"},
-    "vm.managed.change": {"tier": "T2", "description": "Verwaltete VM aendern"},
-    "vm.rollback": {"tier": "T2", "description": "VM-Rollback"},
-    "config.deploy": {"tier": "T2", "description": "Konfiguration deployen"},
-    "jarvis.deploy": {"tier": "T2", "description": "Jarvis selbst deployen (mit Health-Check/Rollback)"},
-    "github.merge": {"tier": "T2", "description": "PR mergen (CI gruen, keine geschuetzten Pfade)"},
-    "vm.exec": {"tier": "T2", "description": "Befehl auf einer Ziel-VM ausfuehren"},
-
-    "payment": {"tier": "T3", "description": "Geld/Kosten ausloesen"},
-    "email.send": {"tier": "T3", "description": "E-Mail extern senden"},
-    "publish": {"tier": "T3", "description": "Inhalt veroeffentlichen"},
-    "data.delete": {"tier": "T3", "description": "Daten loeschen"},
-    "secrets.change": {"tier": "T3", "description": "Secrets aendern"},
-    "policy.change": {"tier": "T3", "description": "Rechte/Policies aendern"},
-    "pod.start": {"tier": "T3", "description": "Pod starten (Kosten)"},
-    "firewall.change": {"tier": "T3", "description": "Firewall/Netz aendern"}
+    "status.read": {
+      "tier": "T0",
+      "description": "Status/Health lesen"
+    },
+    "search.web": {
+      "tier": "T0",
+      "description": "Webrecherche (read-only)"
+    },
+    "files.read": {
+      "tier": "T0",
+      "description": "Dateien lesen"
+    },
+    "memory.read": {
+      "tier": "T0",
+      "description": "Gedaechtnis lesen"
+    },
+    "code.write_branch": {
+      "tier": "T1",
+      "description": "Code in einem agent/*-Branch"
+    },
+    "task.create": {
+      "tier": "T1",
+      "description": "Aufgabe/Notiz anlegen"
+    },
+    "draft.create": {
+      "tier": "T1",
+      "description": "Entwurf erstellen"
+    },
+    "vm.sandbox.create": {
+      "tier": "T1",
+      "description": "Sandbox-VM/LXC erstellen"
+    },
+    "vm.sandbox.destroy": {
+      "tier": "T1",
+      "description": "Sandbox-VM/LXC loeschen"
+    },
+    "vm.snapshot": {
+      "tier": "T1",
+      "description": "Snapshot einer verwalteten VM"
+    },
+    "service.restart": {
+      "tier": "T2",
+      "description": "Dienst neu starten"
+    },
+    "home_assistant.set": {
+      "tier": "T2",
+      "description": "Home-Assistant-Geraet schalten"
+    },
+    "vm.managed.change": {
+      "tier": "T2",
+      "description": "Verwaltete VM aendern"
+    },
+    "vm.rollback": {
+      "tier": "T2",
+      "description": "VM-Rollback"
+    },
+    "config.deploy": {
+      "tier": "T2",
+      "description": "Konfiguration deployen"
+    },
+    "jarvis.deploy": {
+      "tier": "T2",
+      "description": "Jarvis selbst deployen (mit Health-Check/Rollback)"
+    },
+    "github.merge": {
+      "tier": "T2",
+      "description": "PR mergen (CI gruen, keine geschuetzten Pfade)"
+    },
+    "vm.exec": {
+      "tier": "T2",
+      "description": "Befehl auf einer Ziel-VM ausfuehren"
+    },
+    "payment": {
+      "tier": "T3",
+      "description": "Geld/Kosten ausloesen"
+    },
+    "email.send": {
+      "tier": "T3",
+      "description": "E-Mail extern senden"
+    },
+    "publish": {
+      "tier": "T3",
+      "description": "Inhalt veroeffentlichen"
+    },
+    "data.delete": {
+      "tier": "T3",
+      "description": "Daten loeschen"
+    },
+    "secrets.change": {
+      "tier": "T3",
+      "description": "Secrets aendern"
+    },
+    "policy.change": {
+      "tier": "T3",
+      "description": "Rechte/Policies aendern"
+    },
+    "pod.start": {
+      "tier": "T3",
+      "description": "Pod starten (Kosten)"
+    },
+    "firewall.change": {
+      "tier": "T3",
+      "description": "Firewall/Netz aendern"
+    },
+    "vm.sandbox.exec": {
+      "tier": "T1",
+      "description": "Befehl in einer Sandbox ausfuehren"
+    }
   }
 }
