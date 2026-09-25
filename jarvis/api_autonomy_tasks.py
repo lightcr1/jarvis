@@ -150,13 +150,25 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
 
     @router.get("/agent/tasks/next")
     def next_task(focus: str | None = None, exclude: str | None = None,
+                  exclude_area: str | None = None,
                   x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
         cap(x_jarvis_agent_request_token, "task-next", 60)
         excluded = {item for item in (exclude or "").split(",") if item}
-        task = store().next_open_task(area=focus, exclude_ids=excluded)
+        blocked_areas = {item for item in (exclude_area or "").split(",") if item}
+        # focus steuert den Rundentyp (engineering/ideas), nicht den Aufgabenbereich.
+        task = store().next_open_task(area=None, exclude_ids=excluded,
+                                      exclude_areas=blocked_areas)
         last_report = store().last_report(task["id"]) if task else None
-        return {"task": task, "last_report": last_report}
+        submitted = store().list_tasks(status="submitted", limit=20)
+        in_progress = store().list_tasks(status="in_progress", limit=20)
+        open_work = {
+            "submitted": len(submitted),
+            "in_progress": len(in_progress),
+            "submitted_titles": [t["title"][:60] for t in submitted[:5]],
+            "in_progress_titles": [t["title"][:60] for t in in_progress[:5]],
+        }
+        return {"task": task, "last_report": last_report, "open_work": open_work}
 
     @router.post("/agent/tasks", status_code=201)
     def propose_task(body: TaskProposal,

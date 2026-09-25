@@ -558,19 +558,27 @@ def pending_owner_ideas(request_token: str | None) -> list[dict[str, str]]:
             and all(isinstance(item.get(key), str) for key in ("id", "title", "summary"))][:5]
 
 
-def fetch_next_task(request_token: str | None, focus: str) -> tuple[dict | None, dict | None]:
-    """Höchstpriorisierte offene Backlog-Aufgabe passend zum Fokus (3.1)."""
+def fetch_next_task(request_token: str | None, focus: str,
+                    exclude_ids: set[str] | None = None,
+                    exclude_areas: set[str] | None = None) -> tuple[dict | None, dict | None, dict | None]:
+    """Höchstpriorisierte offene Backlog-Aufgabe ohne Doppelarbeit (3.1/3.3)."""
     if not request_token:
-        return None, None
-    query = urllib.parse.urlencode({"focus": focus})
+        return None, None, None
+    query = urllib.parse.urlencode({
+        "focus": focus,
+        "exclude": ",".join(sorted(exclude_ids or ())),
+        "exclude_area": ",".join(sorted(exclude_areas or ())),
+    })
     result = http("GET", f"{JARVIS_BASE}/agent/tasks/next?{query}",
                   headers={"X-Jarvis-Agent-Request-Token": request_token}, timeout=5)
     if result["status"] != 200 or not isinstance(result.get("data"), dict):
-        return None, None
+        return None, None, None
     data = result["data"]
     task = data.get("task")
+    open_work = data.get("open_work") if isinstance(data.get("open_work"), dict) else None
     return (task if isinstance(task, dict) else None,
-            data.get("last_report") if isinstance(data.get("last_report"), dict) else None)
+            data.get("last_report") if isinstance(data.get("last_report"), dict) else None,
+            open_work)
 
 
 def claim_task(request_token: str | None, task_id: str, round_id: str) -> dict | None:
@@ -635,7 +643,8 @@ def environment_context() -> str:
 
 def round_prompt(kind: str, idle_stop_minutes: int, owner_ideas: list[dict[str, str]] | None = None,
                 focus: str = "engineering", task: dict | None = None,
-                last_report: dict | None = None, round_id: str = "") -> str:
+                last_report: dict | None = None, round_id: str = "",
+                open_work_note: str = "") -> str:
     if kind == "wrapup":
         return (
             "Der Besitzer ist seit mehr als %d Minuten inaktiv. Schliesse deine aktuelle Arbeit "
@@ -729,13 +738,14 @@ def round_prompt(kind: str, idle_stop_minutes: int, owner_ideas: list[dict[str, 
         "Dokumentiere am Ende in docs/ACTIVITY_LOG.md, was du getan hast, welche PRs offen "
         "sind und welche Risiken bleiben. Beende dich danach sauber."
     )
-    return static_round + focus_text + owner_context + task_context
+    return static_round + focus_text + owner_context + task_context + open_work_note
 
 
 def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: int,
                 owner_ideas: list[dict[str, str]] | None = None, focus: str = "engineering",
                 max_iterations: int | None = None, task: dict | None = None,
-                last_report: dict | None = None, round_id: str = "") -> str | None:
+                last_report: dict | None = None, round_id: str = "",
+                open_work_note: str = "") -> str | None:
     payload = {
         "workspace": {"working_dir": WORKSPACE_REPO, "kind": "LocalWorkspace"},
         "worktree": True,
@@ -772,7 +782,7 @@ def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: in
         "initial_message": {
             "role": "user",
             "content": [{"text": round_prompt(kind, idle_stop_minutes, owner_ideas, focus,
-                                              task, last_report, round_id)}],
+                                              task, last_report, round_id, open_work_note)}],
             "run": True,
         },
     }
@@ -1025,10 +1035,14 @@ def main() -> int:
     request_token = env.get("JARVIS_AGENT_REQUEST_TOKEN")
     task = None
     last_report = None
+    open_work_note = ""
     round_id = uuid.uuid4().hex
     if kind == "round":
-        # 3.1: genau die hoechstpriorisierte offene Aufgabe passend zum Fokus.
-        candidate, last_report = fetch_next_task(request_token, focus)
+        # 3.3: parallele Runden bekommen nie dieselbe Aufgabe/area.
+        active_task_ids = {str(m.get("task_id")) for m in active.values() if m.get("task_id")}
+        active_areas = {str(m.get("task_area")) for m in active.values() if m.get("task_area")}
+        candidate, last_report, open_work = fetch_next_task(
+            request_token, focus, active_task_ids, active_areas)
         if candidate:
             claimed = claim_task(request_token, str(candidate.get("id") or ""), round_id)
             if claimed and claimed.get("status") == "in_progress":
@@ -1036,17 +1050,27 @@ def main() -> int:
             else:
                 last_report = None
                 log("Aufgabe nicht beanspruchbar (blockiert oder bereits vergeben)")
+        if isinstance(open_work, dict):
+            submitted = int(open_work.get("submitted") or 0)
+            running = int(open_work.get("in_progress") or 0)
+            if submitted or running:
+                titles = ", ".join((open_work.get("submitted_titles") or [])[:3])
+                open_work_note = (f" OFFENE ARBEIT (nicht doppelt bearbeiten): {submitted} "
+                                  f"eingereichte, {running} laufende Aufgabe(n)." +
+                                  (f" Bereits eingereicht: {titles}." if titles else ""))
         ideas = pending_owner_ideas(request_token)
     else:
         ideas = []
     conv_id = start_round(api_key, agent_token, kind, control["idle_stop_s"] // 60,
                           ideas, focus,
                           max_iterations=iterations_for_size((task or {}).get("size")),
-                          task=task, last_report=last_report, round_id=round_id)
+                          task=task, last_report=last_report, round_id=round_id,
+                          open_work_note=open_work_note)
     if conv_id:
         state.setdefault("active_sessions", {})[str(conv_id)] = {
             "kind": kind, "paused": False, "focus": focus,
             "task_id": (task or {}).get("id"),
+            "task_area": (task or {}).get("area"),
             "round_id": round_id,
         }
     save_state(state)

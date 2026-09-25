@@ -116,3 +116,12 @@ def test_summary_is_capped_at_800(tmp_path):
                                  summary="x" * 5000)
     assert len(report["summary"]) == 800
     assert MAX_TASK_ATTEMPTS == 3
+
+
+def test_next_open_task_excludes_ids_and_areas(tmp_path):
+    store = _store(tmp_path)
+    a = store.create_task(title="A", area="tasks", priority=10)
+    b = store.create_task(title="B", area="billing", priority=9)
+    assert store.next_open_task(exclude_areas={"tasks"})["id"] == b["id"]
+    assert store.next_open_task(exclude_ids={a["id"]})["id"] == b["id"]
+    assert store.next_open_task(exclude_ids={a["id"]}, exclude_areas={"billing"}) is None

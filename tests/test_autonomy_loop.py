@@ -495,19 +495,23 @@ def test_fetch_next_task_and_claim(monkeypatch):
 
     def fake_http(method, url, headers=None, body=None, **kwargs):
         calls.append((method, url, body))
-        if url.endswith("/agent/tasks/next?focus=engineering"):
-            return {"status": 200, "data": {"task": {"id": "t1"}, "last_report": {"summary": "s"}}}
+        if "/agent/tasks/next" in url:
+            return {"status": 200, "data": {
+                "task": {"id": "t1"}, "last_report": {"summary": "s"},
+                "open_work": {"submitted": 2},
+            }}
         if "/agent/tasks/t1/claim" in url:
             return {"status": 200, "data": {"task": {"id": "t1", "status": "in_progress"}}}
         return {"status": 404, "data": {}}
 
     monkeypatch.setattr(loop, "http", fake_http)
-    task, last = loop.fetch_next_task("tok", "engineering")
+    task, last, open_work = loop.fetch_next_task("tok", "engineering")
     assert task["id"] == "t1" and last["summary"] == "s"
+    assert open_work == {"submitted": 2}
     claimed = loop.claim_task("tok", "t1", "round-1")
     assert claimed["status"] == "in_progress"
     assert calls[-1][2] == {"round_id": "round-1"}
-    assert loop.fetch_next_task(None, "engineering") == (None, None)
+    assert loop.fetch_next_task(None, "engineering") == (None, None, None)
 
 
 def test_ensure_round_report_posts_only_when_missing(monkeypatch):
@@ -543,7 +547,7 @@ def test_main_claims_task_and_records_meta(tmp_path, monkeypatch):
     monkeypatch.setattr(loop, "model_ready", lambda _: True)
     monkeypatch.setattr(loop, "pending_owner_ideas", lambda _: [])
     monkeypatch.setattr(loop, "heartbeat", lambda _: None)
-    monkeypatch.setattr(loop, "fetch_next_task", lambda t, f: (task, None))
+    monkeypatch.setattr(loop, "fetch_next_task", lambda *a, **k: (task, None, None))
     monkeypatch.setattr(loop, "claim_task",
                         lambda t, i, r: {**task, "status": "in_progress"})
     captured = {}

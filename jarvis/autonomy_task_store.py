@@ -193,8 +193,15 @@ class AutonomyTaskStore:
         return self.get_task(task_id) if changed else None
 
     def next_open_task(self, *, area: str | None = None,
-                       exclude_ids: set[str] | None = None) -> dict | None:
+                       exclude_ids: set[str] | None = None,
+                       exclude_areas: set[str] | None = None) -> dict | None:
+        """Höchstpriorisierte offene Aufgabe; optionaler Bereichsfilter (3.3).
+
+        ``exclude_areas`` verhindert, dass zwei parallele Runden denselben
+        Bereich bearbeiten.
+        """
         excluded = set(exclude_ids or ())
+        blocked_areas = set(exclude_areas or ())
         with self._connect() as db:
             rows = db.execute("""SELECT * FROM autonomy_tasks WHERE status='open'
                 ORDER BY priority DESC, created_at ASC, id ASC LIMIT 50""").fetchall()
@@ -203,6 +210,8 @@ class AutonomyTaskStore:
             if task["id"] in excluded:
                 continue
             if area and task["area"] not in (area, "general"):
+                continue
+            if task["area"] in blocked_areas and task["area"] != "general":
                 continue
             return task
         return None
