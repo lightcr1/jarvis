@@ -1,12 +1,49 @@
 # Compose-Override fuer die containerisierte Jarvis-App.
 #
-# Teilt config/autonomy.json zwischen der App und dem Host-Autonomy-Loop:
-# der Loop liest genau diesen Host-Pfad (AUTONOMY_SWITCH). So wirken der
-# Autonomy-Schalter sowie Budgets, Zeitfenster und GPU-Kosten aus der Admin-UI
-# sofort im Loop. Host-Pfad per JARVIS_AUTONOMY_FILE_HOST ueberschreibbar.
+# 1) Teilt config/autonomy.json zwischen der App und dem Host-Autonomy-Loop:
+#    der Loop liest genau diesen Host-Pfad (AUTONOMY_SWITCH). So wirken der
+#    Autonomy-Schalter sowie Budgets, Zeitfenster und GPU-Kosten aus der Admin-UI
+#    sofort im Loop. Host-Pfad per JARVIS_AUTONOMY_FILE_HOST ueberschreibbar.
+# 2) Optionaler, gehärteter SearXNG-Dienst fuer die Webrecherche:
+#    - eigenes internes Netz `jarvis-search` (nur App <-> SearXNG, kein Internet)
+#    - eigenes Egress-Netz `jarvis-search-egress` (nur SearXNG, Internet via NAT)
+#    - kein Host-Port, cap_drop ALL, no-new-privileges, Limits, Image gepinnt
 services:
   jarvis:
     environment:
       JARVIS_AUTONOMY_FILE: /var/lib/jarvis/autonomy.json
+      JARVIS_SEARCH_PROVIDER: ${JARVIS_SEARCH_PROVIDER:-brave}
+      JARVIS_SEARXNG_URL: ${JARVIS_SEARXNG_URL:-http://searxng:8080}
     volumes:
       - ${JARVIS_AUTONOMY_FILE_HOST:-../config/autonomy.json}:/var/lib/jarvis/autonomy.json
+    networks:
+      - jarvis-search
+
+  searxng:
+    image: searxng/searxng@sha256:5286edb35782454ab8a102c5eff6b54bff745853191b46aeead95f225aa6dfb6
+    container_name: searxng
+    restart: unless-stopped
+    environment:
+      SEARXNG_SECRET: ${SEARXNG_SECRET:?SEARXNG_SECRET must be set}
+      SEARXNG_SETTINGS_PATH: /etc/searxng/settings.yml
+    volumes:
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+    tmpfs:
+      - /tmp:size=16m,noexec,nosuid,mode=1777
+      - /var/cache/searxng:size=32m,noexec,nosuid,mode=1777
+    networks:
+      - jarvis-search
+      - jarvis-search-egress
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    mem_limit: 384m
+    cpus: 0.5
+    pids_limit: 128
+
+networks:
+  jarvis-search:
+    internal: true
+  jarvis-search-egress:
+    driver: bridge
