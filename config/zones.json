@@ -1,0 +1,44 @@
+{
+  "_comment": "Zonen + Grenzen fuer Jarvis-Aktionen. Vom Besitzer gepflegt; der Agent kann sie nicht aendern. 'backend' ist docker|proxmox|k8s -- lokal ist es docker, spaeter kann dieselbe Policy auf echten VMs/K8s laufen.",
+  "critical_services": [
+    "runpod-controller",
+    "searxng"
+  ],
+  "host_reserve": {
+    "cpus": 1,
+    "memory_mb": 4096
+  },
+  "zones": {
+    "sandbox": {
+      "backend": "docker",
+      "network": "jarvis-sandbox",
+      "allow_lan": true,
+      "egress": "allowlist-proxy",
+      "container_prefix": "jarvis-sandbox-",
+      "resources": {
+        "max_concurrent": 4,
+        "cpus": 1.0,
+        "memory_mb": 2048,
+        "disk_gb": 25,
+        "max_lifetime_minutes": 120
+      },
+      "capabilities": [
+        "vm.sandbox.create",
+        "vm.sandbox.exec",
+        "vm.sandbox.destroy"
+      ]
+    },
+    "managed": {
+      "backend": "docker",
+      "description": "Bestehende Dienste ausser den kritischen: Aenderungen nur mit Freigabe (T2).",
+      "capabilities": [
+        "service.restart",
+        "jarvis.deploy"
+      ]
+    },
+    "unmanaged": {
+      "description": "Alles ausserhalb Sandbox/managed -- nur lesen.",
+      "read_only": true
+    }
+  }
+}
