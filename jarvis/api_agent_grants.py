@@ -74,6 +74,12 @@ class PatchSubmit(BaseModel):
     message: str = Field(max_length=200)
 
 
+class PatchReviewDecision(BaseModel):
+    approve: bool
+    title: str | None = Field(default=None, max_length=200)
+    body: str | None = Field(default=None, max_length=10000)
+
+
 class EmailSendAction(BaseModel):
     to: str = Field(max_length=200)
     subject: str = Field(max_length=200)
@@ -101,6 +107,12 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
 
     def current(name: str):
         value = deps[name]
+        return value.get() if isinstance(value, LiveRef) else value
+
+    def optional(name: str):
+        value = deps.get(name)
+        if value is None:
+            return None
         return value.get() if isinstance(value, LiveRef) else value
 
     def owner(session_token: str | None) -> str:
@@ -302,6 +314,14 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
             message = str(exc)
             status = 403 if ("protected path" in message or "denied path" in message) else 422
             raise HTTPException(status, message) from exc
+        review_store = optional("patch_review_store")
+        if review_store is not None:
+            try:
+                review_store.record(repository=target, branch=body.branch, base=body.base,
+                                    commit=result["commit"], message=body.message,
+                                    patch=body.patch, paths=result["paths"])
+            except Exception:  # noqa: BLE001 - review queue must not break submission
+                pass
         audit("agent.repository.patch_submitted", "agent",
               {"repository": target, "branch": body.branch, "commit": result["commit"], "paths": result["paths"]})
         return {"result": result}
@@ -381,6 +401,57 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
             raise HTTPException(422, "unsupported action kind")
         audit("agent.action.executed", "agent", {"action_id": action_id, "digest": item["digest"], "result": result})
         return {"result": result}
+
+    @router.post("/admin/agent-patches/{patch_id}/decide")
+    def decide_patch(patch_id: str, body: PatchReviewDecision,
+                     x_jarvis_session: str | None = Header(default=None)):
+        actor = owner(x_jarvis_session)
+        store_obj = optional("patch_review_store")
+        if store_obj is None:
+            raise HTTPException(503, "patch review store not configured")
+        item = store_obj.get(patch_id)
+        if item is None or item["status"] != "pending":
+            raise HTTPException(409, "patch missing or already decided")
+        if body.approve:
+            repo_owner, repo_name = item["repository"].split("/", 1)
+            title = body.title or item["message"] or f"Agent patch {item['branch']}"
+            pr_body = body.body or ("Automated agent patch, reviewed by the owner.\n\n"
+                                    f"Paths: {', '.join(item['paths'])}")
+            try:
+                result = create_pull_request(repo_owner, repo_name, {
+                    "title": title, "body": pr_body, "head": item["branch"], "base": item["base"],
+                }, current("github_write_token"))
+            except GithubGatewayError as exc:
+                raise HTTPException(502, str(exc)) from exc
+            updated = store_obj.decide(patch_id, actor=actor, decision="pr_requested",
+                                       pr_number=result["number"])
+            audit("agent.patch.pr_created", actor, {"patch_id": patch_id, "pr": result["number"]})
+            return {"patch": updated, "pr": result}
+        updated = store_obj.decide(patch_id, actor=actor, decision="rejected")
+        audit("agent.patch.rejected", actor, {"patch_id": patch_id})
+        return {"patch": updated}
+
+    @router.get("/admin/agent-patches")
+    def list_patches(status: str | None = None,
+                     x_jarvis_session: str | None = Header(default=None)):
+        owner(x_jarvis_session)
+        store_obj = optional("patch_review_store")
+        if store_obj is None:
+            return {"patches": []}
+        items = [{k: v for k, v in item.items() if k != "patch"}
+                 for item in store_obj.list(status=status)]
+        return {"patches": items}
+
+    @router.get("/admin/agent-patches/{patch_id}")
+    def get_patch(patch_id: str, x_jarvis_session: str | None = Header(default=None)):
+        owner(x_jarvis_session)
+        store_obj = optional("patch_review_store")
+        if store_obj is None:
+            raise HTTPException(503, "patch review store not configured")
+        item = store_obj.get(patch_id)
+        if item is None:
+            raise HTTPException(404, "patch not found")
+        return {"patch": item}
 
     @router.get("/admin/agent-actions")
     def list_actions(x_jarvis_session: str | None = Header(default=None)):

@@ -101,10 +101,9 @@ def test_submit_patch_creates_one_commit(monkeypatch):
     assert ref_patches[0][2]["force"] is False
 
 
-def _client(tmp_path, monkeypatch):
+def _client(tmp_path, monkeypatch, review_store=None):
     store = AgentGrantStore(tmp_path / "grants.sqlite3")
-    app = FastAPI()
-    app.include_router(build_agent_grants_router({
+    deps = {
         "agent_grant_store": store,
         "get_identity_session": lambda token: {"user_id": "owner", "role": "admin"} if token == "owner" else None,
         "normalize_role": lambda role: role,
@@ -112,7 +111,11 @@ def _client(tmp_path, monkeypatch):
         "github_write_token": "server-secret",
         "owner_user_id": "owner",
         "audit_admin_event": lambda *args: None,
-    }))
+    }
+    if review_store is not None:
+        deps["patch_review_store"] = review_store
+    app = FastAPI()
+    app.include_router(build_agent_grants_router(deps))
     return store, TestClient(app)
 
 
@@ -152,3 +155,55 @@ def test_patch_endpoint_rejects_protected_path(tmp_path, monkeypatch):
             "patch": MODIFY_PATCH.replace("jarvis/foo.py", "AGENTS.md"), "message": "Fix"}
     # Echte Validierung (kein Mock von submit_patch) -> geschuetzter Pfad -> 403.
     assert client.post("/agent/repositories/owner/repo/patches", headers=agent, json=body).status_code == 403
+
+
+from jarvis.patch_review_store import PatchReviewStore  # noqa: E402
+
+
+def test_patch_submission_is_queued_for_review(tmp_path, monkeypatch):
+    review = PatchReviewStore(tmp_path / "review.sqlite3")
+    store, client = _client(tmp_path, monkeypatch, review_store=review)
+    _approve_write(store)
+    monkeypatch.setattr("jarvis.api_agent_grants.submit_patch", lambda *a, **k: {
+        "repository": "owner/repo", "branch": "agent/fix", "base": "dev",
+        "commit": "c1", "paths": ["jarvis/foo.py"], "commit_count": 1,
+    })
+    agent = {"X-Jarvis-Agent-Request-Token": "agent"}
+    owner = {"X-Jarvis-Session": "owner"}
+    body = {"branch": "agent/fix", "base": "dev", "patch": MODIFY_PATCH, "message": "Fix"}
+    assert client.post("/agent/repositories/owner/repo/patches", headers=agent, json=body).status_code == 201
+
+    listed = client.get("/admin/agent-patches", headers=owner).json()["patches"]
+    assert len(listed) == 1 and "patch" not in listed[0]
+    detail = client.get(f"/admin/agent-patches/{listed[0]['id']}", headers=owner).json()["patch"]
+    assert detail["patch"] == MODIFY_PATCH
+
+
+def test_patch_review_creates_pr(tmp_path, monkeypatch):
+    review = PatchReviewStore(tmp_path / "review.sqlite3")
+    _store, client = _client(tmp_path, monkeypatch, review_store=review)
+    item = review.record(repository="owner/repo", branch="agent/fix", base="dev",
+                         commit="c1", message="Fix", patch=MODIFY_PATCH, paths=["a.py"])
+    calls = []
+    monkeypatch.setattr("jarvis.api_agent_grants.create_pull_request",
+                        lambda o, r, p, t: calls.append((o, r, p, t)) or {
+                            "number": 7, "url": "u", "repository": "owner/repo"})
+    owner = {"X-Jarvis-Session": "owner"}
+    response = client.post(f"/admin/agent-patches/{item['id']}/decide", headers=owner,
+                           json={"approve": True})
+    assert response.status_code == 200
+    assert response.json()["patch"]["status"] == "pr_requested"
+    assert response.json()["patch"]["pr_number"] == 7
+    assert calls and calls[0][3] == "server-secret"
+
+
+def test_patch_review_reject(tmp_path, monkeypatch):
+    review = PatchReviewStore(tmp_path / "review.sqlite3")
+    _store, client = _client(tmp_path, monkeypatch, review_store=review)
+    item = review.record(repository="owner/repo", branch="agent/fix", base="dev",
+                         commit="c1", message="Fix", patch=MODIFY_PATCH, paths=["a.py"])
+    owner = {"X-Jarvis-Session": "owner"}
+    response = client.post(f"/admin/agent-patches/{item['id']}/decide", headers=owner,
+                           json={"approve": False})
+    assert response.status_code == 200
+    assert response.json()["patch"]["status"] == "rejected"

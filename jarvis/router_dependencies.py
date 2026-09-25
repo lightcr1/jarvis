@@ -219,6 +219,7 @@ def build_agent_grants_deps(state: object) -> dict:
     import os
     return {
         "agent_grant_store": live_attr(state, "agent_grant_store"),
+        "patch_review_store": live_attr(state, "patch_review_store"),
         "get_identity_session": state._get_identity_session,
         "normalize_role": state.normalize_role,
         "audit_admin_event": state._audit_admin_event,

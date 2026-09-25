@@ -152,6 +152,7 @@ from jarvis.api_agent_grants import build_agent_grants_router
 from jarvis.agent_grants import AgentGrantStore
 from jarvis.autonomy_store import AutonomyStore
 from jarvis.autonomy_task_store import AutonomyTaskStore
+from jarvis.patch_review_store import PatchReviewStore
 from jarvis.router_dependencies import build_admin_deps, build_agent_monitor_deps, build_autonomy_deps, build_autonomy_tasks_deps, build_agent_grants_deps, build_admin_integrations_deps, build_alerts_deps, build_auth_chat_deps, build_billing_deps, build_calendar_deps, build_device_sync_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_weather_deps, build_workspace_deps, live_attr
 from jarvis.jarvis_engine import (
     JarvisEngine,
@@ -221,6 +222,7 @@ admin_password_store = AdminPasswordStore()
 admin_settings_store = AdminSettingsStore()
 autonomy_store = AutonomyStore()
 agent_grant_store = AgentGrantStore()
+patch_review_store = PatchReviewStore()
 autonomy_task_store = AutonomyTaskStore()
 user_preferences_store = UserPreferencesStore()
 byok_store = ByokKeyStore()
