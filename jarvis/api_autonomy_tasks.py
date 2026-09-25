@@ -195,6 +195,13 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
         _admin_guard(x_jarvis_session, None, None, None)
         return {"reports": store().list_reports(task_id=task_id)}
 
+    @router.get("/admin/autonomy/metrics/weekly")
+    def weekly_metrics_endpoint(gpu_seconds: float = 0.0,
+                                x_jarvis_session: str | None = Header(default=None)):
+        _admin_guard(x_jarvis_session, None, None, None)
+        from .agent_metrics import weekly_metrics
+        return weekly_metrics(store(), deps.get("agent_grant_store"), gpu_seconds=gpu_seconds)
+
     @router.get("/admin/autonomy/stats")
     def list_stats(x_jarvis_session: str | None = Header(default=None)):
         _admin_guard(x_jarvis_session, None, None, None)
