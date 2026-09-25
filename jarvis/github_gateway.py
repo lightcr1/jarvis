@@ -192,22 +192,34 @@ def _parse_hunk_header(line: str):
 
 
 def parse_patch(patch_text: str) -> list[dict]:
-    """Parse a git unified diff into per-file hunks (paths only, no execution)."""
+    """Parse a git unified diff into per-file entries (paths, hunks, mode)."""
     files: list[dict] = []
     current: dict | None = None
     hunk: dict | None = None
     for line in patch_text.splitlines():
         if line.startswith("diff --git "):
-            if current and current.get("path"):
+            if current is not None:
                 files.append(current)
-            current = {"path": None, "old_path": None, "hunks": [], "new": False, "delete": False}
+            current = {"path": None, "old_path": None, "hunks": [], "new": False,
+                       "delete": False, "rename": False, "new_mode": None}
             hunk = None
         elif current is None:
             continue
-        elif line.startswith("new file mode"):
+        elif line.startswith("new file mode "):
             current["new"] = True
-        elif line.startswith("deleted file mode"):
+            current["new_mode"] = line.rsplit(" ", 1)[-1].strip()
+        elif line.startswith("deleted file mode "):
             current["delete"] = True
+        elif line.startswith("new mode "):
+            current["new_mode"] = line.rsplit(" ", 1)[-1].strip()
+        elif line.startswith("rename from "):
+            current["old_path"] = line[len("rename from "):].strip()
+            current["rename"] = True
+        elif line.startswith("rename to "):
+            current["path"] = line[len("rename to "):].strip()
+            current["rename"] = True
+        elif line.startswith(("old mode ", "index ", "similarity index ", "copy from ", "copy to ")):
+            continue
         elif line.startswith("--- "):
             target = line[4:].strip()
             current["old_path"] = None if target == "/dev/null" else (
@@ -222,31 +234,57 @@ def parse_patch(patch_text: str) -> list[dict]:
                 current["hunks"].append(hunk)
         elif hunk is not None and line[:1] in ("+", "-", " ", "\\"):
             hunk["lines"].append(line)
-    if current and current.get("path"):
+    if current is not None:
         files.append(current)
-    return files
+
+    result = []
+    for entry in files:
+        if entry["delete"] and not entry["path"]:
+            entry["path"] = entry["old_path"]
+        if entry["path"] and entry["old_path"] and entry["old_path"] != entry["path"] and not entry["delete"]:
+            entry["rename"] = True
+        if entry["path"]:
+            result.append(entry)
+    return result
 
 
 def apply_unified_diff(old_text: str, hunks: list[dict]) -> str:
+    """Apply hunks strictly: context/removed lines must match, counts must add up."""
     old_lines = old_text.split("\n") if old_text else []
     result: list[str] = []
     old_index = 0
     for hunk in hunks:
         start = max(0, hunk["old_start"] - 1)
-        while old_index < start and old_index < len(old_lines):
+        if start < old_index:
+            raise GithubGatewayError("patch hunks overlap or are out of order")
+        while old_index < start:
+            if old_index >= len(old_lines):
+                raise GithubGatewayError("patch does not apply: context beyond end of file")
             result.append(old_lines[old_index])
             old_index += 1
+        old_seen = new_seen = 0
         for line in hunk["lines"]:
             marker = line[:1]
             if marker == "\\":
                 continue
             if marker == "+":
                 result.append(line[1:])
+                new_seen += 1
             elif marker == "-":
+                if old_index >= len(old_lines) or old_lines[old_index] != line[1:]:
+                    raise GithubGatewayError("patch does not apply: removed line does not match base")
                 old_index += 1
+                old_seen += 1
             elif marker == " ":
+                if old_index >= len(old_lines) or old_lines[old_index] != line[1:]:
+                    raise GithubGatewayError("patch does not apply: context does not match base")
                 result.append(line[1:])
                 old_index += 1
+                old_seen += 1
+        if old_seen != hunk["old_count"]:
+            raise GithubGatewayError("patch does not apply: old line count mismatch")
+        if new_seen != hunk["new_count"]:
+            raise GithubGatewayError("patch does not apply: new line count mismatch")
     while old_index < len(old_lines):
         result.append(old_lines[old_index])
         old_index += 1
@@ -273,15 +311,17 @@ def validate_patch(patch_text: str, *, branch: str, policy: dict | None = None) 
 
     paths: list[str] = []
     for entry in files:
-        path = entry["path"]
-        if not path or path.startswith("/") or ".." in path.split("/") or "\\" in path or len(path) > 300:
-            raise GithubGatewayError("safe repository-relative path required")
-        if _matches(path, deny) and not _matches(path, allowed_examples):
-            raise GithubGatewayError(f"denied path in patch: {path}")
-        if _matches(path, protected):
-            raise GithubGatewayError(f"protected path in patch: {path}")
-        paths.append(path)
-    return paths
+        for candidate in dict.fromkeys([entry["path"], entry.get("old_path")]):
+            if not candidate:
+                continue
+            if candidate.startswith("/") or ".." in candidate.split("/") or "\\" in candidate or len(candidate) > 300:
+                raise GithubGatewayError("safe repository-relative path required")
+            if _matches(candidate, deny) and not _matches(candidate, allowed_examples):
+                raise GithubGatewayError(f"denied path in patch: {candidate}")
+            if _matches(candidate, protected):
+                raise GithubGatewayError(f"protected path in patch: {candidate}")
+        paths.append(entry["path"])
+    return list(dict.fromkeys(paths))
 
 
 def _gh_json(method: str, url: str, token: str, payload: dict | None = None) -> dict:
@@ -309,8 +349,9 @@ def submit_patch(owner: str, repository: str, *, branch: str, base: str, patch_t
                  message: str, token: str) -> dict:
     """Apply a patch on top of ``base`` and create exactly one commit + ref.
 
-    All repository access goes through the fixed GitHub API host; the patch is
-    validated against the agent policy before any write.
+    Context and removed lines are verified against the base; on mismatch the
+    whole patch is rejected (no silent wrong-line overwrite). File modes are
+    preserved (executable bit), and deletions/renames are handled explicitly.
     """
     canonical = canonical_repo(owner, repository)
     paths = validate_patch(patch_text, branch=branch)
@@ -325,17 +366,20 @@ def submit_patch(owner: str, repository: str, *, branch: str, base: str, patch_t
     base_sha = ref["object"]["sha"]
     base_commit = _gh_json("GET", f"https://api.github.com/repos/{canonical}/git/commits/{base_sha}", token)
     base_tree = base_commit["tree"]["sha"]
+    mode_by_path = _tree_modes(canonical, base_tree, token)
 
-    files = parse_patch(patch_text)
     tree_entries = []
-    for entry in files:
+    for entry in parse_patch(patch_text):
         path = entry["path"]
+        old_path = entry.get("old_path")
+        base_path = old_path if (entry.get("rename") and old_path) else path
         if entry["delete"]:
-            tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": None})
+            tree_entries.append({"path": base_path, "mode": mode_by_path.get(base_path, "100644"),
+                                 "type": "blob", "sha": None})
             continue
         old_text = ""
         if not entry["new"]:
-            quoted = urllib.parse.quote(path, safe="/")
+            quoted = urllib.parse.quote(base_path, safe="/")
             try:
                 content = _gh_json("GET", f"https://api.github.com/repos/{canonical}/contents/{quoted}?ref={base}", token)
                 old_text = base64.b64decode(content.get("content", "")).decode("utf-8")
@@ -344,7 +388,16 @@ def submit_patch(owner: str, repository: str, *, branch: str, base: str, patch_t
         new_text = apply_unified_diff(old_text, entry["hunks"])
         blob = _gh_json("POST", f"https://api.github.com/repos/{canonical}/git/blobs", token,
                         {"content": base64.b64encode(new_text.encode()).decode(), "encoding": "base64"})
-        tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
+        if entry.get("new_mode"):
+            mode = entry["new_mode"]
+        elif not entry["new"]:
+            mode = mode_by_path.get(base_path, "100644")
+        else:
+            mode = "100644"
+        tree_entries.append({"path": path, "mode": mode, "type": "blob", "sha": blob["sha"]})
+        if entry.get("rename") and old_path and old_path != path:
+            tree_entries.append({"path": old_path, "mode": mode_by_path.get(old_path, "100644"),
+                                 "type": "blob", "sha": None})
 
     tree = _gh_json("POST", f"https://api.github.com/repos/{canonical}/git/trees", token,
                     {"base_tree": base_tree, "tree": tree_entries})
@@ -354,6 +407,19 @@ def submit_patch(owner: str, repository: str, *, branch: str, base: str, patch_t
              {"sha": commit["sha"], "force": False})
     return {"repository": canonical, "branch": branch, "base": base,
             "commit": commit["sha"], "paths": paths, "commit_count": 1}
+
+
+def _tree_modes(canonical: str, tree_sha: str, token: str) -> dict[str, str]:
+    """path -> file mode for the base tree (preserves the executable bit)."""
+    try:
+        data = _gh_json("GET", f"https://api.github.com/repos/{canonical}/git/trees/{tree_sha}?recursive=1", token)
+    except GithubGatewayError:
+        return {}
+    modes: dict[str, str] = {}
+    for item in (data.get("tree") or []) if isinstance(data, dict) else []:
+        if isinstance(item, dict) and item.get("type") == "blob" and item.get("path"):
+            modes[str(item["path"])] = str(item.get("mode") or "100644")
+    return modes
 
 
 def list_labeled_issues(owner: str, repository: str, *, label: str = "agent", token: str = "") -> list[dict]:

@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
@@ -42,6 +43,10 @@ class ChatHistoryTests(unittest.TestCase):
         ids = [s["id"] for s in listing.json().get("sessions", [])]
         self.assertIn(sid, ids)
 
+    @unittest.skipUnless(
+        (Path(jarvisappv4.__file__).resolve().parent.parent / "frontend" / "dist" / "index.html").exists(),
+        "frontend not built (frontend/dist/index.html fehlt)",
+    )
     def test_root_serves_chat_page(self):
         res = self.client.get("/")
         self.assertEqual(res.status_code, 200)

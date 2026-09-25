@@ -16,10 +16,15 @@ def _write_env(tmp_path: Path, values: dict[str, str]) -> Path:
 
 
 def _run(env_file: Path) -> subprocess.CompletedProcess:
+    # Nur eine minimale Umgebung mitgeben: sonst ueberschreiben zufaellig
+    # exportierte Variablen (z. B. GITHUB_TOKEN) die Testdatei (Umgebung schlaegt Datei).
+    base = subprocess.os.environ
+    env = {"JARVIS_REPO_ROOT": str(SCRIPT.parents[2])}
+    if base.get("PATH"):
+        env["PATH"] = base["PATH"]
     return subprocess.run(
         [sys.executable, str(SCRIPT), "--env", str(env_file)],
-        env={**subprocess.os.environ, "JARVIS_REPO_ROOT": str(SCRIPT.parents[2])},
-        capture_output=True, text=True, check=False,
+        env=env, capture_output=True, text=True, check=False,
     )
 
 
