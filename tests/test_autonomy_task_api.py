@@ -270,3 +270,12 @@ def test_round_report_without_origin_session_is_silent(tmp_path):
                        headers={"X-Jarvis-Agent-Request-Token": "agent-token"},
                        json={"outcome": "done", "summary": "x"})
     assert resp.status_code == 201 and history.posted == []
+
+
+def test_weekly_metrics_endpoint(tmp_path):
+    store, client = _client(tmp_path)
+    store.create_task(title="A")
+    resp = client.get("/admin/autonomy/metrics/weekly", headers={"X-Jarvis-Session": "owner"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["tasks"]["total"] >= 1 and "standing_grant_suggestions" in body

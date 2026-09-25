@@ -9,6 +9,10 @@ condenser size, 1 vs 2 rounds) with real numbers.
 
 Usage:
     python3 scripts/agent/eval/run_eval.py --config "qwen3.8-thinking" [--limit N] [--out results.json]
+
+Eval-Gate (6.2): eine fruehere Messung als Baseline vergleichen und bei
+Verschlechterung mit Code 3 abbrechen (fuer CI/PR):
+    python3 scripts/agent/eval/run_eval.py --config x --baseline baseline.json --gate
 """
 from __future__ import annotations
 
@@ -174,12 +178,36 @@ def run_tasks(tasks: list[dict], *, start, wait, check, out=print) -> dict:
     }
 
 
+def compare_to_baseline(current: dict, baseline: dict, *,
+                        token_tolerance: float = 0.10) -> dict:
+    """Eval-Gate (6.2): keine schlechtere Erfolgsquote, kein Token-Ausreisser."""
+    cur_rate = float(current.get("success_rate", 0.0) or 0.0)
+    base_rate = float(baseline.get("success_rate", 0.0) or 0.0)
+    cur_tokens = int(current.get("total_tokens", 0) or 0)
+    base_tokens = int(baseline.get("total_tokens", 0) or 0)
+    regressions: list[str] = []
+    if cur_rate < base_rate:
+        regressions.append(f"success_rate {cur_rate} < {base_rate}")
+    if base_tokens and cur_tokens > base_tokens * (1 + token_tolerance):
+        regressions.append(
+            f"total_tokens {cur_tokens} > {base_tokens} (+{int(token_tolerance * 100)}%)")
+    return {
+        "passed": not regressions,
+        "regressions": regressions,
+        "success_rate_delta": round(cur_rate - base_rate, 3),
+        "tokens_delta": cur_tokens - base_tokens,
+    }
+
+
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description="Jarvis autonomy eval harness")
     parser.add_argument("--config", default="default", help="Config-Label fuer die Ergebnisse")
     parser.add_argument("--tasks", default=str(DEFAULT_TASKS))
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--out", default="")
+    parser.add_argument("--baseline", default="", help="JSON einer frueheren Messung")
+    parser.add_argument("--gate", action="store_true",
+                        help="Rueckgabecode 3, wenn die Messung schlechter als die Baseline ist")
     args = parser.parse_args(argv[1:])
 
     if not OPENHANDS_API_KEY or not EVAL_LLM_API_KEY:
@@ -195,10 +223,17 @@ def main(argv: list[str]) -> int:
     report = run_tasks(tasks, start=lambda t: start_conversation(t, args.config),
                        wait=wait_for_completion, check=run_check)
     report["config"] = args.config
+    if args.baseline:
+        baseline = json.loads(Path(args.baseline).read_text(encoding="utf-8"))
+        report["gate"] = compare_to_baseline(report, baseline)
     text = json.dumps(report, ensure_ascii=False, indent=2)
     print(text)
     if args.out:
         Path(args.out).write_text(text + "\n", encoding="utf-8")
+    if args.gate and report.get("gate", {}).get("passed") is False:
+        print("Eval-Gate fehlgeschlagen: " + "; ".join(report["gate"]["regressions"]),
+              file=sys.stderr)
+        return 3
     return 0
 
 
