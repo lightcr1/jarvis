@@ -182,3 +182,16 @@ def test_admin_imports_labeled_issues_once(tmp_path, monkeypatch):
     assert second.json() == {"imported": 0, "skipped": 2, "issues": 2}
     tasks = store.list_tasks()
     assert all(t["source"] == "issue" for t in tasks)
+
+
+def test_agent_records_round_metrics_and_admin_reads(tmp_path):
+    _store, client = _client(tmp_path)
+    recorded = client.post("/agent/rounds/round-1/metrics", headers=AGENT, json={
+        "task_id": "t1", "gpu_seconds": 120, "prompt_tokens": 10,
+        "completion_tokens": 5, "cost_estimate": 0.5, "status": "round",
+    })
+    assert recorded.status_code == 201
+    admin = client.get("/admin/autonomy/round-metrics", headers=OWNER)
+    assert admin.status_code == 200
+    assert admin.json()["aggregate"]["total_tokens"] == 15
+    assert client.get("/admin/autonomy/round-metrics").status_code == 401

@@ -47,6 +47,17 @@ class TaskReview(BaseModel):
     decision: str = Field(pattern="^(merged|rejected)$")
 
 
+class RoundMetrics(BaseModel):
+    task_id: str | None = None
+    started_at: int | None = None
+    ended_at: int | None = None
+    gpu_seconds: float = Field(default=0.0, ge=0, le=7 * 24 * 3600)
+    prompt_tokens: int = Field(default=0, ge=0)
+    completion_tokens: int = Field(default=0, ge=0)
+    cost_estimate: float = Field(default=0.0, ge=0)
+    status: str = Field(default="unknown", max_length=40)
+
+
 class TaskClaim(BaseModel):
     round_id: str = Field(max_length=64)
 
@@ -179,6 +190,24 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
     def daily_report(x_jarvis_session: str | None = Header(default=None)):
         _admin_guard(x_jarvis_session, None, None, None)
         return store().daily_summary()
+
+    @router.get("/admin/autonomy/round-metrics")
+    def round_metrics(since: int | None = None,
+                      x_jarvis_session: str | None = Header(default=None)):
+        _admin_guard(x_jarvis_session, None, None, None)
+        return {"aggregate": store().aggregate_metrics(since=since),
+                "metrics": store().list_metrics()}
+
+    @router.post("/agent/rounds/{round_id}/metrics", status_code=201)
+    def record_round_metrics(round_id: str, body: RoundMetrics,
+                             x_jarvis_agent_request_token: str | None = Header(default=None)):
+        agent(x_jarvis_agent_request_token)
+        cap(x_jarvis_agent_request_token, "round-metrics", 60)
+        try:
+            metrics = store().record_metrics(round_id=round_id, **body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        return {"metrics": metrics}
 
     @router.post("/admin/autonomy/import-issues")
     def import_issues(label: str = "agent",

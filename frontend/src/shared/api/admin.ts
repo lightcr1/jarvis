@@ -673,3 +673,28 @@ export function decideAgentPatch(id: string, approve: boolean, title?: string) {
     { method: "POST", includeAdmin: true, body: { approve, title } },
   );
 }
+
+export interface RoundMetric {
+  round_id: string;
+  task_id?: string | null;
+  gpu_seconds: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_estimate: number;
+  status: string;
+}
+
+export interface RoundMetricsAggregate {
+  rounds: number;
+  gpu_hours: number;
+  total_tokens: number;
+  submitted: number;
+  cost_estimate: number;
+  tokens_per_submitted?: number | null;
+  patches_per_gpu_hour?: number | null;
+}
+
+export function fetchRoundMetrics() {
+  return apiRequest<{ aggregate: RoundMetricsAggregate; metrics: RoundMetric[] }>(
+    "/admin/autonomy/round-metrics", { includeAdmin: true });
+}

@@ -702,3 +702,41 @@ def test_main_skips_ideas_round_without_ideas(tmp_path, monkeypatch):
     monkeypatch.setattr(loop, "start_round", lambda *a, **k: (_ for _ in ()).throw(
         AssertionError("kein Ideen-Backlog; keine zweite Runde")))
     assert loop.main() == 0
+
+
+# ---------------------------------------------------------------------------
+# 4.2 Rundenmetriken
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_agent_usage(monkeypatch):
+    captured = {}
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        captured.update(url=url, headers=headers)
+        return {"status": 200, "data": {"total_tokens": 12}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    assert loop.fetch_agent_usage("tok", 1000) == {"total_tokens": 12}
+    assert "since=1000" in captured["url"]
+    assert captured["headers"] == {"X-Control-Token": "tok"}
+    assert loop.fetch_agent_usage("", 1000) == {}
+
+
+def test_close_round_posts_metrics(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "stop_pod", lambda _: True)
+    posted = {}
+    monkeypatch.setattr(loop, "post_round_metrics",
+                        lambda token, rid, payload: posted.update(rid=rid, payload=payload))
+    monkeypatch.setattr(loop, "fetch_agent_usage", lambda control, since: {
+        "rounds": {"sess-1": {"prompt_tokens": 7, "completion_tokens": 3}},
+    })
+    state = {"wrapup_done": False, "active_sessions": {
+        "sess-1": {"kind": "round", "task_id": "t1",
+                   "started_at": "2026-01-01T00:00:00+00:00"}}}
+    loop.close_round(state, "api", "tok", "sess-1", "round", request_token="agent")
+    assert posted["rid"] == "sess-1"
+    assert posted["payload"]["prompt_tokens"] == 7
+    assert posted["payload"]["completion_tokens"] == 3
+    assert posted["payload"]["task_id"] == "t1"

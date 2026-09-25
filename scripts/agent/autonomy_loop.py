@@ -75,6 +75,7 @@ DEFAULT_CONFIG: dict[str, str] = {
     "KEEP_FINISHED_CONVERSATIONS": "10",
     "STUCK_CYCLES": "10",           # aufeinanderfolgende Zyklen ohne Session-Update
     "AGENT_NETWORK_MODE": "isolated",  # isolated | allowlist-proxy
+    "GPU_COST_PER_HOUR": "0",         # fuer Kosten-schaetzung im Rundenbericht (4.2)
     "WORKTREE_MAX_AGE_SECONDS": str(24 * 3600),
     "CONDENSER_MAX_SIZE": "60",      # Events; bei 32k-Kontext deutlich frueher als 200
     "CONDENSER_KEEP_FIRST": "2",
@@ -133,6 +134,7 @@ MAX_PARALLEL_ROUNDS = int(_config["MAX_PARALLEL_ROUNDS"])
 KEEP_FINISHED_CONVERSATIONS = int(_config["KEEP_FINISHED_CONVERSATIONS"])
 STUCK_CYCLES = int(_config["STUCK_CYCLES"])
 AGENT_NETWORK_MODE = _config["AGENT_NETWORK_MODE"]
+GPU_COST_PER_HOUR = float(_config["GPU_COST_PER_HOUR"])
 WORKTREE_MAX_AGE_SECONDS = int(_config["WORKTREE_MAX_AGE_SECONDS"])
 CONDENSER_MAX_SIZE = int(_config["CONDENSER_MAX_SIZE"])
 CONDENSER_KEEP_FIRST = int(_config["CONDENSER_KEEP_FIRST"])
@@ -192,6 +194,18 @@ def _round_seconds(started_at: str | None) -> float:
     if started.tzinfo is None:
         started = started.replace(tzinfo=timezone.utc)
     return max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+
+
+def _iso_epoch(value: str | None) -> int | None:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (ValueError, TypeError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return int(parsed.timestamp())
 
 
 def load_state() -> dict:
@@ -661,6 +675,25 @@ def ensure_round_report(request_token: str | None, task_id: str | None, round_id
          headers={"X-Jarvis-Agent-Request-Token": request_token}, body=payload, timeout=5)
 
 
+def post_round_metrics(request_token: str | None, round_id: str, payload: dict) -> None:
+    """4.2: Rundenmetriken (GPU-Sekunden, Tokens, Kosten) an Jarvis melden."""
+    if not request_token or not round_id:
+        return
+    http("POST", f"{JARVIS_BASE}/agent/rounds/{round_id}/metrics",
+         headers={"X-Jarvis-Agent-Request-Token": request_token}, body=payload, timeout=5)
+
+
+def fetch_agent_usage(control_token: str, since_epoch: int | None) -> dict:
+    """4.2: Controller-Usage fuer das Rundenfenster (ohne Inhalte)."""
+    if not control_token or since_epoch is None:
+        return {}
+    result = http("GET", f"{CONTROLLER_BASE}/api/agent/usage?since={int(since_epoch)}",
+                  headers={"X-Control-Token": control_token}, timeout=5)
+    if result["status"] != 200 or not isinstance(result.get("data"), dict):
+        return {}
+    return result["data"]
+
+
 def environment_context() -> str:
     """Beschreibt die reale Netzwerkumgebung im Rundenprompt (1.4)."""
     common = (
@@ -844,7 +877,7 @@ def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: in
 
 
 def close_round(state: dict, api_key: str, control_token: str, session_id: str,
-                kind: str, force_stop: bool = False) -> None:
+                kind: str, force_stop: bool = False, request_token: str | None = None) -> None:
     """Eine Runde ist zu Ende: Session entfernen, abrechnen, ggf. WRAPUP-Stop.
     Der Pod wird nur gestoppt, wenn keine weiteren Runden mehr laufen."""
     active = state.get("active_sessions", {})
@@ -858,6 +891,22 @@ def close_round(state: dict, api_key: str, control_token: str, session_id: str,
     if duration:
         state["gpu_seconds_today"] = float(state.get("gpu_seconds_today", 0)) + duration
     state["last_round_finished_at"] = now_iso()
+    # 4.2: Rundenmetriken melden (Tokens aus dem Controller-Zeitfenster).
+    if request_token:
+        started_epoch = _iso_epoch(finished_meta.get("started_at"))
+        usage = fetch_agent_usage(control_token, started_epoch)
+        rounds = usage.get("rounds") if isinstance(usage.get("rounds"), dict) else {}
+        round_usage = rounds.get(str(session_id)) if isinstance(rounds, dict) else None
+        post_round_metrics(request_token, str(session_id), {
+            "task_id": finished_meta.get("task_id"),
+            "started_at": started_epoch,
+            "ended_at": int(time.time()),
+            "gpu_seconds": round(duration, 1),
+            "prompt_tokens": int((round_usage or {}).get("prompt_tokens", 0)),
+            "completion_tokens": int((round_usage or {}).get("completion_tokens", 0)),
+            "cost_estimate": round(duration / 3600 * GPU_COST_PER_HOUR, 5),
+            "status": str(kind),
+        })
     state["last_kind"] = kind
     log(f"Runde ({kind}, session={str(session_id)[:8]}) beendet")
     # Pod stoppen, sobald der Wrapup ausgeloest wurde UND danach die letzte
@@ -981,7 +1030,8 @@ def main() -> int:
                                 meta.get("task_id"), str(meta.get("round_id") or session_id_key))
             close_round(state, api_key, control["control"], str(session_id_key),
                         str(meta.get("kind") or "round"),
-                        force_stop=meta.get("kind") == "wrapup")
+                        force_stop=meta.get("kind") == "wrapup",
+                        request_token=env.get("JARVIS_AGENT_REQUEST_TOKEN"))
             continue
         status = session_execution_status(actual)
         if status in ("running", "pending", "starting"):
@@ -998,7 +1048,8 @@ def main() -> int:
                                         str(meta.get("round_id") or session_id_key),
                                         summary="Runde haengt (Stuck-Erkennung des Loops).")
                     close_round(state, api_key, control["control"], str(session_id_key),
-                                str(meta.get("kind") or "round"))
+                                str(meta.get("kind") or "round"),
+                                request_token=env.get("JARVIS_AGENT_REQUEST_TOKEN"))
                     continue
                 # Runde am Leben halten (alle aktiven bekommen Heartbeat).
                 heartbeat(control["control"])
@@ -1022,7 +1073,8 @@ def main() -> int:
             ensure_round_report(env.get("JARVIS_AGENT_REQUEST_TOKEN"),
                                 meta.get("task_id"), str(meta.get("round_id") or session_id_key))
             close_round(state, api_key, control["control"], str(session_id_key),
-                        str(meta.get("kind") or "round"))
+                        str(meta.get("kind") or "round"),
+                        request_token=env.get("JARVIS_AGENT_REQUEST_TOKEN"))
         # Unknown/andere Status: nichts tun, naechste Iteration prueft erneut.
 
     # Beendete eigene Conversations und verwaiste Worktrees aufraeumen (B5).
