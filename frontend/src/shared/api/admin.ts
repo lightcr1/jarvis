@@ -651,6 +651,41 @@ export function requestLoopRollout() {
     "/admin/autonomy/loop-rollout", { method: "POST", includeAdmin: true });
 }
 
+export interface StandingGrant {
+  id: string;
+  capability: string;
+  target_pattern: string;
+  tier: string;
+  status: string;
+  uses: number;
+  expires_at?: number | null;
+}
+
+export interface CapabilityInfo {
+  name: string;
+  tier: string;
+  description?: string;
+}
+
+export function fetchStandingGrants() {
+  return apiRequest<{ grants: StandingGrant[] }>("/admin/standing-grants", { includeAdmin: true });
+}
+
+export function createStandingGrant(capability: string, target_pattern: string, tier: string) {
+  return apiRequest<{ grant: StandingGrant }>("/admin/standing-grants", {
+    method: "POST", includeAdmin: true, body: { capability, target_pattern, tier },
+  });
+}
+
+export function revokeStandingGrant(id: string) {
+  return apiRequest<{ grant: StandingGrant }>(
+    `/admin/standing-grants/${encodeURIComponent(id)}/revoke`, { method: "POST", includeAdmin: true });
+}
+
+export function fetchCapabilities() {
+  return apiRequest<{ capabilities: CapabilityInfo[] }>("/admin/capabilities", { includeAdmin: true });
+}
+
 export interface AgentPatch {
   id: string;
   repository: string;

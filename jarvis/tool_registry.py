@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from .authz import permission_decision, resolve_effective_permissions
+from .capabilities import authorize_action
 from .jarvis_engine import RiskLevel, emergency_stop_enabled
 
 
@@ -22,6 +23,10 @@ class Tool:
     required_permission: str
     risk: str
     handler: Callable[[ToolExecutionContext, dict], dict]
+    # Optionaler Freigabe-Kern: Capability aus config/capabilities.json. Ohne
+    # Angabe wird sie aus dem Risk-Level abgeleitet (READ -> T0, sonst T2),
+    # sodass das bestehende Verhalten unveraendert bleibt.
+    capability: str | None = None
 
 
 class ToolRegistry:
@@ -60,6 +65,13 @@ _AGENT_AUTONOMOUS_TOOLS = {
     "create_task": ("workspace", "jarvis:tasks", "create_task"),
     "complete_task": ("workspace", "jarvis:tasks", "complete_task"),
 }
+
+
+def capability_for_tool(tool: Tool) -> str:
+    """Capability fuer den Freigabe-Kern; READ -> T0, sonst fail-safe unclassified."""
+    if getattr(tool, "capability", None):
+        return str(tool.capability)
+    return "status.read" if tool.risk == RiskLevel.READ else "unclassified.action"
 
 
 def execute_tool(
@@ -105,12 +117,29 @@ def execute_tool(
             return {"reply": "Owner grant required for this agent action.",
                     "data": {"route": "tool_denied", "tool": tool.name, "error": "agent_grant_required"}}
 
-    if tool.risk != RiskLevel.READ and not (confirm or agent_authorized):
+    # Zentraler Freigabe-Kern (Plan Abschnitt 3): konservativ ergaenzt.
+    verdict = authorize_action(
+        capability_for_tool(tool),
+        target=str(args.get("target") or args.get("name") or ""),
+        params=args,
+        untrusted_context=bool((ctx.deps or {}).get("untrusted_context")) if isinstance(ctx.deps, dict) else False,
+        emergency_stop=emergency_stop_enabled(),
+    )
+    if verdict.decision == "deny":
         if audit_log:
-            audit_log.write("tool_confirmation_requested", {"tool": tool.name, "args": args, "user_id": ctx.user_id, "role": ctx.role, "risk": tool.risk})
+            audit_log.write("tool_capability_denied", {"tool": tool.name, "tier": verdict.tier, "reason": verdict.reason})
+        return {"reply": "I can't take that action right now.",
+                "data": {"route": "tool_denied", "tool": tool.name, "error": "denied", "tier": verdict.tier}}
+    single_confirm = verdict.tier == "T3"  # T3 immer einzeln, nie per Agent-Grant
+    core_allowed = verdict.decision == "allow" and verdict.tier in ("T0", "T1")
+    pre_authorized = (not single_confirm) and (agent_authorized or core_allowed)
+
+    if (tool.risk != RiskLevel.READ or single_confirm) and not (confirm or pre_authorized):
+        if audit_log:
+            audit_log.write("tool_confirmation_requested", {"tool": tool.name, "args": args, "user_id": ctx.user_id, "role": ctx.role, "risk": tool.risk, "tier": verdict.tier})
         return {
             "reply": f"This will {tool.description[0].lower()}{tool.description[1:]} Reply “yes” to confirm.",
-            "data": {"route": "tool_confirmation_required", "tool": tool.name, "args": args, "risk": tool.risk},
+            "data": {"route": "tool_confirmation_required", "tool": tool.name, "args": args, "risk": tool.risk, "tier": verdict.tier},
         }
 
     if audit_log:
