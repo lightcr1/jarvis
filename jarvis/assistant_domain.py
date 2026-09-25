@@ -798,6 +798,7 @@ def try_skill(
     user_prefs: dict | None = None,
     memory_store=None,
     user_id: str | None = None,
+    session_id: str | None = None,
     task_service=None,
     calendar_service=None,
     email_service=None,
@@ -831,6 +832,7 @@ def try_skill(
                 task = autonomy_task_store.create_task(
                     title=task_text[:140], description=task_text, area="general",
                     size="medium", source="owner", status="open",
+                    origin_session_id=session_id,
                 )
             except ValueError as exc:
                 return {"reply": f"I could not add that task: {exc}",

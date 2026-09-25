@@ -224,3 +224,49 @@ def test_loop_rollout_writes_marker_only_for_owner(tmp_path):
 def test_loop_rollout_unconfigured_is_503(tmp_path):
     _store, client = _client(tmp_path)
     assert client.post("/admin/autonomy/loop-rollout", headers=OWNER).status_code == 503
+
+
+def _client_with_history(store, history):
+    deps = {
+        "autonomy_task_store": store,
+        "require_admin_access": None,
+        "get_identity_session": lambda token: None,
+        "normalize_role": lambda role: role,
+        "agent_request_token": "agent-token",
+        "audit_admin_event": lambda *a, **k: None,
+        "owner_user_id": "owner",
+        "chat_history": history,
+    }
+    app = FastAPI(); app.include_router(build_autonomy_tasks_router(deps))
+    return TestClient(app)
+
+
+class _History:
+    def __init__(self):
+        self.posted = []
+    def append_message(self, session_id, role, text, owner_key="guest:anonymous", owner_user_id=None):
+        self.posted.append((session_id, role, text))
+
+
+def test_round_report_posts_into_origin_chat(tmp_path):
+    store = AutonomyTaskStore(tmp_path / "t.sqlite3")
+    history = _History()
+    client = _client_with_history(store, history)
+    task = store.create_task(title="Aus Chat", origin_session_id="sess-9")
+    resp = client.post(f"/agent/tasks/{task['id']}/report",
+                       headers={"X-Jarvis-Agent-Request-Token": "agent-token"},
+                       json={"outcome": "done", "summary": "fertig", "next_step": "nichts"})
+    assert resp.status_code == 201
+    assert history.posted and history.posted[0][0] == "sess-9"
+    assert "fertig" in history.posted[0][2] and history.posted[0][1] == "jarvis"
+
+
+def test_round_report_without_origin_session_is_silent(tmp_path):
+    store = AutonomyTaskStore(tmp_path / "t.sqlite3")
+    history = _History()
+    client = _client_with_history(store, history)
+    task = store.create_task(title="Ohne Chat")
+    resp = client.post(f"/agent/tasks/{task['id']}/report",
+                       headers={"X-Jarvis-Agent-Request-Token": "agent-token"},
+                       json={"outcome": "done", "summary": "x"})
+    assert resp.status_code == 201 and history.posted == []

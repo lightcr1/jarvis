@@ -75,3 +75,26 @@ def test_verify_map_skips_frontend_and_unknown(tmp_path):
     _make_tests(tmp_path, ["test_files.py"])
     assert verify_map.tests_for_paths(["frontend/src/x.tsx"], tmp_path) == []
     assert verify_map.tests_for_paths(["README.md"], tmp_path) == []
+
+
+def test_chat_agent_task_keeps_origin_session(tmp_path):
+    """7.2: Chat->Aufgabe merkt sich die Session fuer den Rueckkanal."""
+    from jarvis.assistant_domain import try_skill
+    from jarvis.autonomy_task_store import AutonomyTaskStore
+
+    store = AutonomyTaskStore(tmp_path / "tasks.sqlite3")
+    noop = lambda *a, **k: None
+    result = try_skill(
+        "gib dem agenten die aufgabe: Pruefe die Backups",
+        role="admin", token=None, granted_permissions=[],
+        emergency_stop_enabled=lambda: False, permission_check=lambda *a: True,
+        run_cmd=noop, disk_usage=noop, format_bytes=noop, parse_meminfo=noop,
+        parse_ping=noop, tail_lines=noop, ensure_service_allowed=noop,
+        proxmox_vm_status=noop, proxmox_lxc_status=noop,
+        proxmox_vm_action=noop, proxmox_lxc_action=noop,
+        autonomy_task_store=store, session_id="sess-chat-1",
+    )
+    assert result and result["data"]["route"] == "agent_task"
+    task = result["data"]["task"]
+    assert task["origin_session_id"] == "sess-chat-1"
+    assert store.get_task(task["id"])["origin_session_id"] == "sess-chat-1"
