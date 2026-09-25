@@ -33,6 +33,7 @@ Cron example (installed for user "media", no root needed):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -45,40 +46,34 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
-BASE_DIR = Path("/home/media/jarvis-openhands/autonomy")
-STATE_PATH = BASE_DIR / "autonomy-state.json"
-LOG_PATH = BASE_DIR / "autonomy-loop.log"
-ENV_RUNPOD = Path("/home/media/runpod/.env")
-ENV_JARVIS = Path("/home/media/jarvis.env")
-AUTONOMY_SWITCH = Path("/home/media/jarvis-openhands/projects/jarvis/config/autonomy.json")
-WORKSPACE_REPO = "/projects/jarvis"
+BASE_DIR = Path(os.environ.get("AUTONOMY_BASE_DIR", "/home/media/jarvis-openhands/autonomy"))
+# Optionale Konfigurationsdatei, liegt normalerweise neben der installierten
+# Loop-Kopie. Reihenfolge: Default < Datei < Prozess-Umgebung.
+CONFIG_PATH = Path(os.environ.get("AUTONOMY_LOOP_ENV", str(BASE_DIR / "autonomy-loop.env")))
 
-CONTROLLER_BASE = "https://10.10.40.100:8443"
-OPENHANDS_BASE = "http://10.10.40.100:8001"
-JARVIS_BASE = "http://10.10.40.100:8100"
-COOLDOWN_SECONDS = 150               # short pause between normal rounds
-USER_BUSY_SECONDS = 90               # <-> owner interaction counts as busy
-HEARTBEAT_INTERVAL = 60
-MAX_ITERATIONS = 120                 # bound a single round
-MAX_PARALLEL_ROUNDS = 2              # max. gleichzeitige Autonomie-Runden
-KEEP_FINISHED_CONVERSATIONS = int(os.environ.get("KEEP_FINISHED_CONVERSATIONS", "10"))
-WORKTREE_REPO_PATH = Path(os.environ.get(
-    "AUTONOMY_WORKTREE_REPO", "/home/media/jarvis-openhands/projects/jarvis"))
-WORKTREE_MAX_AGE_SECONDS = int(os.environ.get("AUTONOMY_WORKTREE_MAX_AGE_SECONDS",
-                                               str(24 * 3600)))
-SESSION_ID_RE = re.compile(
-    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
-
-
-def log(message: str) -> None:
-    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    line = f"[{ts}] {message}"
-    try:
-        with LOG_PATH.open("a", encoding="utf-8") as fh:
-            fh.write(line + "\n")
-    except OSError:
-        pass
-    print(line, file=sys.stderr)
+# Heutige Werte bleiben unveraendert Default; keine Verhaltensaenderung ohne Config.
+DEFAULT_CONFIG: dict[str, str] = {
+    "STATE_PATH": str(BASE_DIR / "autonomy-state.json"),
+    "LOG_PATH": str(BASE_DIR / "autonomy-loop.log"),
+    "ENV_RUNPOD": "/home/media/runpod/.env",
+    "ENV_JARVIS": "/home/media/jarvis.env",
+    "AUTONOMY_SWITCH": "/home/media/jarvis-openhands/projects/jarvis/config/autonomy.json",
+    "WORKSPACE_REPO": "/projects/jarvis",
+    "WORKTREE_REPO_PATH": "/home/media/jarvis-openhands/projects/jarvis",
+    "CONTROLLER_BASE": "https://10.10.40.100:8443",
+    "OPENHANDS_BASE": "http://10.10.40.100:8001",
+    "JARVIS_BASE": "http://10.10.40.100:8100",
+    "COOLDOWN_SECONDS": "150",      # short pause between normal rounds
+    "USER_BUSY_SECONDS": "90",      # <-> owner interaction counts as busy
+    "HEARTBEAT_INTERVAL": "60",
+    "MAX_ITERATIONS": "120",        # bound a single round
+    "MAX_PARALLEL_ROUNDS": "2",     # max. gleichzeitige Autonomie-Runden
+    "KEEP_FINISHED_CONVERSATIONS": "10",
+    "WORKTREE_MAX_AGE_SECONDS": str(24 * 3600),
+    "CONDENSER_MAX_SIZE": "200",
+    "CONDENSER_KEEP_FIRST": "2",
+    "CONTROLLER_CA_FILE": "",       # leer = CERT_NONE-Fallback mit Warnung
+}
 
 
 def _parse_env(path: Path) -> dict[str, str]:
@@ -92,6 +87,76 @@ def _parse_env(path: Path) -> dict[str, str]:
         key, _, value = line.partition("=")
         values[key.strip()] = value.strip().strip('"').strip("'")
     return values
+
+
+def load_config(config_path: Path | None = None,
+                environ: dict[str, str] | None = None) -> dict[str, str]:
+    """Merge defaults, the optional env file and process environment.
+
+    Process environment wins over the file so one-off overrides are possible
+    without editing the installed config.
+    """
+    path = Path(config_path) if config_path is not None else CONFIG_PATH
+    values = dict(DEFAULT_CONFIG)
+    values.update(_parse_env(path))
+    source = os.environ if environ is None else environ
+    for key in DEFAULT_CONFIG:
+        if source.get(key):
+            values[key] = source[key]
+    return values
+
+
+_config = load_config()
+STATE_PATH = Path(_config["STATE_PATH"])
+LOG_PATH = Path(_config["LOG_PATH"])
+ENV_RUNPOD = Path(_config["ENV_RUNPOD"])
+ENV_JARVIS = Path(_config["ENV_JARVIS"])
+AUTONOMY_SWITCH = Path(_config["AUTONOMY_SWITCH"])
+WORKSPACE_REPO = _config["WORKSPACE_REPO"]
+WORKTREE_REPO_PATH = Path(_config["WORKTREE_REPO_PATH"])
+CONTROLLER_BASE = _config["CONTROLLER_BASE"]
+OPENHANDS_BASE = _config["OPENHANDS_BASE"]
+JARVIS_BASE = _config["JARVIS_BASE"]
+COOLDOWN_SECONDS = int(_config["COOLDOWN_SECONDS"])
+USER_BUSY_SECONDS = int(_config["USER_BUSY_SECONDS"])
+HEARTBEAT_INTERVAL = int(_config["HEARTBEAT_INTERVAL"])
+MAX_ITERATIONS = int(_config["MAX_ITERATIONS"])
+MAX_PARALLEL_ROUNDS = int(_config["MAX_PARALLEL_ROUNDS"])
+KEEP_FINISHED_CONVERSATIONS = int(_config["KEEP_FINISHED_CONVERSATIONS"])
+WORKTREE_MAX_AGE_SECONDS = int(_config["WORKTREE_MAX_AGE_SECONDS"])
+CONDENSER_MAX_SIZE = int(_config["CONDENSER_MAX_SIZE"])
+CONDENSER_KEEP_FIRST = int(_config["CONDENSER_KEEP_FIRST"])
+CONTROLLER_CA_FILE = _config["CONTROLLER_CA_FILE"]
+SESSION_ID_RE = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.IGNORECASE)
+
+_TLS_WARNED = False
+
+
+def log(message: str) -> None:
+    ts = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    line = f"[{ts}] {message}"
+    try:
+        with LOG_PATH.open("a", encoding="utf-8") as fh:
+            fh.write(line + "\n")
+    except OSError:
+        pass
+    print(line, file=sys.stderr)
+
+
+def warn_if_insecure_tls() -> None:
+    global _TLS_WARNED
+    if CONTROLLER_CA_FILE or _TLS_WARNED:
+        return
+    _TLS_WARNED = True
+    log("WARNUNG: CONTROLLER_CA_FILE ist nicht gesetzt - TLS-Zertifikat wird "
+        "nicht verifiziert (CERT_NONE).")
+
+
+def source_sha256(path: Path | None = None) -> str:
+    """SHA256 of the running loop file (or an explicit path) for drift checks."""
+    target = Path(path) if path is not None else Path(__file__)
+    return hashlib.sha256(target.read_bytes()).hexdigest()
 
 
 def now_iso() -> str:
@@ -135,20 +200,37 @@ def save_state(state: dict) -> None:
     os.replace(temporary, STATE_PATH)
 
 
+def build_ssl_context(ca_file: str = "") -> ssl.SSLContext:
+    """TLS context for the controller.
+
+    With ``CONTROLLER_CA_FILE`` set (e.g. the self-generated ``tls/server.crt``)
+    the certificate and hostname are verified. Without it we fall back to
+    ``CERT_NONE`` so the private-LAN self-signed controller still works; that
+    fallback logs a warning once per run (see ``warn_if_insecure_tls``).
+    """
+    ctx = ssl.create_default_context()
+    if ca_file:
+        ctx.load_verify_locations(ca_file)
+        ctx.check_hostname = True
+        ctx.verify_mode = ssl.CERT_REQUIRED
+    else:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
 def http(method: str, url: str, headers: dict | None = None, body: dict | None = None,
          timeout: float = 20) -> dict:
-    """Small HTTP helper. TLS verification is skipped: the controller runs on a
-    private LAN IP with a self-signed certificate and the loop never leaves the
-    host. Authorization tokens are always sent as headers."""
+    """Small HTTP helper. TLS verification depends on ``CONTROLLER_CA_FILE``
+    (see ``build_ssl_context``). Authorization tokens are always sent as
+    headers."""
     data = json.dumps(body).encode() if body is not None else None
     req = urllib.request.Request(url, data=data, method=method)
     if data is not None:
         req.add_header("Content-Type", "application/json")
     for key, value in (headers or {}).items():
         req.add_header(key, value)
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE
+    ctx = build_ssl_context(CONTROLLER_CA_FILE)
     try:
         with urllib.request.urlopen(req, timeout=timeout, context=ctx) as resp:
             payload = resp.read().decode("utf-8", errors="replace")
@@ -539,8 +621,8 @@ def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: in
                     "is_subscription": False,
                     "stream": False,
                 },
-                "max_size": 200,
-                "keep_first": 2,
+                "max_size": CONDENSER_MAX_SIZE,
+                "keep_first": CONDENSER_KEEP_FIRST,
             },
             "tools": [
                 {"name": "terminal", "params": {}},
@@ -613,6 +695,12 @@ def main() -> int:
         return 0
 
     state = load_state()
+    digest = source_sha256()
+    if state.get("loop_sha256") != digest:
+        log(f"Autonomy-Loop Version: {digest[:12]} ({Path(__file__)})")
+    state["loop_sha256"] = digest
+    state["loop_source"] = str(Path(__file__))
+    warn_if_insecure_tls()
     active = state.setdefault("active_sessions", {})
 
     ok, pod_status, pod_id = check_pod(control["control"])

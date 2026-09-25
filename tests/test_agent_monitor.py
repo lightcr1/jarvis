@@ -1,3 +1,4 @@
+import hashlib
 import json
 
 import pytest
@@ -6,6 +7,7 @@ from jarvis.agent_monitor import (
     list_owner_requests,
     list_sessions,
     decide_owner_request,
+    loop_version,
     MonitorError,
 )
 
@@ -132,3 +134,45 @@ def test_session_status_compat(monkeypatch):
     ]})
     s = list_sessions()[0]
     assert s["id"] == "abc"
+
+
+# ---------------------------------------------------------------------------
+# loop_version / drift
+# ---------------------------------------------------------------------------
+
+def _write_loop_source(root):
+    source = root / "scripts" / "agent" / "autonomy_loop.py"
+    source.parent.mkdir(parents=True, exist_ok=True)
+    source.write_bytes(b"loop-source")
+    return source
+
+
+def test_loop_version_detects_drift(tmp_path):
+    root = tmp_path / "repo"
+    source = _write_loop_source(root)
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"loop_sha256": "deadbeef"}), encoding="utf-8")
+
+    info = loop_version(root, state)
+    assert info["repo_sha256"] == hashlib.sha256(source.read_bytes()).hexdigest()
+    assert info["installed_sha256"] == "deadbeef"
+    assert info["drift"] is True
+
+
+def test_loop_version_matches_without_drift(tmp_path):
+    root = tmp_path / "repo"
+    source = _write_loop_source(root)
+    digest = hashlib.sha256(source.read_bytes()).hexdigest()
+    state = tmp_path / "state.json"
+    state.write_text(json.dumps({"loop_sha256": digest}), encoding="utf-8")
+
+    info = loop_version(root, state)
+    assert info["drift"] is False
+
+
+def test_loop_version_unknown_installed_is_not_drift(tmp_path):
+    root = tmp_path / "repo"
+    _write_loop_source(root)
+    info = loop_version(root, tmp_path / "missing.json")
+    assert info["installed_sha256"] is None
+    assert info["drift"] is False
