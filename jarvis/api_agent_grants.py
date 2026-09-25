@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from .router_dependencies import LiveRef
 from .rate_limiter import _rate as _rate_limiter
 from .jarvis_engine import emergency_stop_enabled
+from .capabilities import load_capabilities
 from .research_gateway import ResearchError, search_searxng, search_web
 from .github_gateway import GithubGatewayError, canonical_repo, create_agent_branch, create_pull_request, public_repository_metadata, submit_patch, write_branch_file
 
@@ -96,6 +97,13 @@ class PullRequestAction(BaseModel):
 
 class ActionDecision(BaseModel):
     approve: bool
+
+
+class StandingGrantCreate(BaseModel):
+    capability: str = Field(max_length=120)
+    target_pattern: str = Field(default="*", max_length=300)
+    tier: str = Field(default="T2", pattern="^(T1|T2)$")
+    duration_seconds: int | None = Field(default=None, ge=60, le=365 * 24 * 3600)
 
 
 class IdeaReview(BaseModel):
@@ -512,5 +520,36 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
             raise HTTPException(409, "request missing or not approved")
         audit("agent.grant.revoked", actor, {"request_id": request_id})
         return {"request": item}
+
+    @router.get("/admin/standing-grants")
+    def list_standing_grants(x_jarvis_session: str | None = Header(default=None)):
+        owner(x_jarvis_session)
+        return {"grants": current("agent_grant_store").list_standing_grants()}
+
+    @router.post("/admin/standing-grants", status_code=201)
+    def create_standing_grant(body: StandingGrantCreate, x_jarvis_session: str | None = Header(default=None)):
+        actor = owner(x_jarvis_session)
+        try:
+            grant = current("agent_grant_store").create_standing_grant(actor=actor, **body.model_dump())
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        audit("agent.standing_grant.created", actor,
+              {"grant_id": grant["id"], "capability": body.capability, "tier": body.tier})
+        return {"grant": grant}
+
+    @router.post("/admin/standing-grants/{grant_id}/revoke")
+    def revoke_standing_grant(grant_id: str, x_jarvis_session: str | None = Header(default=None)):
+        actor = owner(x_jarvis_session)
+        grant = current("agent_grant_store").revoke_standing_grant(grant_id, actor=actor)
+        if grant is None:
+            raise HTTPException(409, "grant missing or not approved")
+        audit("agent.standing_grant.revoked", actor, {"grant_id": grant_id})
+        return {"grant": grant}
+
+    @router.get("/admin/capabilities")
+    def list_capabilities(x_jarvis_session: str | None = Header(default=None)):
+        owner(x_jarvis_session)
+        registry = load_capabilities()
+        return {"capabilities": [{"name": name, **entry} for name, entry in sorted(registry.items())]}
 
     return router
