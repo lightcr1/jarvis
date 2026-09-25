@@ -644,6 +644,11 @@ export function fetchLoopVersion() {
   return apiRequest<LoopVersion>("/agent/loop-version", { includeAdmin: true });
 }
 
+export function requestLoopRollout() {
+  return apiRequest<{ requested: boolean; marker: string }>(
+    "/admin/autonomy/loop-rollout", { method: "POST", includeAdmin: true });
+}
+
 export interface AgentPatch {
   id: string;
   repository: string;

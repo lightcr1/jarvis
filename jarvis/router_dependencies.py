@@ -255,6 +255,7 @@ def build_autonomy_tasks_deps(state: object) -> dict:
         "alert_broadcaster": get_alert_broadcaster(),
         "github_token": os.getenv("GITHUB_TOKEN", "") or "",
         "github_repo": os.getenv("GITHUB_REPO", "lightcr1/jarvis"),
+        "loop_rollout_marker": os.getenv("JARVIS_LOOP_ROLLOUT_MARKER", ""),
     }
 
 

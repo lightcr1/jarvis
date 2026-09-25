@@ -7,6 +7,7 @@ import {
   fetchAgentPatch,
   fetchRoundMetrics,
   decideAgentPatch,
+  requestLoopRollout,
   decideOwnerRequest,
   agentSessionAction,
   type AgentSession,
@@ -35,6 +36,7 @@ export function AgentMonitorPage() {
   const [patchDiff, setPatchDiff] = useState("");
   const [patchFeedback, setPatchFeedback] = useState("");
   const [roundMetrics, setRoundMetrics] = useState<RoundMetricsAggregate | null>(null);
+  const [rolloutMsg, setRolloutMsg] = useState("");
   const [readonly, setReadonly] = useState(false);
   const [reqError, setReqError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -108,6 +110,16 @@ export function AgentMonitorPage() {
     }
   }, [openPatch]);
 
+  const requestRollout = useCallback(async () => {
+    setRolloutMsg("");
+    try {
+      await requestLoopRollout();
+      setRolloutMsg("Rollout angefordert — der Host-Timer installiert beim nächsten Lauf.");
+    } catch (e) {
+      setRolloutMsg(`Fehler: ${e instanceof Error ? e.message : "Anforderung fehlgeschlagen"}`);
+    }
+  }, []);
+
   const statusIcon = (s: AgentSession) => {
     if (s.status === "running" || s.status === "active" || s.status === "starting" || s.status === "pending") return "🟢";
     if (s.status === "paused") return "⏸️";
@@ -146,6 +158,13 @@ export function AgentMonitorPage() {
                 <div style={{ color: J.amber, marginTop: 6 }}>
                   ⚠️ Drift: Die installierte Loop-Kopie weicht von der versionierten Quelle ab.
                   Rollout mit <code>scripts/agent/install_loop.sh</code>.
+                  <div style={{ marginTop: 6 }}>
+                    <button onClick={() => void requestRollout()}
+                      style={{ padding: "5px 10px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, cursor: "pointer", fontSize: 12 }}>
+                      Rollout anfordern
+                    </button>
+                    {rolloutMsg && <div style={{ color: J.textMuted, fontSize: 12, marginTop: 4 }}>{rolloutMsg}</div>}
+                  </div>
                 </div>
               )}
             </div>

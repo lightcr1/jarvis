@@ -8,7 +8,7 @@ from jarvis.autonomy_task_store import AutonomyTaskStore
 from jarvis.api_autonomy_tasks import build_autonomy_tasks_router
 
 
-def _client(tmp_path, broadcaster=None, owner=None):
+def _client(tmp_path, broadcaster=None, owner=None, marker=None):
     store = AutonomyTaskStore(tmp_path / "tasks.sqlite3")
     deps = {
         "autonomy_task_store": store,
@@ -23,6 +23,8 @@ def _client(tmp_path, broadcaster=None, owner=None):
         deps["alert_broadcaster"] = broadcaster
     if owner is not None:
         deps["owner_user_id"] = owner
+    if marker is not None:
+        deps["loop_rollout_marker"] = marker
     app = FastAPI()
     app.include_router(build_autonomy_tasks_router(deps))
     return store, TestClient(app)
@@ -207,3 +209,18 @@ def test_agent_token_opens_no_admin_endpoint(tmp_path):
                        json={"title": "x"}).status_code == 401
     assert client.post("/admin/autonomy/tasks/missing/review", headers=AGENT,
                        json={"decision": "merged"}).status_code == 401
+
+
+def test_loop_rollout_writes_marker_only_for_owner(tmp_path):
+    marker = tmp_path / "rollout-requested"
+    _store, client = _client(tmp_path, marker=str(marker))
+    assert client.post("/admin/autonomy/loop-rollout", headers=AGENT).status_code == 401
+    response = client.post("/admin/autonomy/loop-rollout", headers=OWNER)
+    assert response.status_code == 200
+    assert response.json()["requested"] is True
+    assert marker.exists()
+
+
+def test_loop_rollout_unconfigured_is_503(tmp_path):
+    _store, client = _client(tmp_path)
+    assert client.post("/admin/autonomy/loop-rollout", headers=OWNER).status_code == 503
