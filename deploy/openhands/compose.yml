@@ -9,7 +9,7 @@ services:
       # Request-only capability: cannot approve actions or reveal server-side service tokens.
       JARVIS_AGENT_REQUEST_TOKEN: ${JARVIS_AGENT_REQUEST_TOKEN:?Set JARVIS_AGENT_REQUEST_TOKEN}
       # Kontrollierter Ausgang ins Internet ueber den Allowlist-Proxy.
-      # Nur pypi.org, files.pythonhosted.org, github.com & Download-Hosts.
+      # Nur PyPI; GitHub-Downloads per Default gesperrt (ALLOW_GITHUB=1 hebt das auf).
       HTTP_PROXY: ${PROXY_URL:-http://allowlist-proxy:3128}
       HTTPS_PROXY: ${PROXY_URL:-http://allowlist-proxy:3128}
       # Interne Dienste und lokale Pfade niemals ueber den Proxy.
@@ -97,6 +97,8 @@ services:
       # Quell-IP fuer ausgehende Verbindungen (runpod_default-IP). Leer:
       # der Proxy erkennt die Egress-IP zur Laufzeit automatisch.
       EGRESS_IP: ${EGRESS_IP:-}
+      # Phase 6: GitHub-Downloads standardmaessig gesperrt; 1 = erlauben.
+      ALLOW_GITHUB: ${ALLOW_GITHUB:-0}
     read_only: true
     tmpfs:
       - /tmp:size=16m,noexec,nosuid,mode=1777

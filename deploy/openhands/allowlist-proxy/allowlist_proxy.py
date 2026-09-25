@@ -2,8 +2,9 @@
 """Allowlist-proxy fuer den autonomen Jarvis-Agenten.
 
 HTTP(S)-Forward-Proxy, der ausschliesslich genau die erlaubten Hostnamen
-durchlaesst (pypi.org, files.pythonhosted.org, github.com und die zugehoerigen
-Download-Hosts). Alles andere wird mit 403 blockiert.
+durchlaesst. Standard: pypi.org und files.pythonhosted.org. GitHub-Downloads
+sind per Default gesperrt (ALLOW_GITHUB=1 hebt das auf); GitHub-Aktionen
+laufen ueber das Gateway. Alles andere wird mit 403 blockiert.
 
 Design:
 - HTTP-Requests: Host-Header gegen die Allowlist pruefen.
@@ -45,15 +46,22 @@ def detect_egress_ip() -> str:
     except OSError:
         return ""
 
-ALLOWED_HOSTS = {
+PYPI_HOSTS = {
     "pypi.org",
     "files.pythonhosted.org",
+}
+GITHUB_HOSTS = {
     "github.com",
     "api.github.com",
     "codeload.github.com",
     "raw.githubusercontent.com",
     "objects.githubusercontent.com",
 }
+# Phase 6: GitHub-Downloads sind standardmaessig gesperrt; GitHub-Aktionen
+# laufen ueber das typisierte Gateway (scripts/agent/jarvis_gateway.py).
+# ALLOW_GITHUB=1 erlaubt sie wieder (bewusste Owner-Entscheidung).
+ALLOW_GITHUB = os.getenv("ALLOW_GITHUB", "0").strip().lower() in {"1", "true", "yes", "on"}
+ALLOWED_HOSTS = PYPI_HOSTS | (GITHUB_HOSTS if ALLOW_GITHUB else set())
 
 # Erlaubte IP-Bereiche (nur public Internet-Adressen; private/loopback/linklocal raus)
 PUBLIC_RANGES = [
