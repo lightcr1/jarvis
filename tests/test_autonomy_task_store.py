@@ -171,3 +171,17 @@ def test_migration_adds_escalated_column(tmp_path):
     with store._connect() as conn:
         columns = {row[1] for row in conn.execute("PRAGMA table_info(autonomy_tasks)")}
     assert "escalated" in columns
+
+
+def test_daily_summary_counts_last_24h(tmp_path):
+    store = _store(tmp_path)
+    task = store.create_task(title="T", area="tasks")
+    store.claim_task(task["id"], round_id="r1")
+    store.record_report(task_id=task["id"], round_id="r1", outcome="done", summary="finished it")
+    summary = store.daily_summary(now=int(store.clock()))
+    assert summary["rounds"] == 1
+    assert summary["outcomes"]["done"] == 1
+    assert summary["latest"] == "finished it"
+    assert summary["tasks_by_status"]["done"] == 1
+    old = store.daily_summary(since=int(store.clock()) + 10)
+    assert old["rounds"] == 0

@@ -155,6 +155,11 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
         _admin_guard(x_jarvis_session, None, None, None)
         return {"areas": store().area_success_rates()}
 
+    @router.get("/admin/autonomy/daily-report")
+    def daily_report(x_jarvis_session: str | None = Header(default=None)):
+        _admin_guard(x_jarvis_session, None, None, None)
+        return store().daily_summary()
+
     @router.post("/admin/autonomy/tasks/{task_id}/review")
     def review_task(task_id: str, body: TaskReview,
                     x_jarvis_session: str | None = Header(default=None)):

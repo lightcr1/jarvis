@@ -118,3 +118,10 @@ def test_admin_review_and_stats(tmp_path):
     assert stats.json()["areas"]["tasks"]["done"] == 1
     assert client.post(f"/admin/autonomy/tasks/{task['id']}/review", headers=AGENT,
                        json={"decision": "merged"}).status_code == 401
+
+
+def test_admin_daily_report(tmp_path):
+    _store, client = _client(tmp_path)
+    response = client.get("/admin/autonomy/daily-report", headers=OWNER)
+    assert response.status_code == 200
+    assert "rounds" in response.json()
