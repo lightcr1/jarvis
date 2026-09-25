@@ -240,6 +240,18 @@ def build_autonomy_deps(state: object) -> dict:
     }
 
 
+def build_autonomy_tasks_deps(state: object) -> dict:
+    import os
+    return {
+        "autonomy_task_store": live_attr(state, "autonomy_task_store"),
+        "require_admin_access": state.require_admin_access,
+        "get_identity_session": state._get_identity_session,
+        "normalize_role": state.normalize_role,
+        "audit_admin_event": state._audit_admin_event,
+        "agent_request_token": os.getenv("JARVIS_AGENT_REQUEST_TOKEN", ""),
+    }
+
+
 def build_alerts_deps(state: object) -> dict:
     return {
         "require_identity_session": state.require_identity_session,
