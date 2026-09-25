@@ -65,7 +65,7 @@ class AutonomyTaskStore:
                 area TEXT NOT NULL, size TEXT NOT NULL, priority INTEGER NOT NULL,
                 status TEXT NOT NULL, source TEXT NOT NULL, attempts INTEGER NOT NULL,
                 last_round_id TEXT, escalated INTEGER NOT NULL DEFAULT 0,
-                created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+                external_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
             )""")
             self._migrate(db)
             db.execute("CREATE INDEX IF NOT EXISTS autonomy_tasks_status ON autonomy_tasks(status,priority)")
@@ -88,12 +88,20 @@ class AutonomyTaskStore:
         columns = {row[1] for row in db.execute("PRAGMA table_info(autonomy_tasks)")}
         if "escalated" not in columns:
             db.execute("ALTER TABLE autonomy_tasks ADD COLUMN escalated INTEGER NOT NULL DEFAULT 0")
+        if "external_id" not in columns:
+            db.execute("ALTER TABLE autonomy_tasks ADD COLUMN external_id TEXT")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS autonomy_tasks_external ON autonomy_tasks(external_id)")
+
+    def find_by_external(self, external_id: str) -> dict | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM autonomy_tasks WHERE external_id=?", (external_id,)).fetchone()
+        return dict(row) if row else None
 
     # -- tasks -----------------------------------------------------------
 
     def create_task(self, *, title: str, description: str = "", area: str = "",
                     size: str = "medium", priority: int = 100, source: str = "owner",
-                    status: str = "open") -> dict:
+                    status: str = "open", external_id: str | None = None) -> dict:
         title = _clean(title, limit=140, field="title")
         description = description or ""
         if description and (description != description.strip() or len(description) > 4000
@@ -115,10 +123,10 @@ class AutonomyTaskStore:
         with self._connect() as db:
             db.execute("""INSERT INTO autonomy_tasks
                 (id,title,description,area,size,priority,status,source,attempts,
-                 last_round_id,created_at,updated_at)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
+                 last_round_id,external_id,created_at,updated_at)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (identifier, title, description, area, size, priority, status, source,
-                 0, None, now, now))
+                 0, None, external_id, now, now))
         return self.get_task(identifier)
 
     def propose_task(self, *, title: str, description: str = "", area: str = "",

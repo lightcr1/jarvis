@@ -167,3 +167,18 @@ def test_blocked_outcome_notifies_without_question(tmp_path):
         "round_id": "r1", "outcome": "blocked", "summary": "blocked",
     })
     assert broadcaster.calls and "blockiert" in broadcaster.calls[0][1]["message"]
+
+
+def test_admin_imports_labeled_issues_once(tmp_path, monkeypatch):
+    store, client = _client(tmp_path)
+    monkeypatch.setattr("jarvis.api_autonomy_tasks.list_labeled_issues", lambda *a, **k: [
+        {"number": 1, "title": "Fix bug", "body": "Details"},
+        {"number": 2, "title": "Add tests", "body": ""},
+    ])
+    first = client.post("/admin/autonomy/import-issues", headers=OWNER)
+    assert first.status_code == 200
+    assert first.json() == {"imported": 2, "skipped": 0, "issues": 2}
+    second = client.post("/admin/autonomy/import-issues", headers=OWNER)
+    assert second.json() == {"imported": 0, "skipped": 2, "issues": 2}
+    tasks = store.list_tasks()
+    assert all(t["source"] == "issue" for t in tasks)
