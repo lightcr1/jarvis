@@ -465,3 +465,100 @@ def test_start_round_accepts_explicit_iteration_budget(monkeypatch):
     monkeypatch.setattr(loop, "http", fake_http)
     assert loop.start_round("api", "model", "round", 30, max_iterations=40) == "fake"
     assert captured["max_iterations"] == 40
+
+
+# ---------------------------------------------------------------------------
+# 3.1 Backlog-Auswahl + 3.2 Rundenbericht (Loop-Seite)
+# ---------------------------------------------------------------------------
+
+
+def test_round_prompt_includes_task_and_area_card():
+    task = {"id": "t1", "title": "Fix X", "description": "Details", "area": "tasks",
+            "size": "small", "status": "in_progress"}
+    note = {"outcome": "partial", "summary": "half", "next_step": "continue"}
+    prompt = loop.round_prompt("round", 30, task=task, last_report=note, round_id="r1")
+    assert "Fix X" in prompt
+    assert "docs/agent/areas/tasks.md" in prompt
+    assert "report-round" in prompt and "r1" in prompt
+    assert "Letzte Uebergabenotiz" in prompt and "half" in prompt
+
+
+def test_round_prompt_is_discovery_without_task():
+    prompt = loop.round_prompt("round", 30)
+    assert "DISCOVERY-RUNDE" in prompt
+    assert "propose-task" in prompt
+    assert "KEINEN Code" in prompt
+
+
+def test_fetch_next_task_and_claim(monkeypatch):
+    calls = []
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        calls.append((method, url, body))
+        if url.endswith("/agent/tasks/next?focus=engineering"):
+            return {"status": 200, "data": {"task": {"id": "t1"}, "last_report": {"summary": "s"}}}
+        if "/agent/tasks/t1/claim" in url:
+            return {"status": 200, "data": {"task": {"id": "t1", "status": "in_progress"}}}
+        return {"status": 404, "data": {}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    task, last = loop.fetch_next_task("tok", "engineering")
+    assert task["id"] == "t1" and last["summary"] == "s"
+    claimed = loop.claim_task("tok", "t1", "round-1")
+    assert claimed["status"] == "in_progress"
+    assert calls[-1][2] == {"round_id": "round-1"}
+    assert loop.fetch_next_task(None, "engineering") == (None, None)
+
+
+def test_ensure_round_report_posts_only_when_missing(monkeypatch):
+    posted = []
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        if method == "GET":
+            return {"status": 200, "data": {"task": {"id": "t1"},
+                                            "last_report": {"round_id": "r-existing"}}}
+        posted.append((url, body))
+        return {"status": 201, "data": {}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    loop.ensure_round_report("tok", "t1", "r-existing")
+    assert posted == []
+    loop.ensure_round_report("tok", "t1", "r-new")
+    assert len(posted) == 1
+    assert posted[0][1]["outcome"] == "unknown"
+    assert posted[0][1]["round_id"] == "r-new"
+
+
+def test_main_claims_task_and_records_meta(tmp_path, monkeypatch):
+    task = {"id": "t1", "title": "Fix X", "area": "tasks", "size": "small"}
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "_parse_env", lambda _: {
+        "CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake",
+        "JARVIS_AGENT_REQUEST_TOKEN": "agent",
+    })
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING", "pod-1"))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 200})
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: [])
+    monkeypatch.setattr(loop, "model_ready", lambda _: True)
+    monkeypatch.setattr(loop, "pending_owner_ideas", lambda _: [])
+    monkeypatch.setattr(loop, "heartbeat", lambda _: None)
+    monkeypatch.setattr(loop, "fetch_next_task", lambda t, f: (task, None))
+    monkeypatch.setattr(loop, "claim_task",
+                        lambda t, i, r: {**task, "status": "in_progress"})
+    captured = {}
+
+    def fake_start(api, agent, kind, idle, ideas=None, focus="engineering", **kwargs):
+        captured.update(kind=kind, focus=focus, **kwargs)
+        return "conv-1"
+
+    monkeypatch.setattr(loop, "start_round", fake_start)
+    _write_state(loop.STATE_PATH, {"pod_id": "pod-1", "active_sessions": {}, "wrapup_done": False})
+
+    assert loop.main() == 0
+    assert captured["task"]["id"] == "t1"
+    assert captured["max_iterations"] == loop.MAX_ITERATIONS_SMALL
+    state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
+    meta = state["active_sessions"]["conv-1"]
+    assert meta["task_id"] == "t1"
+    assert meta["round_id"] == captured["round_id"]

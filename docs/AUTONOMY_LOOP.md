@@ -96,6 +96,24 @@ Fuer kompakte Tool-Ausgaben in Runden: `scripts/agent/verify.sh [pfade…]`
 fuehrt nur die betroffenen Tests mit begrenzter Ausgabe aus und prueft die
 Policy, `scripts/agent/find.sh <begriff>` durchsucht das Repo ohne
 `node_modules`/`dist`/`.git`.
+
+## Backlog und Rundenberichte
+
+Der Loop holt vor jeder Runde genau eine Aufgabe aus dem SQLite-Backlog
+(`JARVIS_AUTONOMY_TASKS_PATH`, Standard `/var/lib/jarvis/autonomy_tasks.sqlite3`)
+und setzt sie auf `in_progress`. Der Besitzer verwaltet Aufgaben im Admin unter
+`/admin/autonomy/tasks` (CRUD, Prioritaet, `decide` fuer Agentenvorschlaege); der
+Agent darf nur ueber `scripts/agent/jarvis_gateway.py propose-task` vorschlagen
+(Status `proposed`, Besitzerfreigabe noetig) und per `report-round` berichten.
+Nach `MAX_TASK_ATTEMPTS=3` erfolglosen Versuchen wird eine Aufgabe `blocked`.
+Ein leerer Backlog startet eine Discovery-Runde (maximal 3 Vorschlaege, keine
+Codeaenderung). Der Loop reicht die letzte Uebergabenotiz mit und erzeugt bei
+fehlendem Bericht einen Minimalbericht (`outcome=unknown`).
+
+Neue Gateway-Pfade (`/jarvis-agent/tasks…`) sind im Inference-Gateway nur fuer
+`next`, `claim`, `report` und den Vorschlag freigegeben; die Aenderung an
+`deploy/openhands/inference-gateway.conf` ist ein geschuetzter Pfad und braucht
+Owner-Review.
 Die Laufzeitdateien (`autonomy-state.json`, Log), `.env`-Dateien und Tokens
 duerfen nicht versioniert oder als Agenten-Secrets verfuegbar gemacht werden.
 ## Projektfreigaben (API und Grenzen)
