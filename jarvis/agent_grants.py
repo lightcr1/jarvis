@@ -36,6 +36,11 @@ def validate_email_payload(payload: dict) -> None:
         raise ValueError("subject must be one line")
 
 
+def _grant_target_match(pattern: str, target: str) -> bool:
+    import fnmatch
+    return fnmatch.fnmatchcase(target or "", pattern)
+
+
 class AgentGrantStore:
     def __init__(self, path: str | Path | None = None, *, clock=None):
         self.path = Path(path or os.getenv("JARVIS_AGENT_GRANTS_PATH", "/var/lib/jarvis/agent_grants.sqlite3"))
@@ -70,6 +75,13 @@ class AgentGrantStore:
                 created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL,
                 decided_at INTEGER, decided_by TEXT, consumed_at INTEGER
             )""")
+            db.execute("""CREATE TABLE IF NOT EXISTS standing_grants (
+                id TEXT PRIMARY KEY, capability TEXT NOT NULL, target_pattern TEXT NOT NULL,
+                tier TEXT NOT NULL, status TEXT NOT NULL, created_at INTEGER NOT NULL,
+                expires_at INTEGER, decided_by TEXT, revoked_at INTEGER,
+                uses INTEGER NOT NULL DEFAULT 0
+            )""")
+            db.execute("CREATE INDEX IF NOT EXISTS standing_grants_lookup ON standing_grants(capability,status)")
             db.execute("""CREATE TABLE IF NOT EXISTS ideas (
                 id TEXT PRIMARY KEY, source TEXT NOT NULL, kind TEXT NOT NULL,
                 title TEXT NOT NULL, summary TEXT NOT NULL, benefit TEXT NOT NULL,
@@ -306,6 +318,72 @@ class AgentGrantStore:
         if digest != item["digest"]:
             raise ValueError("action digest mismatch")
         return item
+
+
+    # -- stehende Freigaben (Freigabe-Kern, Abschnitt 3.2) ----------------
+
+    def create_standing_grant(self, *, capability: str, target_pattern: str = "*",
+                              tier: str = "T2", duration_seconds: int | None = None,
+                              actor: str = "owner") -> dict:
+        """Dauerhafte, widerrufbare Freigabe. Nur T1/T2 -- T3 nie per Freigabe."""
+        capability = str(capability or "").strip()
+        if not capability or len(capability) > 120 or not re.fullmatch(r"[A-Za-z0-9_.*\-]+", capability):
+            raise ValueError("valid capability required")
+        target_pattern = str(target_pattern or "*").strip() or "*"
+        if any(c in target_pattern for c in ("\0", "\r", "\n")):
+            raise ValueError("invalid target pattern")
+        if tier not in ("T1", "T2"):
+            raise ValueError("standing grants allow only T1/T2")
+        if duration_seconds is not None and not 60 <= int(duration_seconds) <= 365 * 24 * 3600:
+            raise ValueError("duration outside allowed range")
+        now = int(self.clock())
+        expires = None if duration_seconds is None else now + int(duration_seconds)
+        identifier = uuid.uuid4().hex
+        with self._connect() as db:
+            db.execute("""INSERT INTO standing_grants
+                (id,capability,target_pattern,tier,status,created_at,expires_at,decided_by,uses)
+                VALUES (?,?,?,?, 'approved', ?,?,?,0)""",
+                (identifier, capability, target_pattern, tier, now, expires, actor))
+        return self.get_standing_grant(identifier)
+
+    def get_standing_grant(self, grant_id: str) -> dict | None:
+        with self._connect() as db:
+            row = db.execute("SELECT * FROM standing_grants WHERE id=?", (grant_id,)).fetchone()
+        return dict(row) if row else None
+
+    def list_standing_grants(self, limit: int = 200) -> list[dict]:
+        with self._connect() as db:
+            rows = db.execute("""SELECT * FROM standing_grants
+                ORDER BY created_at DESC, id DESC LIMIT ?""",
+                (max(1, min(limit, 500)),)).fetchall()
+        return [dict(row) for row in rows]
+
+    def revoke_standing_grant(self, grant_id: str, *, actor: str) -> dict | None:
+        with self._connect() as db:
+            db.execute("""UPDATE standing_grants SET status='revoked', revoked_at=?, decided_by=?
+                WHERE id=? AND status='approved'""", (int(self.clock()), actor, grant_id))
+            changed = db.execute("SELECT changes()").fetchone()[0]
+        return self.get_standing_grant(grant_id) if changed else None
+
+    def match_standing_grant(self, capability: str, target: str = "") -> dict | None:
+        """Erste passende, gueltige Freigabe (Status/Ablauf/Capability/Ziel)."""
+        now = int(self.clock())
+        with self._connect() as db:
+            rows = db.execute("""SELECT * FROM standing_grants
+                WHERE status='approved' AND (expires_at IS NULL OR expires_at>?)
+                ORDER BY created_at DESC, id DESC""", (now,)).fetchall()
+        for row in rows:
+            grant = dict(row)
+            if grant["capability"] not in ("*", capability):
+                continue
+            pattern = grant["target_pattern"] or "*"
+            if pattern == "*" or _grant_target_match(pattern, target):
+                return grant
+        return None
+
+    def consume_standing_grant(self, grant_id: str) -> None:
+        with self._connect() as db:
+            db.execute("UPDATE standing_grants SET uses=uses+1 WHERE id=?", (grant_id,))
 
     def authorize(self, *, kind: str, target: str, operation: str) -> bool:
         """Fail closed. Never pass untrusted agent classification to a real tool."""
