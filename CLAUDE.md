@@ -2,6 +2,10 @@
 
 > "Just A Rather Very Intelligent System" — a privacy-first, self-hosted AI assistant inspired by Iron Man's JARVIS. Voice, text, home automation, infrastructure control, knowledge retrieval — all in one system, running on your own hardware.
 
+> **Agents (OpenHands/Jarvis):** read `docs/agent/CONTEXT.md` first — it is the
+> compact repo map. Read this file and `docs/v2/planning/EXECUTION_CHECKLIST_V2.md`
+> only via targeted `grep -n` / `sed -n 'a,bp'`, never in full.
+
 ---
 
 ## Vision
@@ -180,7 +184,6 @@ jarvis/
 │               ├── tasks.ts        # Tasks CRUD, assignee, sharing
 │               ├── proxmox.ts      # Proxmox health + self-service host CRUD
 │               ├── homeAssistant.ts # HA REST + WebSocket hooks
-│               ├── proxmox.ts      # Proxmox REST wrappers
 │               ├── alerts.ts       # useJarvisAlerts WebSocket hook
 │               └── status.ts       # useJarvisLiveStatus WebSocket hook
 │
