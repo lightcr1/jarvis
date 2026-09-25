@@ -125,3 +125,49 @@ def test_next_open_task_excludes_ids_and_areas(tmp_path):
     assert store.next_open_task(exclude_areas={"tasks"})["id"] == b["id"]
     assert store.next_open_task(exclude_ids={a["id"]})["id"] == b["id"]
     assert store.next_open_task(exclude_ids={a["id"]}, exclude_areas={"billing"}) is None
+
+
+def test_escalates_after_two_failures_and_hides_task(tmp_path):
+    store = _store(tmp_path)
+    task = store.create_task(title="Hard", area="tasks")
+    for round_id in ("r1", "r2"):
+        store.claim_task(task["id"], round_id=round_id)
+        store.record_report(task_id=task["id"], round_id=round_id, outcome="no_change",
+                            summary="no luck")
+    assert store.get_task(task["id"])["escalated"] == 1
+    assert store.next_open_task() is None
+
+
+def test_review_task_writes_merge_result_back(tmp_path):
+    store = _store(tmp_path)
+    merged = store.create_task(title="Merged", area="tasks")
+    assert store.review_task(merged["id"], actor="owner", decision="merged")["status"] == "done"
+    rejected = store.create_task(title="Rejected", area="tasks")
+    assert store.review_task(rejected["id"], actor="owner", decision="rejected")["status"] == "rejected"
+    with pytest.raises(ValueError):
+        store.review_task("missing", actor="owner", decision="maybe")
+
+
+def test_area_success_rates(tmp_path):
+    store = _store(tmp_path)
+    good = store.create_task(title="Good", area="tasks")
+    store.review_task(good["id"], actor="owner", decision="merged")
+    bad = store.create_task(title="Bad", area="tasks")
+    store.review_task(bad["id"], actor="owner", decision="rejected")
+    rates = store.area_success_rates()
+    assert rates["tasks"]["success_rate"] == 0.5
+
+
+def test_migration_adds_escalated_column(tmp_path):
+    import sqlite3
+    path = tmp_path / "old.sqlite3"
+    db = sqlite3.connect(path)
+    db.execute("CREATE TABLE autonomy_tasks (id TEXT PRIMARY KEY, title TEXT, description TEXT, "
+               "area TEXT, size TEXT, priority INTEGER, status TEXT, source TEXT, attempts INTEGER, "
+               "last_round_id TEXT, created_at INTEGER, updated_at INTEGER)")
+    db.commit()
+    db.close()
+    store = AutonomyTaskStore(path)
+    with store._connect() as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(autonomy_tasks)")}
+    assert "escalated" in columns

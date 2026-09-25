@@ -41,6 +41,10 @@ class TaskDecision(BaseModel):
     approve: bool
 
 
+class TaskReview(BaseModel):
+    decision: str = Field(pattern="^(merged|rejected)$")
+
+
 class TaskClaim(BaseModel):
     round_id: str = Field(max_length=64)
 
@@ -145,6 +149,24 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
                      x_jarvis_session: str | None = Header(default=None)):
         _admin_guard(x_jarvis_session, None, None, None)
         return {"reports": store().list_reports(task_id=task_id)}
+
+    @router.get("/admin/autonomy/stats")
+    def list_stats(x_jarvis_session: str | None = Header(default=None)):
+        _admin_guard(x_jarvis_session, None, None, None)
+        return {"areas": store().area_success_rates()}
+
+    @router.post("/admin/autonomy/tasks/{task_id}/review")
+    def review_task(task_id: str, body: TaskReview,
+                    x_jarvis_session: str | None = Header(default=None)):
+        actor = _admin_guard(x_jarvis_session, None, None, None)
+        try:
+            task = store().review_task(task_id, actor=actor, decision=body.decision)
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
+        if task is None:
+            raise HTTPException(404, "task not found")
+        audit("agent.task.reviewed", actor, {"task_id": task_id, "decision": body.decision})
+        return {"task": task}
 
     # ---- Agent ---------------------------------------------------------
 
