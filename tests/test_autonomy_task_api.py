@@ -8,10 +8,9 @@ from jarvis.autonomy_task_store import AutonomyTaskStore
 from jarvis.api_autonomy_tasks import build_autonomy_tasks_router
 
 
-def _client(tmp_path):
+def _client(tmp_path, broadcaster=None, owner=None):
     store = AutonomyTaskStore(tmp_path / "tasks.sqlite3")
-    app = FastAPI()
-    app.include_router(build_autonomy_tasks_router({
+    deps = {
         "autonomy_task_store": store,
         "require_admin_access": None,
         "get_identity_session": lambda token: ({"user_id": "owner", "role": "admin"}
@@ -19,7 +18,13 @@ def _client(tmp_path):
         "normalize_role": lambda role: role,
         "agent_request_token": "agent-token",
         "audit_admin_event": lambda *args, **kwargs: None,
-    }))
+    }
+    if broadcaster is not None:
+        deps["alert_broadcaster"] = broadcaster
+    if owner is not None:
+        deps["owner_user_id"] = owner
+    app = FastAPI()
+    app.include_router(build_autonomy_tasks_router(deps))
     return store, TestClient(app)
 
 
@@ -125,3 +130,40 @@ def test_admin_daily_report(tmp_path):
     response = client.get("/admin/autonomy/daily-report", headers=OWNER)
     assert response.status_code == 200
     assert "rounds" in response.json()
+
+
+class _FakeBroadcaster:
+    def __init__(self):
+        self.calls = []
+
+    async def notify_user(self, user_id, payload):
+        self.calls.append((user_id, payload))
+
+
+def test_owner_question_notifies_owner(tmp_path):
+    broadcaster = _FakeBroadcaster()
+    _store, client = _client(tmp_path, broadcaster=broadcaster, owner="owner")
+    task = client.post("/admin/autonomy/tasks", headers=OWNER,
+                       json={"title": "Needs input", "area": "tasks"}).json()["task"]
+    client.post(f"/agent/tasks/{task['id']}/claim", headers=AGENT, json={"round_id": "r1"})
+    response = client.post(f"/agent/tasks/{task['id']}/report", headers=AGENT, json={
+        "round_id": "r1", "outcome": "blocked", "summary": "stuck",
+        "owner_question": "Which API key?",
+    })
+    assert response.status_code == 201
+    assert broadcaster.calls
+    user_id, payload = broadcaster.calls[0]
+    assert user_id == "owner"
+    assert "Which API key?" in payload["message"]
+
+
+def test_blocked_outcome_notifies_without_question(tmp_path):
+    broadcaster = _FakeBroadcaster()
+    _store, client = _client(tmp_path, broadcaster=broadcaster, owner="owner")
+    task = client.post("/admin/autonomy/tasks", headers=OWNER,
+                       json={"title": "Blocked"}).json()["task"]
+    client.post(f"/agent/tasks/{task['id']}/claim", headers=AGENT, json={"round_id": "r1"})
+    client.post(f"/agent/tasks/{task['id']}/report", headers=AGENT, json={
+        "round_id": "r1", "outcome": "blocked", "summary": "blocked",
+    })
+    assert broadcaster.calls and "blockiert" in broadcaster.calls[0][1]["message"]
