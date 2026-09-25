@@ -19,13 +19,16 @@ Der Loop pausiert eine laufende eigene Runde bei Benutzeraktivitaet, nimmt sie
 spaeter wieder auf und schliesst nach der Idle-Frist mit einer Wrapup-Runde ab.
 Die bisherige Implementierung versucht dann den Pod ueber den Controller zu
 stoppen; sie startet oder provisioniert keinen Pod. Die **versionierte Quelle**
-fordert in OpenHands `ConfirmRisky` an; eine auf Besitzerfreigabe wartende Runde
-sendet keinen Agent-Heartbeat, damit der bezahlte Pod nicht unbeschraenkt durch
-Warten am Leben bleibt. Die aktuell installierte Kopie kann noch `NeverConfirm`
-verwenden; vor einem Rollout muss das OpenHands-API-Verhalten von `ConfirmRisky`
-getestet werden. Auch eine Bestaetigung im Agent-Canvas ist **keine**
-technische Freigabe fuer externe Aktionen. Netzwerk-/Dateizugriff, GitHub-
-Schutz und Policies muessen ausserhalb des Prompts durchgesetzt werden.
+und die installierte Kopie verwenden im isolierten Agent-Container
+`NeverConfirm`: Ein unbeaufsichtigter Loop kann eine `ConfirmRisky`-Rueckfrage
+nicht beantworten, sie wuerde die Runde nur blockieren. Die tatsaechlichen
+Grenzen sind Netzwerk-Isolation/Allowlist-Proxy, der request-only Gateway-Token
+und das Fehlen von CONTROL_TOKEN/GitHub-Credentials im Canvas - **nicht** die
+UI-Bestaetigung. Eine Bestaetigung im Agent-Canvas ist also **keine** technische
+Freigabe fuer externe Aktionen; Netzwerk-/Dateizugriff, GitHub-Schutz und
+Policies muessen ausserhalb des Prompts durchgesetzt werden. Der Rundenprompt
+beschreibt die Umgebung gemaess `AGENT_NETWORK_MODE` (`isolated` |
+`allowlist-proxy`), damit er nicht der realen Konfiguration widerspricht.
 
 ## Aenderung und Installation
 
