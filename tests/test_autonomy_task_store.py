@@ -219,3 +219,11 @@ def test_round_metrics_upsert_and_since_filter(tmp_path):
     assert store.get_metrics("r1")["gpu_seconds"] == 20
     assert store.aggregate_metrics(since=4000)["rounds"] == 1
     assert store.aggregate_metrics(since=0)["rounds"] == 1
+
+
+def test_origin_session_id_roundtrip(tmp_path):
+    store = _store(tmp_path)
+    task = store.create_task(title="Aus Chat", origin_session_id="sess-123")
+    assert task["origin_session_id"] == "sess-123"
+    assert store.get_task(task["id"])["origin_session_id"] == "sess-123"
+    assert store.create_task(title="Ohne")["origin_session_id"] is None
