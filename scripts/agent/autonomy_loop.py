@@ -566,11 +566,19 @@ def round_prompt(kind: str, idle_stop_minutes: int, owner_ideas: list[dict[str, 
             "im Aktivitaetslog als Vorschlag statt sie selbst umzusetzen - die parallele "
             "Ideen-Runde bewertet sie."
         )
-    return (
+    context_hint = (
+        " KONTEXT SPAREN: Lies zuerst docs/agent/CONTEXT.md (kompakte Repo-Karte) und "
+        "die zur Aufgabe passende Karte unter docs/agent/areas/. CLAUDE.md, "
+        "docs/v2/planning/EXECUTION_CHECKLIST_V2.md und jarvisappv4.py NIEMALS komplett "
+        "lesen - nur gezielt per `grep -n` bzw. `sed -n 'a,bp'`."
+    )
+    # Statischer Teil zuerst (Prefix-Cache-Treffer zwischen Focus-Arten), der
+    # variable Teil (Fokus, Besitzer-Ideen) kommt ans Ende.
+    static_round = (
         "Jarvis, autonome Verbesserungsrunde (Autonomy-Loop). Arbeite nach AGENTS.md im "
         "Repoverzeichnis dieses Repos und nach docs/GOALS.md. Pruefe zuerst "
         "config/autonomy.json; wenn dort enabled=false steht, beende dich sofort ohne "
-        "Aenderungen. " + focus_text + env_context + " "
+        "Aenderungen. " + env_context + context_hint + " "
         "Waehle die wertvollste Arbeit, die ein erfahrener Senior-Engineer "
         "als Naechstes tun wuerde: priorisierte Besitzer-Auftraege, sichere Verbesserungen "
         "der Jarvis-Plattform (Chat, Integrationen, Workspace, Admin Center), offene "
@@ -593,8 +601,8 @@ def round_prompt(kind: str, idle_stop_minutes: int, owner_ideas: list[dict[str, 
         "geschuetzte Aktionen separat freigeben lassen. "
         "Dokumentiere am Ende in docs/ACTIVITY_LOG.md, was du getan hast, welche PRs offen "
         "sind und welche Risiken bleiben. Beende dich danach sauber."
-        + owner_context
     )
+    return static_round + focus_text + owner_context
 
 
 def start_round(api_key: str, agent_token: str, kind: str, idle_stop_minutes: int,

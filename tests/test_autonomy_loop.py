@@ -416,3 +416,27 @@ def test_start_round_uses_configured_condenser(monkeypatch):
     assert loop.start_round("api", "model", "round", 30) == "fake"
     assert captured["agent"]["condenser"]["max_size"] == 42
     assert captured["agent"]["condenser"]["keep_first"] == 3
+
+
+# ---------------------------------------------------------------------------
+# 2.1 / 2.3 kompakter Kontext + stabile Prompt-Reihenfolge
+# ---------------------------------------------------------------------------
+
+
+def test_round_prompt_static_prefix_is_stable_across_focus():
+    engineering = loop.round_prompt("round", 30, focus="engineering")
+    ideas = loop.round_prompt("round", 30, focus="ideas")
+    # Der statische Teil steht zuerst und ist fuer alle Foki identisch
+    # (Prefix-Cache), der Fokus kommt erst danach.
+    assert engineering[:600] == ideas[:600]
+    assert "FOKUS DIESER RUNDE" not in engineering[:600]
+    assert "Engineering" not in engineering[:600]
+    assert "FOKUS DIESER RUNDE" in engineering
+    assert "FOKUS DIESER RUNDE" in ideas
+
+
+def test_round_prompt_references_compact_context():
+    prompt = loop.round_prompt("round", 30)
+    assert "docs/agent/CONTEXT.md" in prompt
+    assert "docs/agent/areas/" in prompt
+    assert "NIEMALS komplett" in prompt
