@@ -83,6 +83,15 @@ sichtbar: der Loop schreibt beim Start seinen SHA256 in den State
 Repo-Hash und warnt bei Abweichung. `scripts/agent/install_loop.sh --check`
 vergibt Exit 1 bei Drift (fuer einen spaeteren Timer) und prueft nichts weiter.
 
+Fuer einen freigegebenen Rollout schreibt die Admin-UI (AgentMonitorPage,
+Button „Rollout anfordern“) nur eine Anforderungsdatei
+(`JARVIS_LOOP_ROLLOUT_MARKER`, Standard
+`/home/media/jarvis-openhands/autonomy/rollout-requested`); sie fuehrt nichts
+aus. Ein Host-Timer ruft `scripts/agent/rollout_loop.sh` auf: bei Drift und
+vorhandener Anforderung installiert es ueber `install_loop.sh` (Backup inklusive)
+und entfernt den Marker. Ohne konfigurierten Marker-Pfad antwortet der Endpunkt
+mit 503.
+
 ## Kontext-Effizienz
 
 Runden sollen nicht mehr den halben Kontext in Orientierung verbrennen. Die

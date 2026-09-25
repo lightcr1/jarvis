@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import hmac
+import json
 import time
+from pathlib import Path
 from typing import Callable
 
 from fastapi import APIRouter, Header, HTTPException
@@ -190,6 +192,23 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
     def daily_report(x_jarvis_session: str | None = Header(default=None)):
         _admin_guard(x_jarvis_session, None, None, None)
         return store().daily_summary()
+
+    @router.post("/admin/autonomy/loop-rollout")
+    def request_loop_rollout(x_jarvis_session: str | None = Header(default=None)):
+        """7.5: nur eine Anforderung schreiben; der Host-Timer installiert."""
+        actor = _admin_guard(x_jarvis_session, None, None, None)
+        marker = str(deps.get("loop_rollout_marker") or "")
+        if not marker:
+            raise HTTPException(503, "JARVIS_LOOP_ROLLOUT_MARKER not configured")
+        path = Path(marker)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps({"requested_by": actor, "ts": int(time.time())}) + "\n",
+                            encoding="utf-8")
+        except OSError as exc:
+            raise HTTPException(502, f"marker not writable: {exc}") from exc
+        audit("agent.loop.rollout_requested", actor, {"marker": marker})
+        return {"requested": True, "marker": marker}
 
     @router.get("/admin/autonomy/round-metrics")
     def round_metrics(since: int | None = None,
