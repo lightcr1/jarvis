@@ -66,3 +66,14 @@ def test_t3_capability_ignores_agent_grant():
     result = execute_tool(tool, _ctx(role="service_system"), {}, audit_log=_Audit(),
                           membership_store=None, permission_store=None, agent_grant_store=_Grant())
     assert result["data"]["route"] == "tool_confirmation_required"
+
+
+def test_untrusted_context_escalates_t2_not_t1():
+    t2 = _tool(RiskLevel.WRITE, capability="service.restart")
+    ctx = ToolExecutionContext(user_id="u", role="admin", deps={"untrusted_context": True})
+    result = execute_tool(t2, ctx, {}, audit_log=_Audit(),
+                          membership_store=None, permission_store=None)
+    assert result["data"]["route"] == "tool_confirmation_required"
+    t1 = _tool(RiskLevel.WRITE, capability="task.create")
+    assert execute_tool(t1, ctx, {}, audit_log=_Audit(),
+                        membership_store=None, permission_store=None).get("ok") is True
