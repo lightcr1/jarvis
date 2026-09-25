@@ -20,6 +20,8 @@ const NAV_LINKS = [
   { to: "/dashboard/billing",   label: "Billing",        end: false },
   { to: "/dashboard/usage",     label: "Usage",          end: false },
   { to: "/dashboard/integrations", label: "Integrations", end: false },
+  { to: "/dashboard/autonomy",   label: "Autonomy",       end: false },
+  { to: "/dashboard/agent",      label: "Agent Monitor",  end: false },
   { to: "/dashboard/docs",      label: "Docs",           end: false },
 ];
 
