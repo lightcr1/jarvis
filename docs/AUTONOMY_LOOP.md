@@ -65,7 +65,20 @@ Execution-Backend weitere Arbeitscontainer starten kann. Diese duerfen weder
 andere Netzwerke noch Docker-Socket/Hostzugriff erhalten. Eine Host-Firewall
 bleibt als aeussere, vom Agenten nicht beschreibbare zweite Grenze empfohlen.
 
-Die festen Pfade und LAN-Endpunkte in diesem Skript sind installationsspezifisch.
+Die festen Pfade und LAN-Endpunkte in diesem Skript sind installationsspezifisch
+und lassen sich ohne Codeaenderung konfigurieren. Der Loop liest die Werte in
+dieser Reihenfolge: eingebaute Defaults < `autonomy-loop.env` neben der
+installierten Kopie (Pfad per `AUTONOMY_LOOP_ENV` ueberschreibbar) <
+Prozess-Umgebung. Eine Vorlage mit allen Schluesseln und Defaults liegt unter
+`config/autonomy-loop.example.env`. Fuer TLS kann `CONTROLLER_CA_FILE` auf die
+selbst erzeugte `tls/server.crt` (runpod-Repo) zeigen; ohne diesen Wert faellt
+der Loop auf `CERT_NONE` zurueck und schreibt eine Warnung ins Log.
+
+Der Versions-Drift zwischen installierter Kopie und versionierter Quelle ist
+sichtbar: der Loop schreibt beim Start seinen SHA256 in den State
+(`loop_sha256`), die Admin-UI (`AgentMonitorPage`) zeigt installierten Hash und
+Repo-Hash und warnt bei Abweichung. `scripts/agent/install_loop.sh --check`
+vergibt Exit 1 bei Drift (fuer einen spaeteren Timer) und prueft nichts weiter.
 Die Laufzeitdateien (`autonomy-state.json`, Log), `.env`-Dateien und Tokens
 duerfen nicht versioniert oder als Agenten-Secrets verfuegbar gemacht werden.
 ## Projektfreigaben (API und Grenzen)

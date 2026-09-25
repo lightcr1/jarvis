@@ -623,3 +623,14 @@ export function decideOwnerRequest(number: number, decision: "approved" | "rejec
     { method: "POST", includeAdmin: true, body: { number, decision } },
   );
 }
+
+export interface LoopVersion {
+  repo_sha256?: string | null;
+  installed_sha256?: string | null;
+  drift?: boolean;
+  source?: string;
+}
+
+export function fetchLoopVersion() {
+  return apiRequest<LoopVersion>("/agent/loop-version", { includeAdmin: true });
+}

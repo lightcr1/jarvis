@@ -2,10 +2,12 @@ import React, { useEffect, useState, useCallback } from "react";
 import {
   fetchAgentSessions,
   fetchOwnerRequests,
+  fetchLoopVersion,
   decideOwnerRequest,
   agentSessionAction,
   type AgentSession,
   type OwnerRequest,
+  type LoopVersion,
 } from "../../../shared/api/admin";
 import { useJ } from "../../../screens/jarvis-shared";
 
@@ -21,6 +23,7 @@ export function AgentMonitorPage() {
   const J = useJ();
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [requests, setRequests] = useState<OwnerRequest[]>([]);
+  const [loopVersion, setLoopVersion] = useState<LoopVersion | null>(null);
   const [readonly, setReadonly] = useState(false);
   const [reqError, setReqError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -35,6 +38,7 @@ export function AgentMonitorPage() {
       setRequests(r.requests);
       setReadonly(r.readonly);
       setReqError(r.error ?? "");
+      fetchLoopVersion().then(setLoopVersion).catch(() => setLoopVersion(null));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Monitor could not be loaded.");
     }
@@ -94,6 +98,30 @@ export function AgentMonitorPage() {
       </p>
       {error && <div style={{ color: "#ef4444", marginBottom: 10 }}>{error}</div>}
       {feedback && <div style={{ color: "#22c55e", marginBottom: 10, fontSize: 13 }}>{feedback}</div>}
+
+      {loopVersion && (
+        <div style={card}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>Autonomy-Loop Version</div>
+          {loopVersion.installed_sha256 ? (
+            <div style={{ fontSize: 13, color: J.textMuted }}>
+              installiert: <code>{loopVersion.installed_sha256.slice(0, 12)}</code>
+              {" · "}Repo: <code>{loopVersion.repo_sha256 ? loopVersion.repo_sha256.slice(0, 12) : "—"}</code>
+              {loopVersion.drift && (
+                <div style={{ color: J.amber, marginTop: 6 }}>
+                  ⚠️ Drift: Die installierte Loop-Kopie weicht von der versionierten Quelle ab.
+                  Rollout mit <code>scripts/agent/install_loop.sh</code>.
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ color: J.textMuted, fontSize: 13 }}>
+              Installierter Hash nicht verfügbar — <code>JARVIS_AUTONOMY_STATE_PATH</code> oder{" "}
+              <code>JARVIS_AUTONOMY_LOOP_PATH</code> setzen. Repo:{" "}
+              <code>{loopVersion.repo_sha256 ? loopVersion.repo_sha256.slice(0, 12) : "—"}</code>
+            </div>
+          )}
+        </div>
+      )}
 
       <div style={card}>
         <div style={{ fontWeight: 600, marginBottom: 8 }}>

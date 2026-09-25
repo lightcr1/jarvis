@@ -19,10 +19,12 @@ Configuration (env):
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import urllib.request
 import urllib.error
+from pathlib import Path
 from typing import Any
 
 DEFAULT_OPENHANDS_BASE = os.getenv("OPENHANDS_API_BASE", "http://openhands:8000")
@@ -99,6 +101,55 @@ def session_action(api_key: str, conv_id: str, action: str) -> None:
     if action not in ("pause", "run", "interrupt"):
         raise MonitorError(f"Ungueltige Aktion: {action}")
     _oh_request(f"/api/conversations/{conv_id}/{action}", api_key, method="POST", body={})
+
+
+# --------------------------------------------------------------------------
+# Autonomy loop version / drift
+# --------------------------------------------------------------------------
+
+def _sha256_file(path: Path) -> str | None:
+    try:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
+    except OSError:
+        return None
+
+
+def loop_version(repo_root: Path | str | None = None,
+                 state_path: Path | str | None = None,
+                 installed_loop: Path | str | None = None) -> dict:
+    """Compare the versioned loop source with the installed/running one.
+
+    The installed hash is read from the loop state file
+    (``JARVIS_AUTONOMY_STATE_PATH``, field ``loop_sha256``) or, as a fallback,
+    by hashing ``JARVIS_AUTONOMY_LOOP_PATH`` directly. Without either being
+    readable the installed hash stays ``None`` and ``drift`` is ``False``
+    (unknown, not a warning).
+    """
+    root = Path(repo_root) if repo_root else Path(__file__).resolve().parents[1]
+    source = root / "scripts" / "agent" / "autonomy_loop.py"
+    repo_hash = _sha256_file(source)
+
+    installed_hash: str | None = None
+    state_file = Path(state_path) if state_path else os.getenv("JARVIS_AUTONOMY_STATE_PATH")
+    if state_file:
+        try:
+            data = json.loads(Path(state_file).read_text(encoding="utf-8"))
+            value = data.get("loop_sha256")
+            installed_hash = str(value) if value else None
+        except (OSError, json.JSONDecodeError):
+            installed_hash = None
+    if installed_hash is None:
+        loop_file = Path(installed_loop) if installed_loop else os.getenv("JARVIS_AUTONOMY_LOOP_PATH")
+        if loop_file:
+            installed_hash = _sha256_file(Path(loop_file))
+
+    drift = bool(repo_hash and installed_hash and repo_hash != installed_hash)
+    return {
+        "repo_sha256": repo_hash,
+        "installed_sha256": installed_hash,
+        "drift": drift,
+        "source": str(source),
+    }
 
 
 # --------------------------------------------------------------------------

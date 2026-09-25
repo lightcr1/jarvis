@@ -5,8 +5,10 @@ These tests never contact OpenHands or Runpod and never read host credentials.
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
+import ssl
 from pathlib import Path
 
 import pytest
@@ -355,3 +357,62 @@ def test_cleanup_orphan_worktrees_skips_when_repo_missing(tmp_path):
         raise AssertionError("ohne Repo darf git nicht aufgerufen werden")
 
     assert loop.cleanup_orphan_worktrees(tmp_path / "missing", set(), runner=runner) == 0
+
+
+# ---------------------------------------------------------------------------
+# 1.5 Konfiguration + 1.6 Versions-Drift
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_defaults_file_and_environment(tmp_path):
+    cfg_file = tmp_path / "autonomy-loop.env"
+    cfg_file.write_text(
+        "# Kommentar\nMAX_ITERATIONS=55\nCONTROLLER_BASE=https://file:1\n",
+        encoding="utf-8",
+    )
+    cfg = loop.load_config(cfg_file, environ={"COOLDOWN_SECONDS": "7"})
+    assert cfg["MAX_ITERATIONS"] == "55"
+    assert cfg["CONTROLLER_BASE"] == "https://file:1"
+    assert cfg["COOLDOWN_SECONDS"] == "7"  # Umgebung schlaegt Datei/Default
+    assert cfg["MAX_PARALLEL_ROUNDS"] == loop.DEFAULT_CONFIG["MAX_PARALLEL_ROUNDS"]
+
+
+def test_load_config_ignores_empty_environment_values(tmp_path):
+    cfg = loop.load_config(tmp_path / "missing.env", environ={"CONTROLLER_CA_FILE": ""})
+    assert cfg["CONTROLLER_CA_FILE"] == loop.DEFAULT_CONFIG["CONTROLLER_CA_FILE"]
+
+
+def test_build_ssl_context_fallback_is_insecure():
+    ctx = loop.build_ssl_context("")
+    assert ctx.verify_mode == ssl.CERT_NONE
+    assert ctx.check_hostname is False
+
+
+def test_build_ssl_context_with_ca_verifies():
+    ca = "/etc/ssl/certs/ca-certificates.crt"
+    if not os.path.exists(ca):
+        pytest.skip("System-CA-Bundle nicht vorhanden")
+    ctx = loop.build_ssl_context(ca)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+def test_source_sha256_matches_hashlib(tmp_path):
+    target = tmp_path / "loop.py"
+    target.write_bytes(b"abc")
+    assert loop.source_sha256(target) == hashlib.sha256(b"abc").hexdigest()
+
+
+def test_start_round_uses_configured_condenser(monkeypatch):
+    captured = {}
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        captured.update(body or {})
+        return {"status": 201, "data": {"id": "fake"}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    monkeypatch.setattr(loop, "CONDENSER_MAX_SIZE", 42)
+    monkeypatch.setattr(loop, "CONDENSER_KEEP_FIRST", 3)
+    assert loop.start_round("api", "model", "round", 30) == "fake"
+    assert captured["agent"]["condenser"]["max_size"] == 42
+    assert captured["agent"]["condenser"]["keep_first"] == 3
