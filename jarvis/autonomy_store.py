@@ -47,6 +47,7 @@ class AutonomyStore:
             "max_gpu_hours_per_day": data.get("max_gpu_hours_per_day"),
             "allowed_windows": data.get("allowed_windows", []),
             "max_rounds_per_pod_session": data.get("max_rounds_per_pod_session"),
+            "gpu_cost_per_hour": data.get("gpu_cost_per_hour"),
         }
 
     def policy(self) -> dict:
@@ -56,6 +57,7 @@ class AutonomyStore:
             "max_gpu_hours_per_day": data.get("max_gpu_hours_per_day"),
             "allowed_windows": data.get("allowed_windows", []),
             "max_rounds_per_pod_session": data.get("max_rounds_per_pod_session"),
+            "gpu_cost_per_hour": data.get("gpu_cost_per_hour"),
         }
 
     def set_mode(self, enabled: bool, actor: str, note: str = "") -> dict:
@@ -72,7 +74,8 @@ class AutonomyStore:
         return self.status()
 
     def set_policy(self, *, actor: str, max_gpu_hours_per_day=None,
-                   allowed_windows=None, max_rounds_per_pod_session=None) -> dict:
+                   allowed_windows=None, max_rounds_per_pod_session=None,
+                   gpu_cost_per_hour=None) -> dict:
         """Merge budget/window fields; None leaves the current value unchanged."""
         data = self._load()
         if max_gpu_hours_per_day is not None:
@@ -92,6 +95,11 @@ class AutonomyStore:
             if value < 0 or value > 1000:
                 raise ValueError("max_rounds_per_pod_session out of range")
             data["max_rounds_per_pod_session"] = value
+        if gpu_cost_per_hour is not None:
+            value = float(gpu_cost_per_hour)
+            if value < 0 or value > 1000:
+                raise ValueError("gpu_cost_per_hour out of range")
+            data["gpu_cost_per_hour"] = value
         data["updated_at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
         data["updated_by"] = actor
         self.path.parent.mkdir(parents=True, exist_ok=True)

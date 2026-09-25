@@ -16,6 +16,7 @@ export function AutonomyPage() {
   const [projects, setProjects] = useState<AgentProject[]>([]);
   const [note, setNote] = useState("");
   const [budgetHours, setBudgetHours] = useState("");
+  const [gpuCost, setGpuCost] = useState("");
   const [windows, setWindows] = useState("");
   const [maxRounds, setMaxRounds] = useState("");
   const [saving, setSaving] = useState(false);
@@ -29,6 +30,7 @@ export function AutonomyPage() {
       setStatus(result.status);
       setNote(result.status.note ?? "");
       setBudgetHours(result.status.max_gpu_hours_per_day != null ? String(result.status.max_gpu_hours_per_day) : "");
+      setGpuCost(result.status.gpu_cost_per_hour != null ? String(result.status.gpu_cost_per_hour) : "");
       setWindows((result.status.allowed_windows ?? []).join(", "));
       setMaxRounds(result.status.max_rounds_per_pod_session != null ? String(result.status.max_rounds_per_pod_session) : "");
     } catch (e) {
@@ -145,6 +147,7 @@ export function AutonomyPage() {
           ? windows.split(",").map((w) => w.trim()).filter(Boolean)
           : undefined,
         max_rounds_per_pod_session: maxRounds.trim() ? Number(maxRounds) : undefined,
+        gpu_cost_per_hour: gpuCost.trim() ? Number(gpuCost) : undefined,
       };
       const result = await updateAutonomyStatus(status?.enabled ?? true, note.trim(), policy);
       setStatus(result.status);
@@ -154,7 +157,7 @@ export function AutonomyPage() {
     } finally {
       setSaving(false);
     }
-  }, [budgetHours, windows, maxRounds, note, status?.enabled]);
+  }, [budgetHours, windows, maxRounds, gpuCost, note, status?.enabled]);
 
   const card: React.CSSProperties = {
     background: J.bg2,
@@ -225,6 +228,11 @@ export function AutonomyPage() {
             Runden pro Pod-Session
             <input value={maxRounds} onChange={(e) => setMaxRounds(e.target.value)}
               placeholder="z. B. 10" style={{ display: "block", marginTop: 4, padding: "6px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, width: 140 }} />
+          </label>
+          <label style={{ fontSize: 12, color: J.textMuted }}>
+            GPU-Kosten ($/h)
+            <input value={gpuCost} onChange={(e) => setGpuCost(e.target.value)}
+              placeholder="z. B. 0.44" style={{ display: "block", marginTop: 4, padding: "6px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, width: 120 }} />
           </label>
         </div>
         <button disabled={saving} onClick={() => void savePolicy()}

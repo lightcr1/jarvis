@@ -740,3 +740,11 @@ def test_close_round_posts_metrics(tmp_path, monkeypatch):
     assert posted["payload"]["prompt_tokens"] == 7
     assert posted["payload"]["completion_tokens"] == 3
     assert posted["payload"]["task_id"] == "t1"
+
+
+def test_gpu_rate_prefers_config_then_env(monkeypatch):
+    monkeypatch.setattr(loop, "autonomy_policy", lambda: {"gpu_cost_per_hour": 0.5})
+    assert loop._gpu_rate() == 0.5
+    monkeypatch.setattr(loop, "autonomy_policy", lambda: {"gpu_cost_per_hour": None})
+    monkeypatch.setattr(loop, "GPU_COST_PER_HOUR", 0.25)
+    assert loop._gpu_rate() == 0.25
