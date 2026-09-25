@@ -226,6 +226,8 @@ def build_agent_grants_deps(state: object) -> dict:
         "agent_request_token": os.getenv("JARVIS_AGENT_REQUEST_TOKEN", ""),
         "github_write_token": os.getenv("JARVIS_GITHUB_WRITE_TOKEN", ""),
         "web_search_token": os.getenv("JARVIS_BRAVE_SEARCH_TOKEN", ""),
+        "search_provider": os.getenv("JARVIS_SEARCH_PROVIDER", "brave"),
+        "searxng_url": os.getenv("JARVIS_SEARXNG_URL", ""),
         "owner_user_id": os.getenv("JARVIS_OWNER_USER_ID", "").strip(),
         "email_service": live_attr(state, "email_service"),
     }

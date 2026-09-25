@@ -1,0 +1,20 @@
+# SearXNG-Konfiguration fuer die interne Jarvis-Webletrecherche.
+# Wird read-only gemountet; das Secret kommt aus SEARXNG_SECRET (Env), damit
+# kein Geheimnis im Repo liegt. Nur JSON+HTML, Limiter aus (nur intern erreichbar).
+use_default_settings: true
+server:
+  secret_key: "please-change-via-SEARXNG_SECRET"
+  limiter: false
+  image_proxy: false
+  public_instance: false
+search:
+  safe_search: 1
+  formats:
+    - html
+    - json
+# Engines deaktivieren, die ohne Tor bzw. zuverlaessig scheitern.
+engines:
+  - name: ahmia
+    disabled: true
+  - name: torch
+    disabled: true

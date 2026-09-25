@@ -245,11 +245,17 @@ funktionieren nur, wenn der serverseitige Fine-Grained Token genau dafuer
 berechtigt wurde.
 Fuer Business-Recherche kann ein genehmigter Projektrahmen der Art
 `business_research` die Operation `web_search` fuer ein genaues Projektziel
-freigeben. Der Backend-Gateway spricht ausschliesslich die feste Brave-Search-
-API mit dem serverseitigen `JARVIS_BRAVE_SEARCH_TOKEN` an, blockiert Redirects,
-begrenzt Query und Ergebniszahl, reserviert vor dem Provider-Aufruf eine harte
-Quote von 20 Suchen je Projekt und rollierenden 24 Stunden und gibt Ergebnisse
-als unvertraute Daten aus.
+freigeben. Der Backend-Gateway nutzt einen serverseitig festgelegten Anbieter
+(`JARVIS_SEARCH_PROVIDER=brave|searxng`):
+
+- `brave` (Default): feste Brave-Search-API mit `JARVIS_BRAVE_SEARCH_TOKEN`.
+- `searxng`: selbst gehosteter SearXNG ueber die feste interne URL
+  `JARVIS_SEARXNG_URL` (z. B. `http://searxng:8080`), kein externer Account.
+
+In beiden Faellen blockiert der Gateway Redirects, begrenzt Query, Antwortgroesse
+und Ergebniszahl, reserviert vor dem Provider-Aufruf eine harte Quote von 20
+Suchen je Projekt und rollierenden 24 Stunden und gibt Ergebnisse als
+unvertraute Daten aus. Der Agent kann Anbieter und URL **nicht** beeinflussen.
 Ohne konfigurierten Suchanbieter bleibt die Suche geschlossen. Recherche ist
 keine Erlaubnis, Personen zu kontaktieren, Inhalte zu veroeffentlichen oder
 Geld auszugeben; finanzielle und oeffentliche Aktionen brauchen separate
