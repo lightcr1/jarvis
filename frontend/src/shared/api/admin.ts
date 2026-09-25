@@ -487,17 +487,26 @@ export interface AutonomyStatus {
   enabled: boolean;
   updated_at?: string;
   note?: string;
+  max_gpu_hours_per_day?: number | null;
+  allowed_windows?: string[];
+  max_rounds_per_pod_session?: number | null;
+}
+
+export interface AutonomyPolicyInput {
+  max_gpu_hours_per_day?: number;
+  allowed_windows?: string[];
+  max_rounds_per_pod_session?: number;
 }
 
 export function fetchAutonomyStatus() {
   return apiRequest<{ status: AutonomyStatus }>("/autonomy", { includeAdmin: true });
 }
 
-export function updateAutonomyStatus(enabled: boolean, note: string) {
+export function updateAutonomyStatus(enabled: boolean, note: string, policy?: AutonomyPolicyInput) {
   return apiRequest<{ status: AutonomyStatus }>("/autonomy", {
     method: "PUT",
     includeAdmin: true,
-    body: { enabled, note },
+    body: { enabled, note, ...(policy ?? {}) },
   });
 }
 
@@ -622,4 +631,75 @@ export function decideOwnerRequest(number: number, decision: "approved" | "rejec
     `/agent/requests/${number}/decide`,
     { method: "POST", includeAdmin: true, body: { number, decision } },
   );
+}
+
+export interface LoopVersion {
+  repo_sha256?: string | null;
+  installed_sha256?: string | null;
+  drift?: boolean;
+  source?: string;
+}
+
+export function fetchLoopVersion() {
+  return apiRequest<LoopVersion>("/agent/loop-version", { includeAdmin: true });
+}
+
+export function requestLoopRollout() {
+  return apiRequest<{ requested: boolean; marker: string }>(
+    "/admin/autonomy/loop-rollout", { method: "POST", includeAdmin: true });
+}
+
+export interface AgentPatch {
+  id: string;
+  repository: string;
+  branch: string;
+  base: string;
+  commit?: string;
+  message: string;
+  paths: string[];
+  status: string;
+  pr_number?: number | null;
+  created_at?: number;
+  patch?: string;
+}
+
+export function fetchAgentPatches() {
+  return apiRequest<{ patches: AgentPatch[] }>("/admin/agent-patches", { includeAdmin: true });
+}
+
+export function fetchAgentPatch(id: string) {
+  return apiRequest<{ patch: AgentPatch }>(
+    `/admin/agent-patches/${encodeURIComponent(id)}`, { includeAdmin: true });
+}
+
+export function decideAgentPatch(id: string, approve: boolean, title?: string) {
+  return apiRequest<{ patch: AgentPatch; pr?: { number: number; url: string } }>(
+    `/admin/agent-patches/${encodeURIComponent(id)}/decide`,
+    { method: "POST", includeAdmin: true, body: { approve, title } },
+  );
+}
+
+export interface RoundMetric {
+  round_id: string;
+  task_id?: string | null;
+  gpu_seconds: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  cost_estimate: number;
+  status: string;
+}
+
+export interface RoundMetricsAggregate {
+  rounds: number;
+  gpu_hours: number;
+  total_tokens: number;
+  submitted: number;
+  cost_estimate: number;
+  tokens_per_submitted?: number | null;
+  patches_per_gpu_hour?: number | null;
+}
+
+export function fetchRoundMetrics() {
+  return apiRequest<{ aggregate: RoundMetricsAggregate; metrics: RoundMetric[] }>(
+    "/admin/autonomy/round-metrics", { includeAdmin: true });
 }

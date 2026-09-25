@@ -19,13 +19,16 @@ Der Loop pausiert eine laufende eigene Runde bei Benutzeraktivitaet, nimmt sie
 spaeter wieder auf und schliesst nach der Idle-Frist mit einer Wrapup-Runde ab.
 Die bisherige Implementierung versucht dann den Pod ueber den Controller zu
 stoppen; sie startet oder provisioniert keinen Pod. Die **versionierte Quelle**
-fordert in OpenHands `ConfirmRisky` an; eine auf Besitzerfreigabe wartende Runde
-sendet keinen Agent-Heartbeat, damit der bezahlte Pod nicht unbeschraenkt durch
-Warten am Leben bleibt. Die aktuell installierte Kopie kann noch `NeverConfirm`
-verwenden; vor einem Rollout muss das OpenHands-API-Verhalten von `ConfirmRisky`
-getestet werden. Auch eine Bestaetigung im Agent-Canvas ist **keine**
-technische Freigabe fuer externe Aktionen. Netzwerk-/Dateizugriff, GitHub-
-Schutz und Policies muessen ausserhalb des Prompts durchgesetzt werden.
+und die installierte Kopie verwenden im isolierten Agent-Container
+`NeverConfirm`: Ein unbeaufsichtigter Loop kann eine `ConfirmRisky`-Rueckfrage
+nicht beantworten, sie wuerde die Runde nur blockieren. Die tatsaechlichen
+Grenzen sind Netzwerk-Isolation/Allowlist-Proxy, der request-only Gateway-Token
+und das Fehlen von CONTROL_TOKEN/GitHub-Credentials im Canvas - **nicht** die
+UI-Bestaetigung. Eine Bestaetigung im Agent-Canvas ist also **keine** technische
+Freigabe fuer externe Aktionen; Netzwerk-/Dateizugriff, GitHub-Schutz und
+Policies muessen ausserhalb des Prompts durchgesetzt werden. Der Rundenprompt
+beschreibt die Umgebung gemaess `AGENT_NETWORK_MODE` (`isolated` |
+`allowlist-proxy`), damit er nicht der realen Konfiguration widerspricht.
 
 ## Aenderung und Installation
 
@@ -65,7 +68,66 @@ Execution-Backend weitere Arbeitscontainer starten kann. Diese duerfen weder
 andere Netzwerke noch Docker-Socket/Hostzugriff erhalten. Eine Host-Firewall
 bleibt als aeussere, vom Agenten nicht beschreibbare zweite Grenze empfohlen.
 
-Die festen Pfade und LAN-Endpunkte in diesem Skript sind installationsspezifisch.
+Die festen Pfade und LAN-Endpunkte in diesem Skript sind installationsspezifisch
+und lassen sich ohne Codeaenderung konfigurieren. Der Loop liest die Werte in
+dieser Reihenfolge: eingebaute Defaults < `autonomy-loop.env` neben der
+installierten Kopie (Pfad per `AUTONOMY_LOOP_ENV` ueberschreibbar) <
+Prozess-Umgebung. Eine Vorlage mit allen Schluesseln und Defaults liegt unter
+`config/autonomy-loop.example.env`. Fuer TLS kann `CONTROLLER_CA_FILE` auf die
+selbst erzeugte `tls/server.crt` (runpod-Repo) zeigen; ohne diesen Wert faellt
+der Loop auf `CERT_NONE` zurueck und schreibt eine Warnung ins Log.
+
+Der Versions-Drift zwischen installierter Kopie und versionierter Quelle ist
+sichtbar: der Loop schreibt beim Start seinen SHA256 in den State
+(`loop_sha256`), die Admin-UI (`AgentMonitorPage`) zeigt installierten Hash und
+Repo-Hash und warnt bei Abweichung. `scripts/agent/install_loop.sh --check`
+vergibt Exit 1 bei Drift (fuer einen spaeteren Timer) und prueft nichts weiter.
+
+Fuer einen freigegebenen Rollout schreibt die Admin-UI (AgentMonitorPage,
+Button „Rollout anfordern“) nur eine Anforderungsdatei
+(`JARVIS_LOOP_ROLLOUT_MARKER`, Standard
+`/home/media/jarvis-openhands/autonomy/rollout-requested`); sie fuehrt nichts
+aus. Ein Host-Timer ruft `scripts/agent/rollout_loop.sh` auf: bei Drift und
+vorhandener Anforderung installiert es ueber `install_loop.sh` (Backup inklusive)
+und entfernt den Marker. Ohne konfigurierten Marker-Pfad antwortet der Endpunkt
+mit 503.
+
+## Kontext-Effizienz
+
+Runden sollen nicht mehr den halben Kontext in Orientierung verbrennen. Die
+kompakte Karte `docs/agent/CONTEXT.md` (≤ 1500 Tokens) plus die passende
+Bereichskarte unter `docs/agent/areas/` beschreiben Repo, Testbefehle,
+Konventionen und geschuetzte Pfade; der Rundenprompt verweist darauf und
+verbietet ausdruecklich das vollstaendige Lesen von `CLAUDE.md`,
+`docs/v2/planning/EXECUTION_CHECKLIST_V2.md` und `jarvisappv4.py`. Die Groesse
+prueft `scripts/agent/context_budget.py` (Exit 1 bei Ueberschreitung); der
+statische Prompt-Teil steht vor dem variablen Fokus, damit vLLM Prefix-Caching
+greift.
+
+Fuer kompakte Tool-Ausgaben in Runden: `scripts/agent/verify.sh [pfade…]`
+fuehrt nur die betroffenen Tests mit begrenzter Ausgabe aus und prueft die
+Policy, `scripts/agent/find.sh <begriff>` durchsucht das Repo ohne
+`node_modules`/`dist`/`.git`.
+
+## Backlog und Rundenberichte
+
+Der Loop holt vor jeder Runde genau eine Aufgabe aus dem SQLite-Backlog
+(`JARVIS_AUTONOMY_TASKS_PATH`, Standard `/var/lib/jarvis/autonomy_tasks.sqlite3`)
+und setzt sie auf `in_progress`. Der Besitzer verwaltet Aufgaben im Admin unter
+`/admin/autonomy/tasks` (CRUD, Prioritaet, `decide` fuer Agentenvorschlaege); der
+Agent darf nur ueber `scripts/agent/jarvis_gateway.py propose-task` vorschlagen
+(Status `proposed`, Besitzerfreigabe noetig) und per `report-round` berichten.
+Nach `MAX_TASK_ATTEMPTS=3` erfolglosen Versuchen wird eine Aufgabe `blocked`.
+Ein leerer Backlog startet eine Discovery-Runde (maximal 3 Vorschlaege, keine
+Codeaenderung). Der Loop reicht die letzte Uebergabenotiz mit und erzeugt bei
+fehlendem Bericht einen Minimalbericht (`outcome=unknown`). Runden ohne
+Session-Fortschritt ueber `STUCK_CYCLES` Zyklen werden abgebrochen (Interrupt +
+Bericht).
+
+Neue Gateway-Pfade (`/jarvis-agent/tasks…`) sind im Inference-Gateway nur fuer
+`next`, `claim`, `report` und den Vorschlag freigegeben; die Aenderung an
+`deploy/openhands/inference-gateway.conf` ist ein geschuetzter Pfad und braucht
+Owner-Review.
 Die Laufzeitdateien (`autonomy-state.json`, Log), `.env`-Dateien und Tokens
 duerfen nicht versioniert oder als Agenten-Secrets verfuegbar gemacht werden.
 ## Projektfreigaben (API und Grenzen)

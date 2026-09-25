@@ -804,11 +804,41 @@ def try_skill(
     get_provider=None,
     get_gemini=None,
     get_openai=None,
+    autonomy_task_store=None,
 ) -> dict[str, object] | None:
     t = text.strip().lower()
 
     if t in {"health", "status", "ping jarvis"}:
         return {"reply": "On it. Backend is healthy.", "data": {"ok": True}}
+
+    # ── Owner -> agent backlog (7.1) ──────────────────────────────────────────
+    agent_task_patterns = (
+        r"^(?:jarvis[,!\s]+)?gib\s+(?:dem\s+)?agenten\s+(?:die\s+)?aufgabe[:\s]+(?P<task>.+)$",
+        r"^(?:jarvis[,!\s]+)?(?:gib|schick)\s+(?:dem\s+)?agenten[:\s]+(?P<task>.+)$",
+        r"^(?:jarvis[,!\s]+)?agent[\s-]?task[:\s]+(?P<task>.+)$",
+        r"^(?:jarvis[,!\s]+)?agenten[\s-]?aufgabe[:\s]+(?P<task>.+)$",
+    )
+    for pattern in agent_task_patterns:
+        match = re.match(pattern, text.strip(), re.IGNORECASE)
+        if match:
+            if autonomy_task_store is None:
+                break
+            task_text = match.group("task").strip()
+            if not task_text:
+                break
+            try:
+                task = autonomy_task_store.create_task(
+                    title=task_text[:140], description=task_text, area="general",
+                    size="medium", source="owner", status="open",
+                )
+            except ValueError as exc:
+                return {"reply": f"I could not add that task: {exc}",
+                        "data": {"route": "agent_task", "error": True}}
+            return {
+                "reply": ("Understood. Added to the agent backlog "
+                          f"({task['id'][:8]}): {task_text[:140]}."),
+                "data": {"route": "agent_task", "task": task},
+            }
 
     # ── Morning / status briefing ─────────────────────────────────────────────
     if t in {"briefing", "morning briefing", "status briefing", "daily briefing",
@@ -849,23 +879,38 @@ def try_skill(
             lines.append(f"Location set to {location}. Say 'weather' for a full forecast.")
         if notes_count:
             lines.append(f"You have {notes_count} note(s) on file.")
+        agent_summary = None
+        if autonomy_task_store is not None:
+            try:
+                agent_summary = autonomy_task_store.daily_summary()
+            except Exception:  # noqa: BLE001 - briefing must never fail on the agent store
+                agent_summary = None
+            if agent_summary and agent_summary.get("rounds"):
+                outcomes = agent_summary.get("outcomes", {})
+                lines.append(
+                    f"The coding agent finished {agent_summary['rounds']} round(s) in the last "
+                    f"24 hours ({outcomes.get('done', 0)} done, {outcomes.get('submitted', 0)} "
+                    f"submitted, {outcomes.get('blocked', 0)} blocked)."
+                )
+                if agent_summary.get("latest"):
+                    lines.append(f"Latest agent note: {str(agent_summary['latest'])[:200]}")
         reply = f"{salutation} " + " ".join(lines)
-        return {
-            "reply": reply,
-            "data": {
-                "route": "briefing",
-                "salutation": salutation,
-                "time": time_str,
-                "date": date_str,
-                "load1": load1,
-                "load_pct": round(load_pct, 1),
-                "mem_pct": round(mem_pct, 1),
-                "disk_pct": round(disk_pct, 1),
-                "uptime": uptime_raw,
-                "notes_count": notes_count,
-                "location": location,
-            },
+        data = {
+            "route": "briefing",
+            "salutation": salutation,
+            "time": time_str,
+            "date": date_str,
+            "load1": load1,
+            "load_pct": round(load_pct, 1),
+            "mem_pct": round(mem_pct, 1),
+            "disk_pct": round(disk_pct, 1),
+            "uptime": uptime_raw,
+            "notes_count": notes_count,
+            "location": location,
         }
+        if agent_summary is not None:
+            data["agent_summary"] = agent_summary
+        return {"reply": reply, "data": data}
 
     if t in {"uptime", "server uptime"}:
         out = run_cmd(["/usr/bin/uptime", "-p"])
@@ -1312,6 +1357,7 @@ def try_skill(
             "average <n1> <n2> ... — mean of numbers",
             "min/max <n1> <n2> ... — find min or max",
             "briefing / morning briefing — full status report",
+            "gib dem Agenten die Aufgabe <text> / agent task: <text> — add to agent backlog",
             "http status <url> — HTTP response code check",
             "ssl <domain> — SSL certificate expiry check",
             "temperature / cpu temp — CPU thermal sensor readings",

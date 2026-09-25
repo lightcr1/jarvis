@@ -32,9 +32,14 @@ def main() -> int:
     meta = sub.add_parser("repo-metadata"); meta.add_argument("repository")
     branch = sub.add_parser("create-branch"); branch.add_argument("repository"); branch.add_argument("branch"); branch.add_argument("base")
     write = sub.add_parser("write-file"); write.add_argument("repository"); write.add_argument("path"); write.add_argument("branch"); write.add_argument("local_file"); write.add_argument("message")
+    patch = sub.add_parser("submit-patch"); patch.add_argument("repository"); patch.add_argument("branch"); patch.add_argument("base"); patch.add_argument("patchfile"); patch.add_argument("message")
     email = sub.add_parser("request-email"); email.add_argument("to"); email.add_argument("subject"); email.add_argument("body")
     pr = sub.add_parser("request-pr"); pr.add_argument("repository"); pr.add_argument("title"); pr.add_argument("body"); pr.add_argument("head"); pr.add_argument("base")
     execute = sub.add_parser("execute-action"); execute.add_argument("id")
+    next_task = sub.add_parser("task-next"); next_task.add_argument("--focus", default=""); next_task.add_argument("--exclude", default="")
+    propose = sub.add_parser("propose-task"); propose.add_argument("title"); propose.add_argument("description"); propose.add_argument("area"); propose.add_argument("size")
+    claim = sub.add_parser("claim-task"); claim.add_argument("task_id"); claim.add_argument("round_id")
+    report = sub.add_parser("report-round"); report.add_argument("task_id"); report.add_argument("outcome"); report.add_argument("summary"); report.add_argument("--branch", default=""); report.add_argument("--file", action="append", default=[]); report.add_argument("--test", action="append", default=[]); report.add_argument("--next-step", default=""); report.add_argument("--owner-question", default="")
     args = parser.parse_args(); values = vars(args); cmd = values.pop("cmd")
     if cmd == "propose-idea": result = call("POST", "/ideas", values)
     elif cmd == "request-grant": result = call("POST", "/grants/requests", {"duration_seconds": values.pop("duration"), **values})
@@ -49,8 +54,24 @@ def main() -> int:
     elif cmd == "write-file":
         owner, repo = args.repository.split("/", 1); content = open(args.local_file, encoding="utf-8").read()
         result = call("PUT", f"/repositories/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}/files", {"path": args.path, "branch": args.branch, "content": content, "message": args.message})
+    elif cmd == "submit-patch":
+        owner, repo = args.repository.split("/", 1)
+        patch_text = open(args.patchfile, encoding="utf-8").read()
+        result = call("POST", f"/repositories/{urllib.parse.quote(owner, safe='')}/{urllib.parse.quote(repo, safe='')}/patches", {"branch": args.branch, "base": args.base, "patch": patch_text, "message": args.message})
     elif cmd == "request-email": result = call("POST", "/actions/email-send", {"to": args.to, "subject": args.subject, "body": args.body})
     elif cmd == "request-pr": result = call("POST", "/actions/github-pull-request", values)
+    elif cmd == "task-next":
+        query = urllib.parse.urlencode({"focus": values.get("focus", ""), "exclude": values.get("exclude", "")})
+        result = call("GET", f"/tasks/next?{query}")
+    elif cmd == "propose-task": result = call("POST", "/tasks", values)
+    elif cmd == "claim-task":
+        result = call("POST", f"/tasks/{urllib.parse.quote(args.task_id, safe='')}/claim", {"round_id": args.round_id})
+    elif cmd == "report-round":
+        result = call("POST", f"/tasks/{urllib.parse.quote(args.task_id, safe='')}/report", {
+            "outcome": args.outcome, "summary": args.summary, "branch": args.branch,
+            "files_changed": args.file, "tests": args.test, "next_step": args.next_step,
+            "owner_question": args.owner_question,
+        })
     else: result = call("POST", f"/actions/{urllib.parse.quote(args.id, safe='')}/execute")
     print(json.dumps(result, ensure_ascii=False, indent=2)); return 0
 

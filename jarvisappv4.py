@@ -147,10 +147,13 @@ from jarvis.api_admin_integrations import build_admin_integrations_router
 from jarvis.api_weather import build_weather_router
 from jarvis.api_agent_monitor import build_agent_monitor_router
 from jarvis.api_autonomy import build_autonomy_router
+from jarvis.api_autonomy_tasks import build_autonomy_tasks_router
 from jarvis.api_agent_grants import build_agent_grants_router
 from jarvis.agent_grants import AgentGrantStore
 from jarvis.autonomy_store import AutonomyStore
-from jarvis.router_dependencies import build_admin_deps, build_agent_monitor_deps, build_autonomy_deps, build_agent_grants_deps, build_admin_integrations_deps, build_alerts_deps, build_auth_chat_deps, build_billing_deps, build_calendar_deps, build_device_sync_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_weather_deps, build_workspace_deps, live_attr
+from jarvis.autonomy_task_store import AutonomyTaskStore
+from jarvis.patch_review_store import PatchReviewStore
+from jarvis.router_dependencies import build_admin_deps, build_agent_monitor_deps, build_autonomy_deps, build_autonomy_tasks_deps, build_agent_grants_deps, build_admin_integrations_deps, build_alerts_deps, build_auth_chat_deps, build_billing_deps, build_calendar_deps, build_device_sync_deps, build_email_deps, build_files_deps, build_home_assistant_deps, build_memory_deps, build_notifications_deps, build_policies_deps, build_status_deps, build_tasks_deps, build_voice_deps, build_weather_deps, build_workspace_deps, live_attr
 from jarvis.jarvis_engine import (
     JarvisEngine,
     build_registry,
@@ -219,6 +222,8 @@ admin_password_store = AdminPasswordStore()
 admin_settings_store = AdminSettingsStore()
 autonomy_store = AutonomyStore()
 agent_grant_store = AgentGrantStore()
+patch_review_store = PatchReviewStore()
+autonomy_task_store = AutonomyTaskStore()
 user_preferences_store = UserPreferencesStore()
 byok_store = ByokKeyStore()
 usage_log_store = UsageLogStore()
@@ -631,6 +636,7 @@ app.include_router(build_home_assistant_router(build_home_assistant_deps(sys.mod
 app.include_router(build_memory_router(build_memory_deps(sys.modules[__name__])))
 app.include_router(build_status_router(build_status_deps(sys.modules[__name__])))
 app.include_router(build_autonomy_router(build_autonomy_deps(sys.modules[__name__])))
+app.include_router(build_autonomy_tasks_router(build_autonomy_tasks_deps(sys.modules[__name__])))
 app.include_router(build_agent_grants_router(build_agent_grants_deps(sys.modules[__name__])))
 app.include_router(build_agent_monitor_router(build_agent_monitor_deps(sys.modules[__name__])))
 app.include_router(build_tasks_router(build_tasks_deps(sys.modules[__name__])))
@@ -724,6 +730,7 @@ def try_skill(text: str, role: str = "admin", token: str | None = None, granted_
         get_provider=get_provider,
         get_gemini=get_gemini,
         get_openai=get_openai,
+        autonomy_task_store=autonomy_task_store,
     )
 
 

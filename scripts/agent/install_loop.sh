@@ -12,15 +12,33 @@ SOURCE="$ROOT/scripts/agent/autonomy_loop.py"
 INSTALLED="/home/media/jarvis-openhands/autonomy/autonomy_loop.py"
 TARGET_DIR="$(dirname "$INSTALLED")"
 DRY_RUN=0
+CHECK=0
 
 for arg in "$@"; do
   case "$arg" in
     --dry-run) DRY_RUN=1 ;;
-    *) echo "Unknown argument: $arg (only --dry-run is supported)" >&2; exit 2 ;;
+    --check) CHECK=1 ;;
+    *) echo "Unknown argument: $arg (only --dry-run and --check are supported)" >&2; exit 2 ;;
   esac
 done
 
 [ -f "$SOURCE" ] || { echo "Versioned source not found: $SOURCE" >&2; exit 1; }
+
+if [ "$CHECK" -eq 1 ]; then
+  # Drift-Check fuer einen spaeteren Timer: Exit 1, wenn installiert != Repo.
+  if [ ! -f "$INSTALLED" ]; then
+    echo "DRIFT: installierte Loop-Kopie fehlt: $INSTALLED" >&2
+    exit 1
+  fi
+  src_hash=$(sha256sum "$SOURCE" | awk '{print $1}')
+  inst_hash=$(sha256sum "$INSTALLED" | awk '{print $1}')
+  if [ "$src_hash" = "$inst_hash" ]; then
+    echo "OK: installiert == versionierte Quelle ($src_hash)"
+    exit 0
+  fi
+  echo "DRIFT: installiert ($inst_hash) != Repo ($src_hash)" >&2
+  exit 1
+fi
 
 echo "==> Python syntax check"
 python3 -m py_compile "$SOURCE"

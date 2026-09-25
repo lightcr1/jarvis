@@ -5,7 +5,13 @@ These tests never contact OpenHands or Runpod and never read host credentials.
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import json
+import os
+import ssl
 from pathlib import Path
+
+import pytest
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "agent" / "autonomy_loop.py"
@@ -13,6 +19,13 @@ spec = importlib.util.spec_from_file_location("jarvis_autonomy_loop", SCRIPT)
 loop = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
 spec.loader.exec_module(loop)
+
+
+@pytest.fixture(autouse=True)
+def _isolate_host_side_effects(tmp_path, monkeypatch):
+    """main() darf in Tests nie echte Conversations loeschen oder git-Worktrees anfassen."""
+    monkeypatch.setattr(loop, "WORKTREE_REPO_PATH", tmp_path / "no-repo")
+    monkeypatch.setattr(loop, "delete_conversation", lambda *args, **kwargs: None)
 
 
 def test_round_includes_owner_goals_and_approval_boundaries():
@@ -117,3 +130,613 @@ def test_round_prompt_contains_focus(monkeypatch):
     assert "Engineering" in prompt_eng
     assert "Ideen" in prompt_ideas
     assert "AGENTS.md" in prompt_eng and "AGENTS.md" in prompt_ideas
+
+
+def test_check_pod_model_ready_fallback_returns_no_pod_id(monkeypatch):
+    """B3: 502 am Status-Endpunkt + ready-Modell -> laufender Pod, pod_id None."""
+    def fake_http(method, url, headers=None, **kwargs):
+        if url.endswith("/api/status"):
+            return {"status": 502, "data": {"error": "bad gateway"}}
+        if url.endswith("/api/model/ready"):
+            return {"status": 200, "data": {"ready": True}}
+        raise AssertionError(f"unerwarteter Aufruf: {url}")
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    assert loop.check_pod("token") == (True, "RUNNING(model-ready)", None)
+
+
+def _write_state(path: Path, state: dict) -> None:
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+
+def test_model_ready_fallback_keeps_active_sessions_and_heartbeats(tmp_path, monkeypatch):
+    """B3: model-ready-Fallback (pod_id=None) darf laufende eigene Runden nicht
+    verwerfen; die Runde muss weiter Heartbeats senden."""
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "_parse_env", lambda _: {
+        "CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake",
+    })
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING(model-ready)", None))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 9999})
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: [{
+        "id": "sess-a", "execution_status": "running",
+        "tags": {"kind": "autonomy", "focus": "engineering"},
+    }])
+    monkeypatch.setattr(loop, "MAX_PARALLEL_ROUNDS", 1)
+    monkeypatch.setattr(loop, "start_round", lambda *_: (_ for _ in ()).throw(
+        AssertionError("laufende Runde belegt den Slot; kein neuer Start")))
+    beats: list[int] = []
+    monkeypatch.setattr(loop, "heartbeat", lambda _: beats.append(1))
+    _write_state(loop.STATE_PATH, {
+        "pod_id": "pod-1",
+        "active_sessions": {"sess-a": {"kind": "round", "paused": False, "focus": "engineering"}},
+        "wrapup_done": False,
+    })
+
+    assert loop.main() == 0
+    assert beats, "fuer die laufende eigene Runde muss ein Heartbeat gesendet werden"
+    state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
+    assert "sess-a" in state["active_sessions"]
+    assert state["pod_id"] == "pod-1"
+
+
+def test_tagged_unknown_session_is_adopted_not_foreign(tmp_path, monkeypatch):
+    """B3: eine getaggte Autonomie-Session, die dem State unbekannt ist, wird
+    adoptiert statt als fremde Aktivitaet gewertet."""
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "_parse_env", lambda _: {
+        "CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake",
+    })
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING", "pod-1"))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 9999})
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: [{
+        "id": "sess-x", "execution_status": "running",
+        "tags": ["kind:autonomy", "focus:ideas"],
+    }])
+    monkeypatch.setattr(loop, "MAX_PARALLEL_ROUNDS", 1)
+    monkeypatch.setattr(loop, "heartbeat", lambda _: None)
+    monkeypatch.setattr(loop, "start_round", lambda *_: (_ for _ in ()).throw(
+        AssertionError("adoptierte Runde belegt den Slot; kein neuer Start")))
+    _write_state(loop.STATE_PATH, {"pod_id": "pod-1", "active_sessions": {}, "wrapup_done": False})
+
+    assert loop.main() == 0
+    state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
+    assert state["active_sessions"]["sess-x"]["focus"] == "ideas"
+
+
+def test_foreign_session_still_blocks_new_round(tmp_path, monkeypatch):
+    """Nicht getaggte, laufende Sessions bleiben fremd und blockieren neue Runden."""
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "_parse_env", lambda _: {
+        "CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake",
+    })
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING", "pod-1"))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 9999})
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: [
+        {"id": "owner-conv", "execution_status": "running", "tags": {}},
+    ])
+    monkeypatch.setattr(loop, "start_round", lambda *_: (_ for _ in ()).throw(
+        AssertionError("fremde Session darf keinen neuen Start zulassen")))
+    _write_state(loop.STATE_PATH, {"pod_id": "pod-1", "active_sessions": {}, "wrapup_done": False})
+
+    assert loop.main() == 0
+    state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
+    assert "owner-conv" not in state["active_sessions"]
+
+
+
+# ---------------------------------------------------------------------------
+# 1.2 Wrapup + 1.3 Aufraeumen
+# ---------------------------------------------------------------------------
+
+
+def test_wrapup_stops_pod_once_when_wrapup_ends_first(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    stops: list[int] = []
+    monkeypatch.setattr(loop, "stop_pod", lambda _: stops.append(1) or True)
+    state = {
+        "active_sessions": {"w": {"kind": "wrapup"}, "r": {"kind": "round"}},
+        "wrapup_done": True,
+    }
+    loop.close_round(state, "api", "tok", "w", "wrapup")
+    assert stops == [], "Normalrunde laeuft noch, kein Pod-Stop"
+    loop.close_round(state, "api", "tok", "r", "round")
+    assert stops == [1], "genau ein Pod-Stop nach der letzten Runde"
+
+
+def test_wrapup_stops_pod_once_when_normal_round_ends_first(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    stops: list[int] = []
+    monkeypatch.setattr(loop, "stop_pod", lambda _: stops.append(1) or True)
+    state = {
+        "active_sessions": {"w": {"kind": "wrapup"}, "r": {"kind": "round"}},
+        "wrapup_done": True,
+    }
+    loop.close_round(state, "api", "tok", "r", "round")
+    assert stops == [], "Wrapup-Runde laeuft noch, kein Pod-Stop"
+    loop.close_round(state, "api", "tok", "w", "wrapup")
+    assert stops == [1], "genau ein Pod-Stop nach der letzten Runde"
+
+
+def test_send_message_uses_events_endpoint(monkeypatch):
+    captured = {}
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        captured.update(method=method, url=url, headers=headers, body=body)
+        return {"status": 200, "data": {"success": True}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    assert loop.send_message("api", "conv-1", "hallo") is True
+    assert captured["method"] == "POST"
+    assert captured["url"].endswith("/api/conversations/conv-1/events")
+    assert captured["headers"] == {"X-Session-API-Key": "api"}
+    assert captured["body"]["content"][0] == {"type": "text", "text": "hallo"}
+    assert captured["body"]["run"] is False
+
+
+def test_notify_running_rounds_wrapup_only_active(monkeypatch):
+    sent: list[str] = []
+    monkeypatch.setattr(loop, "send_message",
+                        lambda api, cid, text, **kw: sent.append(cid) or True)
+    active = {"a": {"kind": "round"}, "b": {"kind": "wrapup"}, "c": {"kind": "round"}}
+    sessions_by_id = {
+        "a": {"execution_status": "running"},
+        "b": {"execution_status": "running"},
+        "c": {"execution_status": "finished"},
+    }
+    loop.notify_running_rounds_wrapup("api", active, sessions_by_id)
+    assert sent == ["a"]
+
+
+def test_cleanup_finished_conversations_keeps_newest_and_skips_active(monkeypatch):
+    deleted: list[str] = []
+    monkeypatch.setattr(loop, "delete_conversation",
+                        lambda api, cid: deleted.append(cid))
+    sessions = [
+        {"id": "old", "execution_status": "finished", "created_at": "2024-01-01",
+         "tags": {"kind": "autonomy"}},
+        {"id": "new", "execution_status": "finished", "created_at": "2024-03-01",
+         "tags": {"kind": "autonomy"}},
+        {"id": "running", "execution_status": "running", "created_at": "2024-01-01",
+         "tags": {"kind": "autonomy"}},
+        {"id": "foreign", "execution_status": "finished", "created_at": "2024-01-01",
+         "tags": {}},
+    ]
+    active = {"running": {"kind": "round"}}
+    removed = loop.cleanup_finished_conversations("api", sessions, active, keep=1)
+    assert removed == 1
+    assert deleted == ["old"]
+
+
+class _FakeRun:
+    def __init__(self, stdout: str = "", returncode: int = 0):
+        self.stdout = stdout
+        self.returncode = returncode
+
+
+def test_cleanup_orphan_worktrees_removes_only_old_inactive(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    wt_root = tmp_path / "worktrees"
+    old = wt_root / "11111111-1111-1111-1111-111111111111"
+    active = wt_root / "22222222-2222-2222-2222-222222222222"
+    recent = wt_root / "33333333-3333-3333-3333-333333333333"
+    for path in (old, active, recent):
+        path.mkdir(parents=True)
+    now = 1_000_000.0
+    os.utime(old, (now - 7200, now - 7200))
+    os.utime(active, (now - 7200, now - 7200))
+    os.utime(recent, (now - 100, now - 100))
+
+    calls: list[list[str]] = []
+
+    def runner(cmd, **kwargs):
+        calls.append(cmd)
+        if cmd[3:5] == ["worktree", "list"]:
+            stdout = "\n\n".join(
+                f"worktree {p}" for p in (repo, old, active, recent)) + "\n"
+            return _FakeRun(stdout=stdout)
+        return _FakeRun()
+
+    removed = loop.cleanup_orphan_worktrees(
+        repo, {"22222222-2222-2222-2222-222222222222"}, max_age_s=3600,
+        runner=runner, now=now)
+
+    assert removed == 1
+    remove_calls = [c for c in calls if c[3:5] == ["worktree", "remove"]]
+    assert len(remove_calls) == 1
+    assert str(old) in remove_calls[0]
+    assert [c[3:5] for c in calls].count(["worktree", "prune"]) == 1
+
+
+def test_cleanup_orphan_worktrees_skips_when_repo_missing(tmp_path):
+    def runner(cmd, **kwargs):  # pragma: no cover - darf nicht aufgerufen werden
+        raise AssertionError("ohne Repo darf git nicht aufgerufen werden")
+
+    assert loop.cleanup_orphan_worktrees(tmp_path / "missing", set(), runner=runner) == 0
+
+
+# ---------------------------------------------------------------------------
+# 1.5 Konfiguration + 1.6 Versions-Drift
+# ---------------------------------------------------------------------------
+
+
+def test_load_config_defaults_file_and_environment(tmp_path):
+    cfg_file = tmp_path / "autonomy-loop.env"
+    cfg_file.write_text(
+        "# Kommentar\nMAX_ITERATIONS=55\nCONTROLLER_BASE=https://file:1\n",
+        encoding="utf-8",
+    )
+    cfg = loop.load_config(cfg_file, environ={"COOLDOWN_SECONDS": "7"})
+    assert cfg["MAX_ITERATIONS"] == "55"
+    assert cfg["CONTROLLER_BASE"] == "https://file:1"
+    assert cfg["COOLDOWN_SECONDS"] == "7"  # Umgebung schlaegt Datei/Default
+    assert cfg["MAX_PARALLEL_ROUNDS"] == loop.DEFAULT_CONFIG["MAX_PARALLEL_ROUNDS"]
+
+
+def test_load_config_ignores_empty_environment_values(tmp_path):
+    cfg = loop.load_config(tmp_path / "missing.env", environ={"CONTROLLER_CA_FILE": ""})
+    assert cfg["CONTROLLER_CA_FILE"] == loop.DEFAULT_CONFIG["CONTROLLER_CA_FILE"]
+
+
+def test_build_ssl_context_fallback_is_insecure():
+    ctx = loop.build_ssl_context("")
+    assert ctx.verify_mode == ssl.CERT_NONE
+    assert ctx.check_hostname is False
+
+
+def test_build_ssl_context_with_ca_verifies():
+    ca = "/etc/ssl/certs/ca-certificates.crt"
+    if not os.path.exists(ca):
+        pytest.skip("System-CA-Bundle nicht vorhanden")
+    ctx = loop.build_ssl_context(ca)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED
+    assert ctx.check_hostname is True
+
+
+def test_source_sha256_matches_hashlib(tmp_path):
+    target = tmp_path / "loop.py"
+    target.write_bytes(b"abc")
+    assert loop.source_sha256(target) == hashlib.sha256(b"abc").hexdigest()
+
+
+def test_start_round_uses_configured_condenser(monkeypatch):
+    captured = {}
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        captured.update(body or {})
+        return {"status": 201, "data": {"id": "fake"}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    monkeypatch.setattr(loop, "CONDENSER_MAX_SIZE", 42)
+    monkeypatch.setattr(loop, "CONDENSER_KEEP_FIRST", 3)
+    assert loop.start_round("api", "model", "round", 30) == "fake"
+    assert captured["agent"]["condenser"]["max_size"] == 42
+    assert captured["agent"]["condenser"]["keep_first"] == 3
+
+
+# ---------------------------------------------------------------------------
+# 2.1 / 2.3 kompakter Kontext + stabile Prompt-Reihenfolge
+# ---------------------------------------------------------------------------
+
+
+def test_round_prompt_static_prefix_is_stable_across_focus():
+    engineering = loop.round_prompt("round", 30, focus="engineering")
+    ideas = loop.round_prompt("round", 30, focus="ideas")
+    # Der statische Teil steht zuerst und ist fuer alle Foki identisch
+    # (Prefix-Cache), der Fokus kommt erst danach.
+    assert engineering[:600] == ideas[:600]
+    assert "FOKUS DIESER RUNDE" not in engineering[:600]
+    assert "Engineering" not in engineering[:600]
+    assert "FOKUS DIESER RUNDE" in engineering
+    assert "FOKUS DIESER RUNDE" in ideas
+
+
+def test_round_prompt_references_compact_context():
+    prompt = loop.round_prompt("round", 30)
+    assert "docs/agent/CONTEXT.md" in prompt
+    assert "docs/agent/areas/" in prompt
+    assert "NIEMALS komplett" in prompt
+
+
+# ---------------------------------------------------------------------------
+# 2.2 Condenser- und Iterationsbudget
+# ---------------------------------------------------------------------------
+
+
+def test_iterations_for_size():
+    assert loop.iterations_for_size("small") == loop.MAX_ITERATIONS_SMALL
+    assert loop.iterations_for_size("medium") == loop.MAX_ITERATIONS_MEDIUM
+    assert loop.iterations_for_size(None) == loop.MAX_ITERATIONS
+    assert loop.iterations_for_size("unknown") == loop.MAX_ITERATIONS
+    assert loop.MAX_ITERATIONS_SMALL < loop.MAX_ITERATIONS_MEDIUM
+
+
+def test_start_round_accepts_explicit_iteration_budget(monkeypatch):
+    captured = {}
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        captured.update(body or {})
+        return {"status": 201, "data": {"id": "fake"}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    assert loop.start_round("api", "model", "round", 30, max_iterations=40) == "fake"
+    assert captured["max_iterations"] == 40
+
+
+# ---------------------------------------------------------------------------
+# 3.1 Backlog-Auswahl + 3.2 Rundenbericht (Loop-Seite)
+# ---------------------------------------------------------------------------
+
+
+def test_round_prompt_includes_task_and_area_card():
+    task = {"id": "t1", "title": "Fix X", "description": "Details", "area": "tasks",
+            "size": "small", "status": "in_progress"}
+    note = {"outcome": "partial", "summary": "half", "next_step": "continue"}
+    prompt = loop.round_prompt("round", 30, task=task, last_report=note, round_id="r1")
+    assert "Fix X" in prompt
+    assert "docs/agent/areas/tasks.md" in prompt
+    assert "report-round" in prompt and "r1" in prompt
+    assert "Letzte Uebergabenotiz" in prompt and "half" in prompt
+
+
+def test_round_prompt_is_discovery_without_task():
+    prompt = loop.round_prompt("round", 30)
+    assert "DISCOVERY-RUNDE" in prompt
+    assert "propose-task" in prompt
+    assert "KEINEN Code" in prompt
+
+
+def test_fetch_next_task_and_claim(monkeypatch):
+    calls = []
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        calls.append((method, url, body))
+        if "/agent/tasks/next" in url:
+            return {"status": 200, "data": {
+                "task": {"id": "t1"}, "last_report": {"summary": "s"},
+                "open_work": {"submitted": 2},
+            }}
+        if "/agent/tasks/t1/claim" in url:
+            return {"status": 200, "data": {"task": {"id": "t1", "status": "in_progress"}}}
+        return {"status": 404, "data": {}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    task, last, open_work = loop.fetch_next_task("tok", "engineering")
+    assert task["id"] == "t1" and last["summary"] == "s"
+    assert open_work == {"submitted": 2}
+    claimed = loop.claim_task("tok", "t1", "round-1")
+    assert claimed["status"] == "in_progress"
+    assert calls[-1][2] == {"round_id": "round-1"}
+    assert loop.fetch_next_task(None, "engineering") == (None, None, None)
+
+
+def test_ensure_round_report_posts_only_when_missing(monkeypatch):
+    posted = []
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        if method == "GET":
+            return {"status": 200, "data": {"task": {"id": "t1"},
+                                            "last_report": {"round_id": "r-existing"}}}
+        posted.append((url, body))
+        return {"status": 201, "data": {}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    loop.ensure_round_report("tok", "t1", "r-existing")
+    assert posted == []
+    loop.ensure_round_report("tok", "t1", "r-new")
+    assert len(posted) == 1
+    assert posted[0][1]["outcome"] == "unknown"
+    assert posted[0][1]["round_id"] == "r-new"
+
+
+def test_main_claims_task_and_records_meta(tmp_path, monkeypatch):
+    task = {"id": "t1", "title": "Fix X", "area": "tasks", "size": "small"}
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "_parse_env", lambda _: {
+        "CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake",
+        "JARVIS_AGENT_REQUEST_TOKEN": "agent",
+    })
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING", "pod-1"))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 200})
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: [])
+    monkeypatch.setattr(loop, "model_ready", lambda _: True)
+    monkeypatch.setattr(loop, "pending_owner_ideas", lambda _: [])
+    monkeypatch.setattr(loop, "heartbeat", lambda _: None)
+    monkeypatch.setattr(loop, "fetch_next_task", lambda *a, **k: (task, None, None))
+    monkeypatch.setattr(loop, "claim_task",
+                        lambda t, i, r: {**task, "status": "in_progress"})
+    captured = {}
+
+    def fake_start(api, agent, kind, idle, ideas=None, focus="engineering", **kwargs):
+        captured.update(kind=kind, focus=focus, **kwargs)
+        return "conv-1"
+
+    monkeypatch.setattr(loop, "start_round", fake_start)
+    _write_state(loop.STATE_PATH, {"pod_id": "pod-1", "active_sessions": {}, "wrapup_done": False})
+
+    assert loop.main() == 0
+    assert captured["task"]["id"] == "t1"
+    assert captured["max_iterations"] == loop.MAX_ITERATIONS_SMALL
+    state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
+    meta = state["active_sessions"]["conv-1"]
+    assert meta["task_id"] == "t1"
+    assert meta["round_id"] == captured["round_id"]
+
+
+# ---------------------------------------------------------------------------
+# 4.4 Haenger-Erkennung
+# ---------------------------------------------------------------------------
+
+
+def test_track_stuck_resets_on_progress():
+    meta = {}
+    assert loop.track_stuck(meta, {"updated_at": "t1"}) is False
+    assert loop.track_stuck(meta, {"updated_at": "t1"}) is False
+    assert meta["stuck_cycles"] == 1
+    assert loop.track_stuck(meta, {"updated_at": "t2"}) is False
+    assert meta["stuck_cycles"] == 0
+
+
+def test_track_stuck_after_cycles():
+    meta = {}
+    assert loop.track_stuck(meta, {"updated_at": "same"}) is False  # erste Beobachtung
+    stuck = False
+    for _ in range(loop.STUCK_CYCLES):
+        stuck = loop.track_stuck(meta, {"updated_at": "same"})
+    assert stuck is True
+
+
+def test_main_interrupts_stuck_round(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "_parse_env", lambda _: {
+        "CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake",
+        "JARVIS_AGENT_REQUEST_TOKEN": "agent",
+    })
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING", "pod-1"))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 200})
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: [{
+        "id": "sess-stuck", "execution_status": "running", "updated_at": "same",
+        "tags": {"kind": "autonomy", "focus": "engineering"},
+    }])
+    monkeypatch.setattr(loop, "MAX_PARALLEL_ROUNDS", 1)
+    monkeypatch.setattr(loop, "heartbeat", lambda _: None)
+    interrupted = []
+    monkeypatch.setattr(loop, "interrupt_conversation",
+                        lambda api, cid: interrupted.append(cid) or True)
+    monkeypatch.setattr(loop, "ensure_round_report", lambda *a, **k: None)
+    monkeypatch.setattr(loop, "start_round", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("kein neuer Start nach Stuck")))
+    _write_state(loop.STATE_PATH, {
+        "pod_id": "pod-1", "wrapup_done": False,
+        "active_sessions": {"sess-stuck": {
+            "kind": "round", "paused": False, "focus": "engineering",
+            "last_seen_updated_at": "same", "stuck_cycles": loop.STUCK_CYCLES - 1,
+        }},
+    })
+
+    assert loop.main() == 0
+    assert interrupted == ["sess-stuck"]
+    state = json.loads(loop.STATE_PATH.read_text(encoding="utf-8"))
+    assert "sess-stuck" not in state["active_sessions"]
+
+
+# ---------------------------------------------------------------------------
+# 1.4 Umgebungsbeschreibung gemaess Netzwerkmodus
+# ---------------------------------------------------------------------------
+
+
+def test_environment_context_network_modes(monkeypatch):
+    monkeypatch.setattr(loop, "AGENT_NETWORK_MODE", "isolated")
+    isolated = loop.round_prompt("round", 30)
+    assert "KEIN Internet" in isolated
+    assert "jarvis_gateway.py" in isolated
+
+    monkeypatch.setattr(loop, "AGENT_NETWORK_MODE", "allowlist-proxy")
+    proxied = loop.round_prompt("round", 30)
+    assert "Allowlist-Proxy" in proxied
+    assert "KEIN Internet" not in proxied
+    assert "jarvis_gateway.py" in proxied
+
+
+# ---------------------------------------------------------------------------
+# 5.2/5.3 Budgets, Zeitfenster, adaptive Parallelitaet
+# ---------------------------------------------------------------------------
+
+
+def test_within_allowed_windows():
+    from datetime import datetime
+    assert loop.within_allowed_windows([]) is True
+    assert loop.within_allowed_windows(None) is True
+    assert loop.within_allowed_windows(["09:00-17:00"], datetime(2026, 1, 1, 10, 0)) is True
+    assert loop.within_allowed_windows(["09:00-17:00"], datetime(2026, 1, 1, 20, 0)) is False
+    assert loop.within_allowed_windows(["22:00-06:00"], datetime(2026, 1, 1, 23, 0)) is True
+    assert loop.within_allowed_windows(["22:00-06:00"], datetime(2026, 1, 1, 12, 0)) is False
+
+
+def _ready_main(tmp_path, monkeypatch, active=None, **env_extra):
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    env = {"CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake"}
+    env.update(env_extra)
+    monkeypatch.setattr(loop, "_parse_env", lambda _: env)
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING", "pod-1"))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 200})
+    monkeypatch.setattr(loop, "model_ready", lambda _: True)
+    monkeypatch.setattr(loop, "heartbeat", lambda _: None)
+    sessions = []
+    if active:
+        sessions = [{"id": sid, "execution_status": "running", "updated_at": "t1",
+                     "tags": {"kind": "autonomy", "focus": meta.get("focus", "engineering")}}
+                    for sid, meta in active.items()]
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: sessions)
+    _write_state(loop.STATE_PATH, {"pod_id": "pod-1", "active_sessions": active or {},
+                                   "wrapup_done": False})
+
+
+def test_main_respects_max_rounds_per_pod_session(tmp_path, monkeypatch):
+    _ready_main(tmp_path, monkeypatch)
+    monkeypatch.setattr(loop, "autonomy_policy", lambda: {
+        "max_gpu_hours_per_day": None, "allowed_windows": [],
+        "max_rounds_per_pod_session": 0,
+    })
+    monkeypatch.setattr(loop, "start_round", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("Budget erreicht; kein Start")))
+    assert loop.main() == 0
+
+
+def test_main_skips_ideas_round_without_ideas(tmp_path, monkeypatch):
+    active = {"sess-a": {"kind": "round", "paused": False, "focus": "engineering"}}
+    _ready_main(tmp_path, monkeypatch, active=active)
+    monkeypatch.setattr(loop, "MAX_PARALLEL_ROUNDS", 2)
+    monkeypatch.setattr(loop, "autonomy_policy", lambda: {
+        "max_gpu_hours_per_day": None, "allowed_windows": [],
+        "max_rounds_per_pod_session": None,
+    })
+    monkeypatch.setattr(loop, "pending_owner_ideas", lambda _: [])
+    monkeypatch.setattr(loop, "start_round", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("kein Ideen-Backlog; keine zweite Runde")))
+    assert loop.main() == 0
+
+
+# ---------------------------------------------------------------------------
+# 4.2 Rundenmetriken
+# ---------------------------------------------------------------------------
+
+
+def test_fetch_agent_usage(monkeypatch):
+    captured = {}
+
+    def fake_http(method, url, headers=None, body=None, **kwargs):
+        captured.update(url=url, headers=headers)
+        return {"status": 200, "data": {"total_tokens": 12}}
+
+    monkeypatch.setattr(loop, "http", fake_http)
+    assert loop.fetch_agent_usage("tok", 1000) == {"total_tokens": 12}
+    assert "since=1000" in captured["url"]
+    assert captured["headers"] == {"X-Control-Token": "tok"}
+    assert loop.fetch_agent_usage("", 1000) == {}
+
+
+def test_close_round_posts_metrics(tmp_path, monkeypatch):
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    monkeypatch.setattr(loop, "stop_pod", lambda _: True)
+    posted = {}
+    monkeypatch.setattr(loop, "post_round_metrics",
+                        lambda token, rid, payload: posted.update(rid=rid, payload=payload))
+    monkeypatch.setattr(loop, "fetch_agent_usage", lambda control, since: {
+        "rounds": {"sess-1": {"prompt_tokens": 7, "completion_tokens": 3}},
+    })
+    state = {"wrapup_done": False, "active_sessions": {
+        "sess-1": {"kind": "round", "task_id": "t1",
+                   "started_at": "2026-01-01T00:00:00+00:00"}}}
+    loop.close_round(state, "api", "tok", "sess-1", "round", request_token="agent")
+    assert posted["rid"] == "sess-1"
+    assert posted["payload"]["prompt_tokens"] == 7
+    assert posted["payload"]["completion_tokens"] == 3
+    assert posted["payload"]["task_id"] == "t1"

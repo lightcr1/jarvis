@@ -10,6 +10,7 @@ from .agent_monitor import (
     decide_owner_request,
     list_owner_requests,
     list_sessions,
+    loop_version,
     session_action,
     session_status,
 )
@@ -87,6 +88,17 @@ def build_agent_monitor_router(deps: dict) -> APIRouter:
         fn("agent.session.action", actor_id, actor_role,
            {"conversation_id": conv_id, "action": action})
         return {"ok": True, "action": action}
+
+    @router.get("/agent/loop-version")
+    def get_loop_version(
+        x_jarvis_session: str | None = Header(default=None),
+        x_jarvis_user_id: str | None = None,
+        x_jarvis_role: str | None = None,
+        authorization: str | None = None,
+    ):
+        """Versioned loop hash vs. installed/running loop hash (drift warning)."""
+        _admin_guard(x_jarvis_session, x_jarvis_user_id, x_jarvis_role, authorization)
+        return loop_version()
 
     @router.get("/agent/requests")
     def get_requests(

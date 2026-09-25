@@ -158,3 +158,221 @@ def public_repository_metadata(owner: str, repository: str) -> dict:
         "archived": data.get("archived") is True,
         "stars": max(0, int(data.get("stargazers_count") or 0)),
     }
+
+
+# ---------------------------------------------------------------------------
+# 4.1 Atomic patch submission
+# ---------------------------------------------------------------------------
+
+import fnmatch
+from pathlib import Path
+
+PATCH_MAX_BYTES = 1024 * 1024
+
+
+def default_policy_path() -> Path:
+    return Path(__file__).resolve().parents[1] / "config" / "agent-policy.json"
+
+
+def _matches(path: str, patterns: list[str]) -> bool:
+    return any(fnmatch.fnmatchcase(path, pattern) for pattern in patterns)
+
+
+def _parse_hunk_header(line: str):
+    match = re.match(r"^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@", line)
+    if not match:
+        return None
+    return {
+        "old_start": int(match.group(1)),
+        "old_count": int(match.group(2) or 1),
+        "new_start": int(match.group(3)),
+        "new_count": int(match.group(4) or 1),
+        "lines": [],
+    }
+
+
+def parse_patch(patch_text: str) -> list[dict]:
+    """Parse a git unified diff into per-file hunks (paths only, no execution)."""
+    files: list[dict] = []
+    current: dict | None = None
+    hunk: dict | None = None
+    for line in patch_text.splitlines():
+        if line.startswith("diff --git "):
+            if current and current.get("path"):
+                files.append(current)
+            current = {"path": None, "old_path": None, "hunks": [], "new": False, "delete": False}
+            hunk = None
+        elif current is None:
+            continue
+        elif line.startswith("new file mode"):
+            current["new"] = True
+        elif line.startswith("deleted file mode"):
+            current["delete"] = True
+        elif line.startswith("--- "):
+            target = line[4:].strip()
+            current["old_path"] = None if target == "/dev/null" else (
+                target[2:] if target.startswith("a/") else target)
+        elif line.startswith("+++ "):
+            target = line[4:].strip()
+            current["path"] = None if target == "/dev/null" else (
+                target[2:] if target.startswith("b/") else target)
+        elif line.startswith("@@"):
+            hunk = _parse_hunk_header(line)
+            if hunk is not None:
+                current["hunks"].append(hunk)
+        elif hunk is not None and line[:1] in ("+", "-", " ", "\\"):
+            hunk["lines"].append(line)
+    if current and current.get("path"):
+        files.append(current)
+    return files
+
+
+def apply_unified_diff(old_text: str, hunks: list[dict]) -> str:
+    old_lines = old_text.split("\n") if old_text else []
+    result: list[str] = []
+    old_index = 0
+    for hunk in hunks:
+        start = max(0, hunk["old_start"] - 1)
+        while old_index < start and old_index < len(old_lines):
+            result.append(old_lines[old_index])
+            old_index += 1
+        for line in hunk["lines"]:
+            marker = line[:1]
+            if marker == "\\":
+                continue
+            if marker == "+":
+                result.append(line[1:])
+            elif marker == "-":
+                old_index += 1
+            elif marker == " ":
+                result.append(line[1:])
+                old_index += 1
+    while old_index < len(old_lines):
+        result.append(old_lines[old_index])
+        old_index += 1
+    return "\n".join(result)
+
+
+def validate_patch(patch_text: str, *, branch: str, policy: dict | None = None) -> list[str]:
+    """Validate a patch (branch, size, no binaries, deny/protected paths)."""
+    validate_agent_branch(branch)
+    if not isinstance(patch_text, str) or not patch_text.strip():
+        raise GithubGatewayError("patch required")
+    if len(patch_text.encode()) > PATCH_MAX_BYTES:
+        raise GithubGatewayError("patch too large")
+    if "GIT binary patch" in patch_text or re.search(r"^Binary files ", patch_text, re.M):
+        raise GithubGatewayError("binary patches are not supported")
+    files = parse_patch(patch_text)
+    if not files:
+        raise GithubGatewayError("patch contains no file changes")
+
+    policy = policy if policy is not None else json.loads(default_policy_path().read_text(encoding="utf-8"))
+    deny = list(policy.get("deny_paths", []))
+    protected = list(policy.get("protected_paths", []))
+    allowed_examples = list(policy.get("allow_example_paths", []))
+
+    paths: list[str] = []
+    for entry in files:
+        path = entry["path"]
+        if not path or path.startswith("/") or ".." in path.split("/") or "\\" in path or len(path) > 300:
+            raise GithubGatewayError("safe repository-relative path required")
+        if _matches(path, deny) and not _matches(path, allowed_examples):
+            raise GithubGatewayError(f"denied path in patch: {path}")
+        if _matches(path, protected):
+            raise GithubGatewayError(f"protected path in patch: {path}")
+        paths.append(path)
+    return paths
+
+
+def _gh_json(method: str, url: str, token: str, payload: dict | None = None) -> dict:
+    headers = {"Accept": "application/vnd.github+json",
+               "User-Agent": "Jarvis-Scoped-Action", "Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    data = json.dumps(payload).encode() if payload is not None else None
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+        with urllib.request.build_opener(_NoRedirect()).open(request, timeout=15) as response:
+            raw = response.read()
+            if len(raw) > 4 * 1024 * 1024:
+                raise GithubGatewayError("GitHub response too large")
+            return json.loads(raw) if raw else {}
+    except urllib.error.HTTPError as exc:
+        if exc.code == 404:
+            raise FileNotFoundError(url) from exc
+        raise GithubGatewayError(f"GitHub API {exc.code}") from exc
+    except (urllib.error.URLError, OSError, json.JSONDecodeError) as exc:
+        raise GithubGatewayError("GitHub API unavailable") from exc
+
+
+def submit_patch(owner: str, repository: str, *, branch: str, base: str, patch_text: str,
+                 message: str, token: str) -> dict:
+    """Apply a patch on top of ``base`` and create exactly one commit + ref.
+
+    All repository access goes through the fixed GitHub API host; the patch is
+    validated against the agent policy before any write.
+    """
+    canonical = canonical_repo(owner, repository)
+    paths = validate_patch(patch_text, branch=branch)
+    if base not in {"dev", "main"}:
+        raise GithubGatewayError("base branch must be dev or main")
+    if not token:
+        raise GithubGatewayError("GitHub write token unavailable")
+    if not message.strip() or len(message) > 200 or any(c in message for c in ("\0", "\r")):
+        raise GithubGatewayError("bounded commit message required")
+
+    ref = _gh_json("GET", f"https://api.github.com/repos/{canonical}/git/ref/heads/{base}", token)
+    base_sha = ref["object"]["sha"]
+    base_commit = _gh_json("GET", f"https://api.github.com/repos/{canonical}/git/commits/{base_sha}", token)
+    base_tree = base_commit["tree"]["sha"]
+
+    files = parse_patch(patch_text)
+    tree_entries = []
+    for entry in files:
+        path = entry["path"]
+        if entry["delete"]:
+            tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": None})
+            continue
+        old_text = ""
+        if not entry["new"]:
+            quoted = urllib.parse.quote(path, safe="/")
+            try:
+                content = _gh_json("GET", f"https://api.github.com/repos/{canonical}/contents/{quoted}?ref={base}", token)
+                old_text = base64.b64decode(content.get("content", "")).decode("utf-8")
+            except FileNotFoundError:
+                entry["new"] = True
+        new_text = apply_unified_diff(old_text, entry["hunks"])
+        blob = _gh_json("POST", f"https://api.github.com/repos/{canonical}/git/blobs", token,
+                        {"content": base64.b64encode(new_text.encode()).decode(), "encoding": "base64"})
+        tree_entries.append({"path": path, "mode": "100644", "type": "blob", "sha": blob["sha"]})
+
+    tree = _gh_json("POST", f"https://api.github.com/repos/{canonical}/git/trees", token,
+                    {"base_tree": base_tree, "tree": tree_entries})
+    commit = _gh_json("POST", f"https://api.github.com/repos/{canonical}/git/commits", token,
+                      {"message": message, "tree": tree["sha"], "parents": [base_sha]})
+    _gh_json("PATCH", f"https://api.github.com/repos/{canonical}/git/refs/heads/{branch}", token,
+             {"sha": commit["sha"], "force": False})
+    return {"repository": canonical, "branch": branch, "base": base,
+            "commit": commit["sha"], "paths": paths, "commit_count": 1}
+
+
+def list_labeled_issues(owner: str, repository: str, *, label: str = "agent", token: str = "") -> list[dict]:
+    """Read-only import source for the backlog (3.4): issues with a label."""
+    canonical = canonical_repo(owner, repository)
+    query = urllib.parse.urlencode({"state": "open", "labels": label, "per_page": 50})
+    data = _gh_json("GET", f"https://api.github.com/repos/{canonical}/issues?{query}", token or "")
+    if not isinstance(data, list):
+        raise GithubGatewayError("unexpected GitHub issues response")
+    issues = []
+    for item in data:
+        if not isinstance(item, dict) or "pull_request" in item:
+            continue
+        number = item.get("number")
+        title = str(item.get("title") or "").strip()
+        if not number or not title:
+            continue
+        issues.append({"number": int(number), "title": title[:140],
+                       "body": str(item.get("body") or "")[:4000]})
+        if len(issues) >= 50:
+            break
+    return issues

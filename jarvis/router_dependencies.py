@@ -219,6 +219,7 @@ def build_agent_grants_deps(state: object) -> dict:
     import os
     return {
         "agent_grant_store": live_attr(state, "agent_grant_store"),
+        "patch_review_store": live_attr(state, "patch_review_store"),
         "get_identity_session": state._get_identity_session,
         "normalize_role": state.normalize_role,
         "audit_admin_event": state._audit_admin_event,
@@ -237,6 +238,24 @@ def build_autonomy_deps(state: object) -> dict:
         "normalize_role": state.normalize_role,
         "audit_admin_event": state._audit_admin_event,
         "autonomy_store": live_attr(state, "autonomy_store"),
+    }
+
+
+def build_autonomy_tasks_deps(state: object) -> dict:
+    import os
+    from .api_alerts import get_alert_broadcaster
+    return {
+        "autonomy_task_store": live_attr(state, "autonomy_task_store"),
+        "require_admin_access": state.require_admin_access,
+        "get_identity_session": state._get_identity_session,
+        "normalize_role": state.normalize_role,
+        "audit_admin_event": state._audit_admin_event,
+        "agent_request_token": os.getenv("JARVIS_AGENT_REQUEST_TOKEN", ""),
+        "owner_user_id": os.getenv("JARVIS_OWNER_USER_ID", "").strip(),
+        "alert_broadcaster": get_alert_broadcaster(),
+        "github_token": os.getenv("GITHUB_TOKEN", "") or "",
+        "github_repo": os.getenv("GITHUB_REPO", "lightcr1/jarvis"),
+        "loop_rollout_marker": os.getenv("JARVIS_LOOP_ROLLOUT_MARKER", ""),
     }
 
 
