@@ -61,6 +61,18 @@ def sandbox_prefix(zones: dict | None = None) -> str:
     return str(zone("sandbox", zones).get("container_prefix") or "jarvis-sandbox-")
 
 
+def sandbox_network(zones: dict | None = None) -> str:
+    return str(zone("sandbox", zones).get("network") or "jarvis-sandbox")
+
+
+def allowed_images(zones: dict | None = None) -> frozenset[str]:
+    return frozenset(str(i) for i in (zone("sandbox", zones).get("allowed_images") or []))
+
+
+def sandbox_pids_limit(zones: dict | None = None) -> int:
+    return int(zone("sandbox", zones).get("pids_limit") or 512)
+
+
 def backend_of(zone_name: str, zones: dict | None = None) -> str:
     value = str(zone(zone_name, zones).get("backend") or "docker").lower()
     return value if value in VALID_BACKENDS else "docker"
