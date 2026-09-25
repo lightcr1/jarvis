@@ -285,8 +285,10 @@ def validate_patch(patch_text: str, *, branch: str, policy: dict | None = None) 
 
 
 def _gh_json(method: str, url: str, token: str, payload: dict | None = None) -> dict:
-    headers = {"Accept": "application/vnd.github+json", "Authorization": f"Bearer {token}",
+    headers = {"Accept": "application/vnd.github+json",
                "User-Agent": "Jarvis-Scoped-Action", "Content-Type": "application/json"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
     data = json.dumps(payload).encode() if payload is not None else None
     request = urllib.request.Request(url, data=data, headers=headers, method=method)
     try:
@@ -352,3 +354,25 @@ def submit_patch(owner: str, repository: str, *, branch: str, base: str, patch_t
              {"sha": commit["sha"], "force": False})
     return {"repository": canonical, "branch": branch, "base": base,
             "commit": commit["sha"], "paths": paths, "commit_count": 1}
+
+
+def list_labeled_issues(owner: str, repository: str, *, label: str = "agent", token: str = "") -> list[dict]:
+    """Read-only import source for the backlog (3.4): issues with a label."""
+    canonical = canonical_repo(owner, repository)
+    query = urllib.parse.urlencode({"state": "open", "labels": label, "per_page": 50})
+    data = _gh_json("GET", f"https://api.github.com/repos/{canonical}/issues?{query}", token or "")
+    if not isinstance(data, list):
+        raise GithubGatewayError("unexpected GitHub issues response")
+    issues = []
+    for item in data:
+        if not isinstance(item, dict) or "pull_request" in item:
+            continue
+        number = item.get("number")
+        title = str(item.get("title") or "").strip()
+        if not number or not title:
+            continue
+        issues.append({"number": int(number), "title": title[:140],
+                       "body": str(item.get("body") or "")[:4000]})
+        if len(issues) >= 50:
+            break
+    return issues

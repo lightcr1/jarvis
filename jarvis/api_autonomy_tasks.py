@@ -9,6 +9,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, Field
 
 from .rate_limiter import _rate as _rate_limiter
+from .github_gateway import GithubGatewayError, list_labeled_issues
 
 
 class TaskCreate(BaseModel):
@@ -178,6 +179,37 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
     def daily_report(x_jarvis_session: str | None = Header(default=None)):
         _admin_guard(x_jarvis_session, None, None, None)
         return store().daily_summary()
+
+    @router.post("/admin/autonomy/import-issues")
+    def import_issues(label: str = "agent",
+                      x_jarvis_session: str | None = Header(default=None)):
+        """3.4: Issues mit Label als source=issue-Aufgaben importieren (read-only)."""
+        actor = _admin_guard(x_jarvis_session, None, None, None)
+        repository = str(deps.get("github_repo") or "lightcr1/jarvis")
+        token = str(deps.get("github_token") or "")
+        if "/" not in repository:
+            raise HTTPException(503, "GITHUB_REPO not configured")
+        owner_name, repo_name = repository.split("/", 1)
+        try:
+            issues = list_labeled_issues(owner_name, repo_name, label=label, token=token)
+        except GithubGatewayError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        imported = skipped = 0
+        for issue in issues:
+            external_id = f"{repository}#{issue['number']}"
+            if store().find_by_external(external_id) is not None:
+                skipped += 1
+                continue
+            try:
+                store().create_task(title=issue["title"], description=issue["body"],
+                                    area="general", size="medium", source="issue",
+                                    status="open", external_id=external_id)
+                imported += 1
+            except ValueError:
+                skipped += 1
+        audit("agent.tasks.issues_imported", actor, {"repository": repository,
+                                                     "imported": imported, "skipped": skipped})
+        return {"imported": imported, "skipped": skipped, "issues": len(issues)}
 
     @router.post("/admin/autonomy/tasks/{task_id}/review")
     def review_task(task_id: str, body: TaskReview,

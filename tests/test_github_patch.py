@@ -207,3 +207,12 @@ def test_patch_review_reject(tmp_path, monkeypatch):
                            json={"approve": False})
     assert response.status_code == 200
     assert response.json()["patch"]["status"] == "rejected"
+
+
+def test_list_labeled_issues_skips_pull_requests(monkeypatch):
+    monkeypatch.setattr(github_gateway, "_gh_json", lambda method, url, token, payload=None: [
+        {"number": 1, "title": "Real issue", "body": "Details"},
+        {"number": 2, "title": "A PR", "pull_request": {}},
+    ])
+    issues = github_gateway.list_labeled_issues("owner", "repo")
+    assert issues == [{"number": 1, "title": "Real issue", "body": "Details"}]

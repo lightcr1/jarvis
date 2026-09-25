@@ -185,3 +185,10 @@ def test_daily_summary_counts_last_24h(tmp_path):
     assert summary["tasks_by_status"]["done"] == 1
     old = store.daily_summary(since=int(store.clock()) + 10)
     assert old["rounds"] == 0
+
+
+def test_external_id_dedupe(tmp_path):
+    store = _store(tmp_path)
+    task = store.create_task(title="Issue", source="issue", external_id="owner/repo#1")
+    assert store.find_by_external("owner/repo#1")["id"] == task["id"]
+    assert store.find_by_external("owner/repo#2") is None
