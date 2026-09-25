@@ -634,3 +634,33 @@ export interface LoopVersion {
 export function fetchLoopVersion() {
   return apiRequest<LoopVersion>("/agent/loop-version", { includeAdmin: true });
 }
+
+export interface AgentPatch {
+  id: string;
+  repository: string;
+  branch: string;
+  base: string;
+  commit?: string;
+  message: string;
+  paths: string[];
+  status: string;
+  pr_number?: number | null;
+  created_at?: number;
+  patch?: string;
+}
+
+export function fetchAgentPatches() {
+  return apiRequest<{ patches: AgentPatch[] }>("/admin/agent-patches", { includeAdmin: true });
+}
+
+export function fetchAgentPatch(id: string) {
+  return apiRequest<{ patch: AgentPatch }>(
+    `/admin/agent-patches/${encodeURIComponent(id)}`, { includeAdmin: true });
+}
+
+export function decideAgentPatch(id: string, approve: boolean, title?: string) {
+  return apiRequest<{ patch: AgentPatch; pr?: { number: number; url: string } }>(
+    `/admin/agent-patches/${encodeURIComponent(id)}/decide`,
+    { method: "POST", includeAdmin: true, body: { approve, title } },
+  );
+}

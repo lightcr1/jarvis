@@ -3,11 +3,15 @@ import {
   fetchAgentSessions,
   fetchOwnerRequests,
   fetchLoopVersion,
+  fetchAgentPatches,
+  fetchAgentPatch,
+  decideAgentPatch,
   decideOwnerRequest,
   agentSessionAction,
   type AgentSession,
   type OwnerRequest,
   type LoopVersion,
+  type AgentPatch,
 } from "../../../shared/api/admin";
 import { useJ } from "../../../screens/jarvis-shared";
 
@@ -24,6 +28,10 @@ export function AgentMonitorPage() {
   const [sessions, setSessions] = useState<AgentSession[]>([]);
   const [requests, setRequests] = useState<OwnerRequest[]>([]);
   const [loopVersion, setLoopVersion] = useState<LoopVersion | null>(null);
+  const [patches, setPatches] = useState<AgentPatch[]>([]);
+  const [openPatch, setOpenPatch] = useState<string | null>(null);
+  const [patchDiff, setPatchDiff] = useState("");
+  const [patchFeedback, setPatchFeedback] = useState("");
   const [readonly, setReadonly] = useState(false);
   const [reqError, setReqError] = useState("");
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -39,6 +47,7 @@ export function AgentMonitorPage() {
       setReadonly(r.readonly);
       setReqError(r.error ?? "");
       fetchLoopVersion().then(setLoopVersion).catch(() => setLoopVersion(null));
+      fetchAgentPatches().then((p) => setPatches(p.patches)).catch(() => setPatches([]));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Monitor could not be loaded.");
     }
@@ -71,6 +80,29 @@ export function AgentMonitorPage() {
       setFeedback(`Fehler: ${e instanceof Error ? e.message : "Aktion fehlgeschlagen"}`);
     }
   }, [load]);
+
+  const decidePatch = useCallback(async (patch: AgentPatch, approve: boolean) => {
+    setPatchFeedback("");
+    try {
+      const result = await decideAgentPatch(patch.id, approve, patch.message);
+      setPatchFeedback(approve ? `PR #${result.pr?.number ?? "?"} angelegt.` : "Patch abgelehnt.");
+      void load();
+    } catch (e) {
+      setPatchFeedback(`Fehler: ${e instanceof Error ? e.message : "Aktion fehlgeschlagen"}`);
+    }
+  }, [load]);
+
+  const togglePatch = useCallback(async (patch: AgentPatch) => {
+    if (openPatch === patch.id) { setOpenPatch(null); return; }
+    setOpenPatch(patch.id);
+    setPatchDiff("Laedt…");
+    try {
+      const result = await fetchAgentPatch(patch.id);
+      setPatchDiff(result.patch.patch ?? "(kein Diff)");
+    } catch (e) {
+      setPatchDiff(`Diff konnte nicht geladen werden: ${e instanceof Error ? e.message : ""}`);
+    }
+  }, [openPatch]);
 
   const statusIcon = (s: AgentSession) => {
     if (s.status === "running" || s.status === "active" || s.status === "starting" || s.status === "pending") return "🟢";
@@ -120,6 +152,44 @@ export function AgentMonitorPage() {
               <code>{loopVersion.repo_sha256 ? loopVersion.repo_sha256.slice(0, 12) : "—"}</code>
             </div>
           )}
+        </div>
+      )}
+
+      {patches.length > 0 && (
+        <div style={card}>
+          <div style={{ fontWeight: 600, marginBottom: 6 }}>
+            Eingereichte Agent-Patches ({patches.length})
+          </div>
+          {patchFeedback && (
+            <div style={{ color: "#22c55e", fontSize: 12, marginBottom: 6 }}>{patchFeedback}</div>
+          )}
+          {patches.map((p) => (
+            <div key={p.id} style={{ padding: "8px 0", borderBottom: `1px solid ${J.border}`, fontSize: 14 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 8 }}>
+                <span style={{ flex: 1 }}>
+                  <span style={badge(p.status === "pending" ? J.amberDim : J.bg3)}>{p.status}</span>
+                  {p.branch} — {p.message}
+                  <div style={{ color: J.textMuted, fontSize: 12, marginTop: 2 }}>
+                    {p.repository} · {p.paths.join(", ")}
+                  </div>
+                </span>
+                <span style={{ whiteSpace: "nowrap" }}>
+                  <button onClick={() => togglePatch(p)} style={{ marginRight: 4, padding: "4px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, cursor: "pointer", fontSize: 12 }}>
+                    {openPatch === p.id ? "Diff schließen" : "Diff"}
+                  </button>
+                  {p.status === "pending" && (
+                    <>
+                      <button onClick={() => decidePatch(p, true)} style={{ marginRight: 4, padding: "4px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: "#22c55e", color: "#fff", cursor: "pointer", fontSize: 12 }}>PR anlegen</button>
+                      <button onClick={() => decidePatch(p, false)} style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: "#b83232", color: "#fff", cursor: "pointer", fontSize: 12 }}>Ablehnen</button>
+                    </>
+                  )}
+                </span>
+              </div>
+              {openPatch === p.id && (
+                <pre style={{ marginTop: 6, maxHeight: 240, overflow: "auto", fontSize: 11, background: J.bg3, padding: 8, borderRadius: 6 }}>{patchDiff}</pre>
+              )}
+            </div>
+          ))}
         </div>
       )}
 
