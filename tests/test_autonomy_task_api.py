@@ -195,3 +195,15 @@ def test_agent_records_round_metrics_and_admin_reads(tmp_path):
     assert admin.status_code == 200
     assert admin.json()["aggregate"]["total_tokens"] == 15
     assert client.get("/admin/autonomy/round-metrics").status_code == 401
+
+
+def test_agent_token_opens_no_admin_endpoint(tmp_path):
+    _store, client = _client(tmp_path)
+    for path in ("/admin/autonomy/tasks", "/admin/autonomy/stats",
+                 "/admin/autonomy/daily-report", "/admin/autonomy/round-metrics",
+                 "/admin/autonomy/reports"):
+        assert client.get(path, headers=AGENT).status_code == 401
+    assert client.post("/admin/autonomy/tasks", headers=AGENT,
+                       json={"title": "x"}).status_code == 401
+    assert client.post("/admin/autonomy/tasks/missing/review", headers=AGENT,
+                       json={"decision": "merged"}).status_code == 401

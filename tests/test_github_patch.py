@@ -216,3 +216,14 @@ def test_list_labeled_issues_skips_pull_requests(monkeypatch):
     ])
     issues = github_gateway.list_labeled_issues("owner", "repo")
     assert issues == [{"number": 1, "title": "Real issue", "body": "Details"}]
+
+
+def test_agent_token_opens_no_patch_admin_endpoint(tmp_path, monkeypatch):
+    review = PatchReviewStore(tmp_path / "review.sqlite3")
+    _store, client = _client(tmp_path, monkeypatch, review_store=review)
+    agent = {"X-Jarvis-Agent-Request-Token": "agent"}
+    assert client.get("/admin/agent-patches", headers=agent).status_code == 401
+    assert client.get("/admin/agent-patches/missing", headers=agent).status_code == 401
+    assert client.post("/admin/agent-patches/missing/decide", headers=agent,
+                       json={"approve": True}).status_code == 401
+    assert client.get("/admin/agent-actions", headers=agent).status_code == 401
