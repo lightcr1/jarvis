@@ -757,3 +757,12 @@ def test_confirm_policy_matches_documentation():
     doc = (root / "docs" / "AUTONOMY_LOOP.md").read_text(encoding="utf-8")
     assert '"kind": "NeverConfirm"' in loop_src
     assert "NeverConfirm" in doc
+
+
+def test_main_is_decomposed_into_helpers():
+    import inspect
+    # main() bleibt eine uebersichtliche Ablaufsteuerung (siehe #8).
+    assert inspect.getsource(loop.main).count("\n") < 130
+    for name in ("_reset_daily_budget", "_ensure_pod", "_adopt_sessions",
+                 "_manage_active_sessions", "_decide_round_kind", "_start_new_round"):
+        assert callable(getattr(loop, name)), name
