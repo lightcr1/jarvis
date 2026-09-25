@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 class AutonomyUpdate(BaseModel):
     enabled: bool
     note: str = Field(default="", max_length=500)
+    max_gpu_hours_per_day: float | None = Field(default=None, gt=0, le=24 * 31)
+    allowed_windows: list[str] | None = Field(default=None, max_length=24)
+    max_rounds_per_pod_session: int | None = Field(default=None, ge=0, le=1000)
 
 
 def build_autonomy_router(deps: dict) -> APIRouter:
@@ -60,6 +63,15 @@ def build_autonomy_router(deps: dict) -> APIRouter:
         status = current("autonomy_store").set_mode(
             body.enabled, actor=actor_id, note=body.note
         )
+        try:
+            status = current("autonomy_store").set_policy(
+                actor=actor_id,
+                max_gpu_hours_per_day=body.max_gpu_hours_per_day,
+                allowed_windows=body.allowed_windows,
+                max_rounds_per_pod_session=body.max_rounds_per_pod_session,
+            )
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from exc
         fn = current("audit_admin_event")
         fn(
             "autonomy.changed",

@@ -15,6 +15,9 @@ export function AutonomyPage() {
   const [actions, setActions] = useState<AgentOneTimeAction[]>([]);
   const [projects, setProjects] = useState<AgentProject[]>([]);
   const [note, setNote] = useState("");
+  const [budgetHours, setBudgetHours] = useState("");
+  const [windows, setWindows] = useState("");
+  const [maxRounds, setMaxRounds] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
@@ -25,6 +28,9 @@ export function AutonomyPage() {
       const result = await fetchAutonomyStatus();
       setStatus(result.status);
       setNote(result.status.note ?? "");
+      setBudgetHours(result.status.max_gpu_hours_per_day != null ? String(result.status.max_gpu_hours_per_day) : "");
+      setWindows((result.status.allowed_windows ?? []).join(", "));
+      setMaxRounds(result.status.max_rounds_per_pod_session != null ? String(result.status.max_rounds_per_pod_session) : "");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Autonomy status could not be loaded.");
     }
@@ -128,6 +134,28 @@ export function AutonomyPage() {
     }
   }, [note]);
 
+  const savePolicy = useCallback(async () => {
+    setSaving(true);
+    setError("");
+    setOk("");
+    try {
+      const policy = {
+        max_gpu_hours_per_day: budgetHours.trim() ? Number(budgetHours) : undefined,
+        allowed_windows: windows.trim()
+          ? windows.split(",").map((w) => w.trim()).filter(Boolean)
+          : undefined,
+        max_rounds_per_pod_session: maxRounds.trim() ? Number(maxRounds) : undefined,
+      };
+      const result = await updateAutonomyStatus(status?.enabled ?? true, note.trim(), policy);
+      setStatus(result.status);
+      setOk("Budget und Zeitfenster gespeichert.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Speichern fehlgeschlagen.");
+    } finally {
+      setSaving(false);
+    }
+  }, [budgetHours, windows, maxRounds, note, status?.enabled]);
+
   const card: React.CSSProperties = {
     background: J.bg2,
     border: `1px solid ${J.border}`,
@@ -178,6 +206,31 @@ export function AutonomyPage() {
             {saving ? "…" : status?.enabled ? "Autonomie pausieren" : "Autonomie aktivieren"}
           </button>
         </div>
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Budget & Zeitfenster</div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+          <label style={{ fontSize: 12, color: J.textMuted }}>
+            GPU-Stunden/Tag
+            <input value={budgetHours} onChange={(e) => setBudgetHours(e.target.value)}
+              placeholder="z. B. 6" style={{ display: "block", marginTop: 4, padding: "6px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, width: 120 }} />
+          </label>
+          <label style={{ fontSize: 12, color: J.textMuted }}>
+            Zeitfenster (kommagetrennt)
+            <input value={windows} onChange={(e) => setWindows(e.target.value)}
+              placeholder="22:00-06:00" style={{ display: "block", marginTop: 4, padding: "6px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, width: 220 }} />
+          </label>
+          <label style={{ fontSize: 12, color: J.textMuted }}>
+            Runden pro Pod-Session
+            <input value={maxRounds} onChange={(e) => setMaxRounds(e.target.value)}
+              placeholder="z. B. 10" style={{ display: "block", marginTop: 4, padding: "6px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, width: 140 }} />
+          </label>
+        </div>
+        <button disabled={saving} onClick={() => void savePolicy()}
+          style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, cursor: "pointer", fontSize: 13 }}>
+          Budget speichern
+        </button>
       </div>
 
       <div style={card}>
