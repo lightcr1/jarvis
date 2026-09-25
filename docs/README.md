@@ -17,5 +17,9 @@ Diese Ablage trennt aktive V1-Dokumente, Evidenzsammlung und alte Quellen klar v
 
 ## Agent operation
 
+- [Deployment & Reproduzierbarkeit](DEPLOYMENT.md)
+- [Zonen & Sandbox](ZONES.md)
+- [Executor & Sandbox-Dienst](EXECUTOR.md)
+- [Plugins](PLUGINS.md)
 - [OpenHands / Agent Canvas setup](OPENHANDS_SETUP.md)
 - [Manual start checklist](MANUAL_START.md)
