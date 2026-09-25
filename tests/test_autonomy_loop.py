@@ -748,3 +748,12 @@ def test_gpu_rate_prefers_config_then_env(monkeypatch):
     monkeypatch.setattr(loop, "autonomy_policy", lambda: {"gpu_cost_per_hour": None})
     monkeypatch.setattr(loop, "GPU_COST_PER_HOUR", 0.25)
     assert loop._gpu_rate() == 0.25
+
+
+def test_confirm_policy_matches_documentation():
+    """0.3: Code und Doku muessen dieselbe Confirm-Policy beschreiben."""
+    root = Path(__file__).resolve().parents[1]
+    loop_src = (root / "scripts" / "agent" / "autonomy_loop.py").read_text(encoding="utf-8")
+    doc = (root / "docs" / "AUTONOMY_LOOP.md").read_text(encoding="utf-8")
+    assert '"kind": "NeverConfirm"' in loop_src
+    assert "NeverConfirm" in doc
