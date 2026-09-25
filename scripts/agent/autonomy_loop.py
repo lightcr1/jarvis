@@ -938,25 +938,8 @@ def close_round(state: dict, api_key: str, control_token: str, session_id: str,
     save_state(state)
 
 
-def main() -> int:
-    env = {**_parse_env(ENV_RUNPOD), **_parse_env(ENV_JARVIS)}
-    control = controller_config(env)
-    if control is None:
-        return 1
-    agent_token = env.get("AGENT_GATEWAY_TOKEN")
-    api_key = env.get("OPENHANDS_API_KEY")
-    if not agent_token:
-        log("AGENT_GATEWAY_TOKEN fehlt - Autonomie-Pipeline im Controller nicht aktiviert")
-        return 0
-    if not api_key:
-        log("OPENHANDS_API_KEY fehlt in /home/media/jarvis.env")
-        return 1
-    if not autonomy_enabled():
-        log("Autonomy ist per config/autonomy.json deaktiviert - keine neuen Runden")
-        return 0
-
-    state = load_state()
-    # Tagesbudget um Mitternacht zuruecksetzen (5.3).
+def _reset_daily_budget(state: dict) -> None:
+    """Tagesbudget um Mitternacht zuruecksetzen und Loop-Version protokollieren (5.3)."""
     today = datetime.now().strftime("%Y-%m-%d")
     if state.get("gpu_day") != today:
         state["gpu_day"] = today
@@ -967,17 +950,28 @@ def main() -> int:
     state["loop_sha256"] = digest
     state["loop_source"] = str(Path(__file__))
     warn_if_insecure_tls()
-    active = state.setdefault("active_sessions", {})
 
+
+class _Exit(Exception):
+    """Kontrollfluss fuer fruehe, bereits gespeicherte Ausstiege aus main()."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(code)
+        self.code = code
+
+
+def _ensure_pod(state: dict, control: dict) -> str | None:
+    """Prueft den Pod-Status und laeuft ggf. in einen neuen Pod-Zyklus (B3)."""
     ok, pod_status, pod_id = check_pod(control["control"])
     if not ok:
         state["last_error"] = "controller-unreachable"
         save_state(state)
-        return 1
+        raise _Exit(1)
     if pod_status == "status-unavailable":
         state["last_error"] = "pod-status-unavailable (RUNPOD_API_KEY ungueltig?)"
         save_state(state)
-        return 0
+        raise _Exit(0)
+    active = state.setdefault("active_sessions", {})
     if pod_status != "RUNNING" and pod_status != "RUNNING(model-ready)":
         if active:
             log("Pod ist offline - Rundenreferenz zurueckgesetzt")
@@ -986,11 +980,9 @@ def main() -> int:
             state["pod_id"] = pod_id
         state["last_error"] = "pod offline"
         save_state(state)
-        return 0
-
-    # Neuen Pod-Zyklus nur erkennen, wenn die Runpod-API eine konkrete, andere
-    # pod_id liefert. Der model-ready-Fallback (pod_id=None) darf laufende
-    # eigene Sessions nicht als fremd zuruecksetzen (B3).
+        raise _Exit(0)
+    # Neuen Pod-Zyklus nur bei konkreter, anderer pod_id erkennen. Der
+    # model-ready-Fallback (pod_id=None) darf laufende Sessions nicht verwerfen.
     if pod_id is not None and state.get("pod_id") != pod_id:
         log(f"Neuer Pod-Zyklus (pod_id={pod_id}) - Autonomie-Status zurueckgesetzt")
         state["pod_id"] = pod_id
@@ -998,18 +990,12 @@ def main() -> int:
         state["wrapup_done"] = False
         state["pod_stop_requested_at"] = None
     elif pod_id is None:
-        # Ohne Runpod-API-Abruf die bisherige pod_id beibehalten.
         pod_id = state.get("pod_id")
+    return pod_id
 
-    activity = get_activity(control["control"])
-    user_idle = activity["user_activity_age_s"] if activity else None
-    if user_idle is None:
-        state["last_error"] = "activity endpoint nicht erreichbar"
-        save_state(state)
-        return 1
 
-    sessions = openhands_sessions(api_key)
-    sessions_by_id = {session_id_of(s): s for s in sessions}
+def _adopt_sessions(active: dict, sessions: list[dict]) -> list[dict]:
+    """Eigene getaggte Runden wieder uebernehmen, fremde Aktivitaet melden (B3)."""
     foreign_active: list[dict] = []
     for session in sessions:
         sid = session_id_of(session)
@@ -1019,32 +1005,29 @@ def main() -> int:
         if status not in ACTIVE_STATUSES:
             continue
         if is_autonomy_session(session):
-            # Eigene, aber dem State unbekannte Runde (z.B. nach Loop-Neustart
-            # oder model-ready-Fallback) wieder adoptieren, statt sie faelschlich
-            # als fremde Aktivitaet zu behandeln (B3).
             log(f"Adoptiere getaggte Autonomie-Session {sid[:8]} ({status})")
-            active[sid] = {
-                "kind": "round",
-                "paused": status == "paused",
-                "focus": autonomy_session_focus(session),
-            }
+            active[sid] = {"kind": "round", "paused": status == "paused",
+                           "focus": autonomy_session_focus(session)}
             continue
         foreign_active.append(session)
-    user_busy = user_idle < USER_BUSY_SECONDS
+    return foreign_active
 
-    # ---- Eigene aktive Sessions einzeln verwalten ----
+
+def _manage_active_sessions(state: dict, api_key: str, control: dict,
+                            sessions_by_id: dict, user_busy: bool,
+                            foreign_active: list[dict], request_token: str | None) -> None:
+    """Pausiert/ueberwacht/beendet die eigenen aktiven Sessions."""
+    active = state.setdefault("active_sessions", {})
     for session_id_key in list(active.keys()):
         meta = active[session_id_key]
         actual = sessions_by_id.get(str(session_id_key))
         if actual is None:
-            # Eigene Session existiert nicht mehr (z.B. im Canvas geloescht).
             log("Eigene Session nicht mehr vorhanden - Runde als beendet gewertet")
-            ensure_round_report(env.get("JARVIS_AGENT_REQUEST_TOKEN"),
-                                meta.get("task_id"), str(meta.get("round_id") or session_id_key))
+            ensure_round_report(request_token, meta.get("task_id"),
+                                str(meta.get("round_id") or session_id_key))
             close_round(state, api_key, control["control"], str(session_id_key),
                         str(meta.get("kind") or "round"),
-                        force_stop=meta.get("kind") == "wrapup",
-                        request_token=env.get("JARVIS_AGENT_REQUEST_TOKEN"))
+                        force_stop=meta.get("kind") == "wrapup", request_token=request_token)
             continue
         status = session_execution_status(actual)
         if status in ("running", "pending", "starting"):
@@ -1057,14 +1040,12 @@ def main() -> int:
                 if track_stuck(meta, actual):
                     log(f"Runde {str(session_id_key)[:8]} haengt (keine Fortschritte) - Abbruch")
                     interrupt_conversation(api_key, str(session_id_key))
-                    ensure_round_report(env.get("JARVIS_AGENT_REQUEST_TOKEN"), meta.get("task_id"),
+                    ensure_round_report(request_token, meta.get("task_id"),
                                         str(meta.get("round_id") or session_id_key),
                                         summary="Runde haengt (Stuck-Erkennung des Loops).")
                     close_round(state, api_key, control["control"], str(session_id_key),
-                                str(meta.get("kind") or "round"),
-                                request_token=env.get("JARVIS_AGENT_REQUEST_TOKEN"))
+                                str(meta.get("kind") or "round"), request_token=request_token)
                     continue
-                # Runde am Leben halten (alle aktiven bekommen Heartbeat).
                 heartbeat(control["control"])
                 save_state(state)
         elif status == "paused":
@@ -1076,34 +1057,23 @@ def main() -> int:
             else:
                 save_state(state)
         elif status == "waiting_for_confirmation":
-            # Never manufacture a human approval. Let the controller idle-stop
-            # the pod instead of keeping paid GPU time alive indefinitely.
+            # Nie eine menschliche Freigabe erfinden; der Controller stoppt den
+            # Pod per Idle-Stop, statt GPU-Zeit unbegrenzt zu halten.
             if state.get("last_error") != "agent-waiting-for-owner-approval":
                 log("Runde wartet auf Besitzerfreigabe; kein Agent-Heartbeat")
             state["last_error"] = "agent-waiting-for-owner-approval"
             save_state(state)
         elif status in ENDED_STATUSES:
-            ensure_round_report(env.get("JARVIS_AGENT_REQUEST_TOKEN"),
-                                meta.get("task_id"), str(meta.get("round_id") or session_id_key))
+            ensure_round_report(request_token, meta.get("task_id"),
+                                str(meta.get("round_id") or session_id_key))
             close_round(state, api_key, control["control"], str(session_id_key),
-                        str(meta.get("kind") or "round"),
-                        request_token=env.get("JARVIS_AGENT_REQUEST_TOKEN"))
-        # Unknown/andere Status: nichts tun, naechste Iteration prueft erneut.
+                        str(meta.get("kind") or "round"), request_token=request_token)
+        # Unbekannter Status: naechste Iteration prueft erneut.
 
-    # Beendete eigene Conversations und verwaiste Worktrees aufraeumen (B5).
-    cleanup_finished_conversations(api_key, sessions, active)
-    cleanup_orphan_worktrees(WORKTREE_REPO_PATH, set(active.keys()))
 
-    if foreign_active:
-        # Besitzer arbeitet im Canvas oder ein anderer Prozess laeuft.
-        return 0
-    if user_busy:
-        # Besitzer spricht gerade mit dem Modell (Open WebUI/IDE) -> warten,
-        # sobald die Antwort fertig ist, geht es direkt weiter.
-        save_state(state)
-        return 0
-
-    # ---- Neue Runde starten, solange Platz parallel frei ist ----
+def _decide_round_kind(state: dict, control: dict, user_idle: float, api_key: str,
+                       sessions_by_id: dict, request_token: str | None) -> dict | None:
+    """Entscheidet, ob und welche neue Runde (round/wrapup) startet (5.2/5.3)."""
     active = state.setdefault("active_sessions", {})
     running_now = [
         str(sid) for sid, meta in active.items()
@@ -1111,8 +1081,7 @@ def main() -> int:
         and session_execution_status(sessions_by_id[str(sid)]) in ACTIVE_STATUSES
     ]
     if len(running_now) >= MAX_PARALLEL_ROUNDS:
-        save_state(state)
-        return 0
+        return None
 
     idle_stop_s = control["idle_stop_s"]
     finished = state.get("last_round_finished_at")
@@ -1126,55 +1095,54 @@ def main() -> int:
     if not state.get("wrapup_done") and user_idle >= idle_stop_s:
         kind = "wrapup"      # Besitzer lange weg: sauberer Abschluss + Stop
     elif state.get("wrapup_done"):
-        return 0             # WRAPUP bereits gestartet; danach stoppt der Pod
+        return None          # Wrapup laeuft; danach stoppt der Pod
     elif since_finish < COOLDOWN_SECONDS and len(running_now) == 0:
-        return 0             # kurze Pause zwischen zwei Runden
+        return None          # kurze Pause zwischen zwei Runden
     elif len(running_now) == MAX_PARALLEL_ROUNDS:
-        return 0             # beide Slots belegt (doppelte Sicherung)
+        return None
     elif not model_ready(control["control"]):
-        # Pod ist RUNNING, aber das Modell laedt noch (10-20 Min nach Start/
-        # Recreate). Runden, die jetzt starten, crashen sonst mit 404.
+        # Pod laeuft, Modell laedt noch (10-20 Min): Runden wuerden mit 404 crashen.
         state["last_error"] = "model-laedt-noch (model/ready false)"
         save_state(state)
-        return 0
+        return None
     else:
-        kind = "round"       # und direkt weiterarbeiten (auch parallel)
+        kind = "round"       # direkt weiterarbeiten (auch parallel)
 
     if kind == "wrapup":
         state["wrapup_done"] = True
         focus = "engineering"
-        # Laufende Normalrunden bekommen den Hinweis, sauber abzuschliessen,
-        # damit der Pod nicht durch Ueberhang-Runden weiterlaeuft (B4).
         notify_running_rounds_wrapup(api_key, active, sessions_by_id)
     else:
-        # Budgets/Zeitfenster respektieren (5.3).
         policy = autonomy_policy()
         if not within_allowed_windows(policy.get("allowed_windows")):
             state["last_error"] = "ausserhalb allowed_windows (5.3)"
             save_state(state)
-            return 0
+            return None
         max_rounds = policy.get("max_rounds_per_pod_session")
         if max_rounds is not None and state.get("rounds_this_pod", 0) >= int(max_rounds):
             state["last_error"] = "max_rounds_per_pod_session erreicht (5.3)"
             save_state(state)
-            return 0
+            return None
         max_hours = policy.get("max_gpu_hours_per_day")
         if max_hours is not None and float(state.get("gpu_seconds_today", 0)) >= float(max_hours) * 3600:
             state["last_error"] = "Tagesbudget GPU-Stunden erreicht (5.3)"
             save_state(state)
-            return 0
-        # Zweite parallele Runde bekommt den komplementaeren Fokus, damit die
-        # Sessions nicht am selben Code arbeiten (Engineering vs. Ideen).
-        active_focuses = {str(meta.get("focus") or "engineering")
-                          for meta in active.values()}
+            return None
+        # Zweite parallele Runde bekommt den komplementaeren Fokus.
+        active_focuses = {str(meta.get("focus") or "engineering") for meta in active.values()}
         focus = "ideas" if "engineering" in active_focuses else "engineering"
-        # 5.2: Ideen-Runde nur bei vorhandenem Ideen-Backlog/Besitzer-Ideen.
-        if focus == "ideas" and not pending_owner_ideas(env.get("JARVIS_AGENT_REQUEST_TOKEN")):
+        # 5.2: Ideen-Runde nur bei vorhandenem Ideen-Backlog.
+        if focus == "ideas" and not pending_owner_ideas(request_token):
             state["last_error"] = "kein Ideen-Backlog - keine zweite Runde (5.2)"
             save_state(state)
-            return 0
+            return None
+    return {"kind": kind, "focus": focus}
 
-    request_token = env.get("JARVIS_AGENT_REQUEST_TOKEN")
+
+def _start_new_round(state: dict, api_key: str, agent_token: str, control: dict,
+                     request_token: str | None, kind: str, focus: str) -> str | None:
+    """Sucht ggf. eine Aufgabe, startet die OpenHands-Runde und merkt sie vor (3.3)."""
+    active = state.setdefault("active_sessions", {})
     task = None
     last_report = None
     open_work_note = ""
@@ -1216,6 +1184,65 @@ def main() -> int:
             "round_id": round_id,
             "started_at": now_iso(),
         }
+    return conv_id
+
+
+def main() -> int:
+    env = {**_parse_env(ENV_RUNPOD), **_parse_env(ENV_JARVIS)}
+    control = controller_config(env)
+    if control is None:
+        return 1
+    agent_token = env.get("AGENT_GATEWAY_TOKEN")
+    api_key = env.get("OPENHANDS_API_KEY")
+    if not agent_token:
+        log("AGENT_GATEWAY_TOKEN fehlt - Autonomie-Pipeline im Controller nicht aktiviert")
+        return 0
+    if not api_key:
+        log("OPENHANDS_API_KEY fehlt in /home/media/jarvis.env")
+        return 1
+    if not autonomy_enabled():
+        log("Autonomy ist per config/autonomy.json deaktiviert - keine neuen Runden")
+        return 0
+
+    request_token = env.get("JARVIS_AGENT_REQUEST_TOKEN")
+    state = load_state()
+    _reset_daily_budget(state)
+    try:
+        _ensure_pod(state, control)
+    except _Exit as exc:
+        return exc.code
+
+    activity = get_activity(control["control"])
+    user_idle = activity["user_activity_age_s"] if activity else None
+    if user_idle is None:
+        state["last_error"] = "activity endpoint nicht erreichbar"
+        save_state(state)
+        return 1
+
+    sessions = openhands_sessions(api_key)
+    sessions_by_id = {session_id_of(s): s for s in sessions}
+    active = state.setdefault("active_sessions", {})
+    foreign_active = _adopt_sessions(active, sessions)
+    user_busy = user_idle < USER_BUSY_SECONDS
+
+    _manage_active_sessions(state, api_key, control, sessions_by_id, user_busy,
+                            foreign_active, request_token)
+    # Beendete eigene Conversations und verwaiste Worktrees aufraeumen (B5).
+    cleanup_finished_conversations(api_key, sessions, active)
+    cleanup_orphan_worktrees(WORKTREE_REPO_PATH, set(active.keys()))
+
+    if foreign_active:
+        return 0            # Besitzer arbeitet im Canvas / anderer Prozess laeuft
+    if user_busy:
+        save_state(state)   # Besitzer spricht gerade mit dem Modell -> warten
+        return 0
+
+    decision = _decide_round_kind(state, control, user_idle, api_key, sessions_by_id, request_token)
+    if decision is None:
+        save_state(state)
+        return 0
+    _start_new_round(state, api_key, agent_token, control, request_token,
+                     decision["kind"], decision["focus"])
     save_state(state)
     return 0
 
