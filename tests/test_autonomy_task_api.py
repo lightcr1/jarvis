@@ -103,3 +103,18 @@ def test_admin_patch_and_reports_listing(tmp_path):
     assert patched.json()["task"]["priority"] == 5
     assert patched.json()["task"]["status"] == "blocked"
     assert client.get("/admin/autonomy/reports", headers=OWNER).status_code == 200
+
+
+def test_admin_review_and_stats(tmp_path):
+    _store, client = _client(tmp_path)
+    task = client.post("/admin/autonomy/tasks", headers=OWNER,
+                       json={"title": "Review me", "area": "tasks"}).json()["task"]
+    reviewed = client.post(f"/admin/autonomy/tasks/{task['id']}/review", headers=OWNER,
+                           json={"decision": "merged"})
+    assert reviewed.status_code == 200
+    assert reviewed.json()["task"]["status"] == "done"
+    stats = client.get("/admin/autonomy/stats", headers=OWNER)
+    assert stats.status_code == 200
+    assert stats.json()["areas"]["tasks"]["done"] == 1
+    assert client.post(f"/admin/autonomy/tasks/{task['id']}/review", headers=AGENT,
+                       json={"decision": "merged"}).status_code == 401

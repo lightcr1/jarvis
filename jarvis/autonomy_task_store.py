@@ -64,8 +64,10 @@ class AutonomyTaskStore:
                 id TEXT PRIMARY KEY, title TEXT NOT NULL, description TEXT NOT NULL,
                 area TEXT NOT NULL, size TEXT NOT NULL, priority INTEGER NOT NULL,
                 status TEXT NOT NULL, source TEXT NOT NULL, attempts INTEGER NOT NULL,
-                last_round_id TEXT, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+                last_round_id TEXT, escalated INTEGER NOT NULL DEFAULT 0,
+                created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
             )""")
+            self._migrate(db)
             db.execute("CREATE INDEX IF NOT EXISTS autonomy_tasks_status ON autonomy_tasks(status,priority)")
             db.execute("""CREATE TABLE IF NOT EXISTS round_reports (
                 id TEXT PRIMARY KEY, task_id TEXT, round_id TEXT, outcome TEXT NOT NULL,
@@ -79,6 +81,13 @@ class AutonomyTaskStore:
         db = sqlite3.connect(self.path, timeout=10)
         db.row_factory = sqlite3.Row
         return db
+
+    @staticmethod
+    def _migrate(db) -> None:
+        """Add columns introduced after the first schema without data loss."""
+        columns = {row[1] for row in db.execute("PRAGMA table_info(autonomy_tasks)")}
+        if "escalated" not in columns:
+            db.execute("ALTER TABLE autonomy_tasks ADD COLUMN escalated INTEGER NOT NULL DEFAULT 0")
 
     # -- tasks -----------------------------------------------------------
 
@@ -203,7 +212,8 @@ class AutonomyTaskStore:
         excluded = set(exclude_ids or ())
         blocked_areas = set(exclude_areas or ())
         with self._connect() as db:
-            rows = db.execute("""SELECT * FROM autonomy_tasks WHERE status='open'
+            rows = db.execute("""SELECT * FROM autonomy_tasks
+                WHERE status='open' AND escalated=0
                 ORDER BY priority DESC, created_at ASC, id ASC LIMIT 50""").fetchall()
         for row in rows:
             task = dict(row)
@@ -261,6 +271,8 @@ class AutonomyTaskStore:
 
     @staticmethod
     def _apply_outcome(db, task_id: str, outcome: str, now: int) -> None:
+        row = db.execute("SELECT attempts FROM autonomy_tasks WHERE id=?", (task_id,)).fetchone()
+        attempts = int(row["attempts"]) if row else 0
         if outcome == "done":
             status = "done"
         elif outcome == "submitted":
@@ -268,9 +280,41 @@ class AutonomyTaskStore:
         elif outcome == "blocked":
             status = "blocked"
         else:
-            row = db.execute("SELECT attempts FROM autonomy_tasks WHERE id=?", (task_id,)).fetchone()
-            status = "blocked" if row and row["attempts"] >= MAX_TASK_ATTEMPTS else "open"
-        db.execute("UPDATE autonomy_tasks SET status=?, updated_at=? WHERE id=?", (status, now, task_id))
+            status = "blocked" if attempts >= MAX_TASK_ATTEMPTS else "open"
+        # 7.6: wiederholtes Scheitern -> fuer ein staerkeres Modell markieren.
+        escalated = 1 if (outcome in ("no_change", "blocked") and attempts >= 2) else 0
+        db.execute("UPDATE autonomy_tasks SET status=?, escalated=?, updated_at=? WHERE id=?",
+                   (status, escalated, now, task_id))
+
+    def review_task(self, task_id: str, *, actor: str, decision: str) -> dict | None:
+        """7.7: Ergebnis eines Agenten-PRs (merged/rejected) in die Aufgabe schreiben."""
+        if decision not in ("merged", "rejected"):
+            raise ValueError("decision must be merged or rejected")
+        status = "done" if decision == "merged" else "rejected"
+        with self._connect() as db:
+            db.execute("""UPDATE autonomy_tasks SET status=?, escalated=0, updated_at=?
+                WHERE id=?""", (status, int(self.clock()), task_id))
+            changed = db.execute("SELECT changes()").fetchone()[0]
+        return self.get_task(task_id) if changed else None
+
+    def area_success_rates(self) -> dict[str, dict]:
+        """Erfolgsquote pro Bereich (done / abgeschlossen) fuer Discovery (7.7)."""
+        with self._connect() as db:
+            rows = db.execute("""SELECT area,
+                sum(CASE WHEN status='done' THEN 1 ELSE 0 END) AS done,
+                sum(CASE WHEN status IN ('done','rejected','blocked') THEN 1 ELSE 0 END) AS closed,
+                count(*) AS total
+                FROM autonomy_tasks GROUP BY area""").fetchall()
+        result = {}
+        for row in rows:
+            closed = int(row["closed"])
+            result[row["area"]] = {
+                "done": int(row["done"]),
+                "closed": closed,
+                "total": int(row["total"]),
+                "success_rate": round(int(row["done"]) / closed, 3) if closed else None,
+            }
+        return result
 
     def get_report(self, report_id: str) -> dict | None:
         with self._connect() as db:
