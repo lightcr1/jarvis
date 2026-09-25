@@ -79,6 +79,23 @@ sichtbar: der Loop schreibt beim Start seinen SHA256 in den State
 (`loop_sha256`), die Admin-UI (`AgentMonitorPage`) zeigt installierten Hash und
 Repo-Hash und warnt bei Abweichung. `scripts/agent/install_loop.sh --check`
 vergibt Exit 1 bei Drift (fuer einen spaeteren Timer) und prueft nichts weiter.
+
+## Kontext-Effizienz
+
+Runden sollen nicht mehr den halben Kontext in Orientierung verbrennen. Die
+kompakte Karte `docs/agent/CONTEXT.md` (≤ 1500 Tokens) plus die passende
+Bereichskarte unter `docs/agent/areas/` beschreiben Repo, Testbefehle,
+Konventionen und geschuetzte Pfade; der Rundenprompt verweist darauf und
+verbietet ausdruecklich das vollstaendige Lesen von `CLAUDE.md`,
+`docs/v2/planning/EXECUTION_CHECKLIST_V2.md` und `jarvisappv4.py`. Die Groesse
+prueft `scripts/agent/context_budget.py` (Exit 1 bei Ueberschreitung); der
+statische Prompt-Teil steht vor dem variablen Fokus, damit vLLM Prefix-Caching
+greift.
+
+Fuer kompakte Tool-Ausgaben in Runden: `scripts/agent/verify.sh [pfade…]`
+fuehrt nur die betroffenen Tests mit begrenzter Ausgabe aus und prueft die
+Policy, `scripts/agent/find.sh <begriff>` durchsucht das Repo ohne
+`node_modules`/`dist`/`.git`.
 Die Laufzeitdateien (`autonomy-state.json`, Log), `.env`-Dateien und Tokens
 duerfen nicht versioniert oder als Agenten-Secrets verfuegbar gemacht werden.
 ## Projektfreigaben (API und Grenzen)
