@@ -242,6 +242,7 @@ def build_autonomy_deps(state: object) -> dict:
 
 def build_autonomy_tasks_deps(state: object) -> dict:
     import os
+    from .api_alerts import get_alert_broadcaster
     return {
         "autonomy_task_store": live_attr(state, "autonomy_task_store"),
         "require_admin_access": state.require_admin_access,
@@ -249,6 +250,8 @@ def build_autonomy_tasks_deps(state: object) -> dict:
         "normalize_role": state.normalize_role,
         "audit_admin_event": state._audit_admin_event,
         "agent_request_token": os.getenv("JARVIS_AGENT_REQUEST_TOKEN", ""),
+        "owner_user_id": os.getenv("JARVIS_OWNER_USER_ID", "").strip(),
+        "alert_broadcaster": get_alert_broadcaster(),
     }
 
 

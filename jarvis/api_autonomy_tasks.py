@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import time
 from typing import Callable
 
 from fastapi import APIRouter, Header, HTTPException
@@ -102,6 +103,24 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
 
     def store():
         return current("autonomy_task_store")
+
+    async def notify_owner_question(task_id: str, question: str) -> None:
+        """7.3: Besitzer per bestehendem Notification-System benachrichtigen."""
+        broadcaster = deps.get("alert_broadcaster")
+        owner = str(deps.get("owner_user_id") or "")
+        if broadcaster is None or not owner:
+            return
+        payload = {
+            "type": "agent_question",
+            "severity": "warning",
+            "user_id": owner,
+            "message": f"Der Agent braucht eine Entscheidung ({task_id[:8]}): {question[:200]}",
+            "timestamp": int(time.time()),
+        }
+        try:
+            await broadcaster.notify_user(owner, payload)
+        except Exception:  # noqa: BLE001 - notification must never break the report
+            pass
 
     # ---- Admin ---------------------------------------------------------
 
@@ -231,8 +250,8 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
         return {"task": task}
 
     @router.post("/agent/tasks/{task_id}/report", status_code=201)
-    def report_round(task_id: str, body: RoundReport,
-                     x_jarvis_agent_request_token: str | None = Header(default=None)):
+    async def report_round(task_id: str, body: RoundReport,
+                           x_jarvis_agent_request_token: str | None = Header(default=None)):
         agent(x_jarvis_agent_request_token)
         cap(x_jarvis_agent_request_token, "task-report", 30)
         if store().get_task(task_id) is None:
@@ -242,6 +261,8 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
         except ValueError as exc:
             raise HTTPException(422, str(exc)) from exc
         audit("agent.task.reported", "agent", {"task_id": task_id, "outcome": body.outcome})
+        if body.owner_question or body.outcome == "blocked":
+            await notify_owner_question(task_id, body.owner_question or "Aufgabe blockiert")
         return {"report": report, "task": store().get_task(task_id)}
 
     return router
