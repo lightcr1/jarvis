@@ -487,17 +487,26 @@ export interface AutonomyStatus {
   enabled: boolean;
   updated_at?: string;
   note?: string;
+  max_gpu_hours_per_day?: number | null;
+  allowed_windows?: string[];
+  max_rounds_per_pod_session?: number | null;
+}
+
+export interface AutonomyPolicyInput {
+  max_gpu_hours_per_day?: number;
+  allowed_windows?: string[];
+  max_rounds_per_pod_session?: number;
 }
 
 export function fetchAutonomyStatus() {
   return apiRequest<{ status: AutonomyStatus }>("/autonomy", { includeAdmin: true });
 }
 
-export function updateAutonomyStatus(enabled: boolean, note: string) {
+export function updateAutonomyStatus(enabled: boolean, note: string, policy?: AutonomyPolicyInput) {
   return apiRequest<{ status: AutonomyStatus }>("/autonomy", {
     method: "PUT",
     includeAdmin: true,
-    body: { enabled, note },
+    body: { enabled, note, ...(policy ?? {}) },
   });
 }
 

@@ -642,3 +642,63 @@ def test_environment_context_network_modes(monkeypatch):
     assert "Allowlist-Proxy" in proxied
     assert "KEIN Internet" not in proxied
     assert "jarvis_gateway.py" in proxied
+
+
+# ---------------------------------------------------------------------------
+# 5.2/5.3 Budgets, Zeitfenster, adaptive Parallelitaet
+# ---------------------------------------------------------------------------
+
+
+def test_within_allowed_windows():
+    from datetime import datetime
+    assert loop.within_allowed_windows([]) is True
+    assert loop.within_allowed_windows(None) is True
+    assert loop.within_allowed_windows(["09:00-17:00"], datetime(2026, 1, 1, 10, 0)) is True
+    assert loop.within_allowed_windows(["09:00-17:00"], datetime(2026, 1, 1, 20, 0)) is False
+    assert loop.within_allowed_windows(["22:00-06:00"], datetime(2026, 1, 1, 23, 0)) is True
+    assert loop.within_allowed_windows(["22:00-06:00"], datetime(2026, 1, 1, 12, 0)) is False
+
+
+def _ready_main(tmp_path, monkeypatch, active=None, **env_extra):
+    monkeypatch.setattr(loop, "AUTONOMY_SWITCH", tmp_path / "missing.json")
+    monkeypatch.setattr(loop, "STATE_PATH", tmp_path / "state.json")
+    env = {"CONTROL_TOKEN": "fake", "OPENHANDS_API_KEY": "fake", "AGENT_GATEWAY_TOKEN": "fake"}
+    env.update(env_extra)
+    monkeypatch.setattr(loop, "_parse_env", lambda _: env)
+    monkeypatch.setattr(loop, "check_pod", lambda _: (True, "RUNNING", "pod-1"))
+    monkeypatch.setattr(loop, "get_activity", lambda _: {"user_activity_age_s": 200})
+    monkeypatch.setattr(loop, "model_ready", lambda _: True)
+    monkeypatch.setattr(loop, "heartbeat", lambda _: None)
+    sessions = []
+    if active:
+        sessions = [{"id": sid, "execution_status": "running", "updated_at": "t1",
+                     "tags": {"kind": "autonomy", "focus": meta.get("focus", "engineering")}}
+                    for sid, meta in active.items()]
+    monkeypatch.setattr(loop, "openhands_sessions", lambda _: sessions)
+    _write_state(loop.STATE_PATH, {"pod_id": "pod-1", "active_sessions": active or {},
+                                   "wrapup_done": False})
+
+
+def test_main_respects_max_rounds_per_pod_session(tmp_path, monkeypatch):
+    _ready_main(tmp_path, monkeypatch)
+    monkeypatch.setattr(loop, "autonomy_policy", lambda: {
+        "max_gpu_hours_per_day": None, "allowed_windows": [],
+        "max_rounds_per_pod_session": 0,
+    })
+    monkeypatch.setattr(loop, "start_round", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("Budget erreicht; kein Start")))
+    assert loop.main() == 0
+
+
+def test_main_skips_ideas_round_without_ideas(tmp_path, monkeypatch):
+    active = {"sess-a": {"kind": "round", "paused": False, "focus": "engineering"}}
+    _ready_main(tmp_path, monkeypatch, active=active)
+    monkeypatch.setattr(loop, "MAX_PARALLEL_ROUNDS", 2)
+    monkeypatch.setattr(loop, "autonomy_policy", lambda: {
+        "max_gpu_hours_per_day": None, "allowed_windows": [],
+        "max_rounds_per_pod_session": None,
+    })
+    monkeypatch.setattr(loop, "pending_owner_ideas", lambda _: [])
+    monkeypatch.setattr(loop, "start_round", lambda *a, **k: (_ for _ in ()).throw(
+        AssertionError("kein Ideen-Backlog; keine zweite Runde")))
+    assert loop.main() == 0

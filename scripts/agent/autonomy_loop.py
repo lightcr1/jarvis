@@ -182,6 +182,18 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _round_seconds(started_at: str | None) -> float:
+    if not started_at:
+        return 0.0
+    try:
+        started = datetime.fromisoformat(started_at)
+    except (ValueError, TypeError):
+        return 0.0
+    if started.tzinfo is None:
+        started = started.replace(tzinfo=timezone.utc)
+    return max(0.0, (datetime.now(timezone.utc) - started).total_seconds())
+
+
 def load_state() -> dict:
     defaults = {
         "active_sessions": {},       # {session_id: {"kind": ..., "paused": bool}}
@@ -191,6 +203,9 @@ def load_state() -> dict:
         "wrapup_done": False,
         "pod_stop_requested_at": None,
         "last_error": None,
+        "rounds_this_pod": 0,
+        "gpu_seconds_today": 0,
+        "gpu_day": None,
         "updated_at": None,
     }
     state = dict(defaults)
@@ -272,6 +287,37 @@ def autonomy_enabled() -> bool:
     except (OSError, json.JSONDecodeError):
         # Fehlende Datei (Default) bedeutet laut AGENTS.md: enabled.
         return True
+
+
+def autonomy_policy() -> dict:
+    """Budgets/Zeitfenster aus config/autonomy.json (5.3); None/[] = unbegrenzt."""
+    try:
+        cfg = json.loads(AUTONOMY_SWITCH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        cfg = {}
+    return {
+        "max_gpu_hours_per_day": cfg.get("max_gpu_hours_per_day"),
+        "allowed_windows": cfg.get("allowed_windows") or [],
+        "max_rounds_per_pod_session": cfg.get("max_rounds_per_pod_session"),
+    }
+
+
+def within_allowed_windows(windows: list[str] | None, moment: datetime | None = None) -> bool:
+    """True if no windows configured or the local time is inside one (5.3)."""
+    if not windows:
+        return True
+    moment = moment or datetime.now()
+    now_hm = moment.strftime("%H:%M")
+    for window in windows:
+        start, _, end = str(window).partition("-")
+        if not start or not end:
+            continue
+        if start <= end:
+            if start <= now_hm < end:
+                return True
+        elif now_hm >= start or now_hm < end:  # ueber Mitternacht
+            return True
+    return False
 
 
 def controller_config(env: dict[str, str]) -> dict | None:
@@ -802,10 +848,15 @@ def close_round(state: dict, api_key: str, control_token: str, session_id: str,
     """Eine Runde ist zu Ende: Session entfernen, abrechnen, ggf. WRAPUP-Stop.
     Der Pod wird nur gestoppt, wenn keine weiteren Runden mehr laufen."""
     active = state.get("active_sessions", {})
+    finished_meta = active.get(session_id, {})
     if session_id in active:
         active.pop(session_id, None)
     state["active_sessions"] = active
     state["rounds_total"] = state.get("rounds_total", 0) + 1
+    state["rounds_this_pod"] = state.get("rounds_this_pod", 0) + 1
+    duration = _round_seconds(finished_meta.get("started_at"))
+    if duration:
+        state["gpu_seconds_today"] = float(state.get("gpu_seconds_today", 0)) + duration
     state["last_round_finished_at"] = now_iso()
     state["last_kind"] = kind
     log(f"Runde ({kind}, session={str(session_id)[:8]}) beendet")
@@ -843,6 +894,11 @@ def main() -> int:
         return 0
 
     state = load_state()
+    # Tagesbudget um Mitternacht zuruecksetzen (5.3).
+    today = datetime.now().strftime("%Y-%m-%d")
+    if state.get("gpu_day") != today:
+        state["gpu_day"] = today
+        state["gpu_seconds_today"] = 0
     digest = source_sha256()
     if state.get("loop_sha256") != digest:
         log(f"Autonomy-Loop Version: {digest[:12]} ({Path(__file__)})")
@@ -1026,11 +1082,32 @@ def main() -> int:
         # damit der Pod nicht durch Ueberhang-Runden weiterlaeuft (B4).
         notify_running_rounds_wrapup(api_key, active, sessions_by_id)
     else:
+        # Budgets/Zeitfenster respektieren (5.3).
+        policy = autonomy_policy()
+        if not within_allowed_windows(policy.get("allowed_windows")):
+            state["last_error"] = "ausserhalb allowed_windows (5.3)"
+            save_state(state)
+            return 0
+        max_rounds = policy.get("max_rounds_per_pod_session")
+        if max_rounds is not None and state.get("rounds_this_pod", 0) >= int(max_rounds):
+            state["last_error"] = "max_rounds_per_pod_session erreicht (5.3)"
+            save_state(state)
+            return 0
+        max_hours = policy.get("max_gpu_hours_per_day")
+        if max_hours is not None and float(state.get("gpu_seconds_today", 0)) >= float(max_hours) * 3600:
+            state["last_error"] = "Tagesbudget GPU-Stunden erreicht (5.3)"
+            save_state(state)
+            return 0
         # Zweite parallele Runde bekommt den komplementaeren Fokus, damit die
         # Sessions nicht am selben Code arbeiten (Engineering vs. Ideen).
         active_focuses = {str(meta.get("focus") or "engineering")
                           for meta in active.values()}
         focus = "ideas" if "engineering" in active_focuses else "engineering"
+        # 5.2: Ideen-Runde nur bei vorhandenem Ideen-Backlog/Besitzer-Ideen.
+        if focus == "ideas" and not pending_owner_ideas(env.get("JARVIS_AGENT_REQUEST_TOKEN")):
+            state["last_error"] = "kein Ideen-Backlog - keine zweite Runde (5.2)"
+            save_state(state)
+            return 0
 
     request_token = env.get("JARVIS_AGENT_REQUEST_TOKEN")
     task = None
@@ -1072,6 +1149,7 @@ def main() -> int:
             "task_id": (task or {}).get("id"),
             "task_area": (task or {}).get("area"),
             "round_id": round_id,
+            "started_at": now_iso(),
         }
     save_state(state)
     return 0
