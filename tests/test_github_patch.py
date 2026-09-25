@@ -80,6 +80,8 @@ def test_submit_patch_creates_one_commit(monkeypatch):
             return {"content": base64.b64encode(b"old\n").decode()}
         if url.endswith("/git/blobs"):
             return {"sha": "blob-1"}
+        if "recursive=1" in url:
+            return {"tree": [{"path": "jarvis/foo.py", "type": "blob", "mode": "100755"}]}
         if url.endswith("/git/trees"):
             return {"sha": "new-tree"}
         if url.endswith("/git/commits"):
@@ -99,6 +101,8 @@ def test_submit_patch_creates_one_commit(monkeypatch):
     assert len(commit_posts) == 1
     assert len(ref_patches) == 1
     assert ref_patches[0][2]["force"] is False
+    tree_post = [c for c in calls if c[0] == "POST" and c[1].endswith("/git/trees")][0]
+    assert tree_post[2]["tree"][0]["mode"] == "100755"  # x-Bit erhalten
 
 
 def _client(tmp_path, monkeypatch, review_store=None):
@@ -227,3 +231,68 @@ def test_agent_token_opens_no_patch_admin_endpoint(tmp_path, monkeypatch):
     assert client.post("/admin/agent-patches/missing/decide", headers=agent,
                        json={"approve": True}).status_code == 401
     assert client.get("/admin/agent-actions", headers=agent).status_code == 401
+
+
+DELETION_PATCH = (
+    "diff --git a/jarvis/old.py b/jarvis/old.py\n"
+    "deleted file mode 100644\n"
+    "--- a/jarvis/old.py\n"
+    "+++ /dev/null\n"
+    "@@ -1 +0,0 @@\n"
+    "-old\n"
+)
+
+
+def test_apply_unified_diff_rejects_stale_patch():
+    files = parse_patch(MODIFY_PATCH)
+    with pytest.raises(GithubGatewayError, match="does not apply"):
+        apply_unified_diff("TOTALLY DIFFERENT\n", files[0]["hunks"])
+
+
+def test_parse_patch_handles_deletion_and_rename():
+    files = parse_patch(DELETION_PATCH)
+    assert files[0]["path"] == "jarvis/old.py"
+    assert files[0]["delete"] is True
+
+    rename = (
+        "diff --git a/jarvis/a.py b/jarvis/b.py\n"
+        "similarity index 100%\n"
+        "rename from jarvis/a.py\n"
+        "rename to jarvis/b.py\n"
+    )
+    entry = parse_patch(rename)[0]
+    assert entry["path"] == "jarvis/b.py" and entry["old_path"] == "jarvis/a.py"
+    assert entry["rename"] is True
+
+
+def test_validate_patch_accepts_deletion_but_blocks_protected():
+    assert validate_patch(DELETION_PATCH, branch="agent/x") == ["jarvis/old.py"]
+    protected = DELETION_PATCH.replace("jarvis/old.py", "AGENTS.md")
+    with pytest.raises(GithubGatewayError, match="protected path"):
+        validate_patch(protected, branch="agent/x")
+
+
+def test_submit_patch_supports_deletion(monkeypatch):
+    calls = []
+
+    def fake_gh(method, url, token, payload=None):
+        calls.append((method, url, payload))
+        if url.endswith("/git/ref/heads/dev"):
+            return {"object": {"sha": "base-sha"}}
+        if url.endswith("/git/commits/base-sha"):
+            return {"tree": {"sha": "base-tree"}}
+        if "recursive=1" in url:
+            return {"tree": [{"path": "jarvis/old.py", "type": "blob", "mode": "100644"}]}
+        if url.endswith("/git/trees"):
+            return {"sha": "new-tree"}
+        if url.endswith("/git/commits"):
+            return {"sha": "commit-1"}
+        if "/git/refs/heads/" in url:
+            return {}
+        raise AssertionError(url)
+
+    monkeypatch.setattr(github_gateway, "_gh_json", fake_gh)
+    submit_patch("owner", "repo", branch="agent/del", base="dev",
+                 patch_text=DELETION_PATCH, message="Remove", token="tok")
+    tree = [c for c in calls if c[0] == "POST" and c[1].endswith("/git/trees")][0][2]["tree"]
+    assert tree == [{"path": "jarvis/old.py", "mode": "100644", "type": "blob", "sha": None}]
