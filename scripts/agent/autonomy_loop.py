@@ -706,10 +706,11 @@ def environment_context() -> str:
     if AGENT_NETWORK_MODE == "allowlist-proxy":
         return (
             " UMGEBUNG DIESER RUNDE: Der Agent-Container hat kein freies Internet, sondern "
-            "nur einen Allowlist-Proxy fuer github.com und PyPI. `pip install` und "
-            "`git fetch` von GitHub funktionieren, beliebige andere Hosts/Web-Zugriffe "
-            "schlagen fehl - das ist NORMAL, kein Netzwerk-Debugging betreiben. "
-            "`python3 -m pytest` ist vorinstalliert und funktioniert lokal." + common
+            "nur einen Allowlist-Proxy fuer PyPI. GitHub-Downloads (`git fetch`, `git clone`, "
+            "`pip install git+...`) sind gesperrt; nutze fuer GitHub-Aktionen ausschliesslich "
+            "`scripts/agent/jarvis_gateway.py`. `pip install` aus PyPI funktioniert, beliebige "
+            "andere Hosts/Web-Zugriffe schlagen fehl - das ist NORMAL, kein Netzwerk-Debugging "
+            "betreiben. `python3 -m pytest` ist vorinstalliert und funktioniert lokal." + common
         )
     return (
         " UMGEBUNG DIESER RUNDE: Der Agent-Container hat KEIN Internet. `git fetch`, "

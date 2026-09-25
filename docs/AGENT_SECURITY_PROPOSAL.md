@@ -1,7 +1,7 @@
 # Vorschlag: Sicherheit der Agenten-Automatisierung (Phase 6)
 
-Status: **Vorschlag / Owner-Review erforderlich.** Dieses Dokument aendert
-kein Verhalten. Die betroffenen Dateien liegen unter `deploy/**` (geschuetzt
+Status: **umgesetzt (GitHub-Sperre) + offener Rest.** GitHub-Downloads sind im
+Allowlist-Proxy per Default gesperrt (`ALLOW_GITHUB=0`); PyPI bleibt erlaubt. Die betroffenen Dateien liegen unter `deploy/**` (geschuetzt
 laut `config/agent-policy.json`).
 
 ## Ausgangslage
