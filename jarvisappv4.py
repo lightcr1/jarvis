@@ -697,7 +697,7 @@ def block_write_if_unauthorized(role: str, token: str | None, granted_permission
     )
 
 
-def try_skill(text: str, role: str = "admin", token: str | None = None, granted_permissions: list[str] | None = None, user_prefs: dict | None = None, user_id: str | None = None) -> dict[str, object] | None:
+def try_skill(text: str, role: str = "admin", token: str | None = None, granted_permissions: list[str] | None = None, user_prefs: dict | None = None, user_id: str | None = None, session_id: str | None = None) -> dict[str, object] | None:
     active_token = token if token and is_token_active(_tokens, token) else None
     return domain_try_skill(
         text,
@@ -723,6 +723,7 @@ def try_skill(text: str, role: str = "admin", token: str | None = None, granted_
         user_prefs=user_prefs,
         memory_store=memory_store,
         user_id=user_id,
+        session_id=session_id,
         task_service=task_service,
         calendar_service=calendar_service,
         email_service=email_service,

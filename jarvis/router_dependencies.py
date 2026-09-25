@@ -250,6 +250,7 @@ def build_autonomy_tasks_deps(state: object) -> dict:
     from .api_alerts import get_alert_broadcaster
     return {
         "autonomy_task_store": live_attr(state, "autonomy_task_store"),
+        "chat_history": live_attr(state, "chat_history"),
         "require_admin_access": state.require_admin_access,
         "get_identity_session": state._get_identity_session,
         "normalize_role": state.normalize_role,
