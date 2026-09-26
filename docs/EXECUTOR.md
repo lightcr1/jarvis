@@ -82,6 +82,23 @@ Jede Sandbox (Netz `jarvis-sandbox`):
   Storage-Treiber Quotas unterstützt (`JARVIS_SANDBOX_STORAGE_OPT=1`), sonst nur
   über Laufzeit/Reaper begrenzt — bewusst konservativ.
 
+## Echter VM-Zugriff (Proxmox-Backend, Punkt 1)
+
+Für echte VMs statt Container: `config/zones.json` → `sandbox.backend: proxmox`.
+Der Executor wählt die Laufzeit automatisch (`jarvis/runtime_factory.py`).
+
+- `jarvis/proxmox_runtime.py`: VM aus **Template** klonen, Start/Stop, löschen,
+  Befehle über den **QEMU Guest Agent**; `snapshot`/`rollback` für die Zone
+  „verwaltet“.
+- Env: `JARVIS_PROXMOX_URL`, `JARVIS_PROXMOX_TOKEN_ID`, `JARVIS_PROXMOX_TOKEN_SECRET`,
+  `JARVIS_PROXMOX_NODE`, `JARVIS_PROXMOX_TEMPLATE`, `JARVIS_PROXMOX_POOL`,
+  `JARVIS_PROXMOX_BRIDGE`, `JARVIS_PROXMOX_CA_FILE`, `JARVIS_PROXMOX_VERIFY_TLS`.
+- **Token-Rechte**: nur Pool `jarvis-sandbox`; **VLAN** ohne Heimnetz-Zugang.
+- Managed Zone: vor jeder Änderung `snapshot`, Rollback-Befehl im Bericht.
+
+> Live-Aktivierung braucht den Proxmox-Token/VLAN vom Besitzer; ohne
+> `JARVIS_PROXMOX_*` schlägt der Start bewusst fehl (kein stiller Fallback).
+
 ## Egress
 
 Empfehlung Plan: Egress nur über den **Allowlist-Proxy** (`allowlist-proxy`,
