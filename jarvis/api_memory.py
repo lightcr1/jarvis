@@ -5,6 +5,7 @@ from .api_models import (
     MemoryAliasResponse,
     MemoryNoteCreate,
     MemoryNoteResponse,
+    MemoryNoteUpdate,
     MemorySummaryResponse,
 )
 from .router_dependencies import LiveRef
@@ -24,7 +25,8 @@ def build_memory_router(deps: dict) -> APIRouter:
         session = require_identity_session(x_jarvis_session)
         user_id: str = session["user"]["id"]
         notes = current("memory_store").get_notes(user_id)
-        return [MemoryNoteResponse(id=n["id"], text=n["text"], created_at=n["created_at"]) for n in notes]
+        return [MemoryNoteResponse(id=n["id"], text=n["text"], created_at=n["created_at"],
+                                   data_class=n.get("data_class", "personal")) for n in notes]
 
     @router.post("/memory/notes", response_model=MemoryNoteResponse, status_code=201)
     def create_note(payload: MemoryNoteCreate, x_jarvis_session: str | None = Header(default=None)):
@@ -33,8 +35,19 @@ def build_memory_router(deps: dict) -> APIRouter:
         text = (payload.text or "").strip()
         if not text:
             raise HTTPException(422, "Note text cannot be empty.")
-        note = current("memory_store").add_note(user_id, text)
-        return MemoryNoteResponse(id=note["id"], text=note["text"], created_at=note["created_at"])
+        note = current("memory_store").add_note(user_id, text, payload.data_class)
+        return MemoryNoteResponse(id=note["id"], text=note["text"], created_at=note["created_at"],
+                                  data_class=note.get("data_class", "personal"))
+
+    @router.patch("/memory/notes/{note_id}", response_model=MemoryNoteResponse)
+    def update_note(note_id: str, payload: MemoryNoteUpdate, x_jarvis_session: str | None = Header(default=None)):
+        session = require_identity_session(x_jarvis_session)
+        user_id: str = session["user"]["id"]
+        note = current("memory_store").set_note_class(user_id, note_id, payload.data_class)
+        if note is None:
+            raise HTTPException(404, "Note not found.")
+        return MemoryNoteResponse(id=note["id"], text=note["text"], created_at=note["created_at"],
+                                  data_class=note.get("data_class", "personal"))
 
     @router.delete("/memory/notes/{note_id}", status_code=204)
     def delete_note(note_id: str, x_jarvis_session: str | None = Header(default=None)):
@@ -80,7 +93,8 @@ def build_memory_router(deps: dict) -> APIRouter:
         store = current("memory_store")
         notes = store.get_notes(user_id)
         aliases = store.get_aliases(user_id)
-        note_list = [MemoryNoteResponse(id=n["id"], text=n["text"], created_at=n["created_at"]) for n in notes]
+        note_list = [MemoryNoteResponse(id=n["id"], text=n["text"], created_at=n["created_at"],
+                                        data_class=n.get("data_class", "personal")) for n in notes]
         alias_list = [
             MemoryAliasResponse(alias=k, target=v["target"], created_at=v["created_at"])
             for k, v in aliases.items()

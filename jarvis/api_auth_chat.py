@@ -54,6 +54,18 @@ from .tool_registry_tools import build_pilot_tool_registry
 _TOOL_REGISTRY = build_pilot_tool_registry()
 
 
+def _notes_for_provider(memory_store, user_id: str | None, provider: str | None, consent_header: str | None) -> list[str]:
+    """2.4: only feed memory notes the chosen provider is allowed to see.
+    Cloud providers get `public` notes; `personal` only with the per-request
+    `X-Jarvis-Data-Consent: personal` header; `sensitive` never. The local
+    self-hosted provider gets everything."""
+    if not user_id:
+        return []
+    from .data_classes import filter_for_provider
+    consent = (consent_header or "").strip().lower() == "personal"
+    return [n["text"] for n in filter_for_provider(memory_store.get_notes(user_id), provider, consent=consent)]
+
+
 _HISTORY_STOPWORDS = {
     "what", "when", "where", "which", "about", "there", "their", "would", "could",
     "should", "please", "thanks", "again", "today", "tomorrow", "yesterday", "jarvis",
@@ -545,6 +557,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         x_jarvis_mode: str | None = Header(default=None),
         x_jarvis_role: str | None = Header(default=None),
         x_jarvis_confirm: str | None = Header(default=None),
+        x_jarvis_data_consent: str | None = Header(default=None),
     ):
         text = (payload.text or "").strip()
         source = (payload.source or "text").strip().lower()
@@ -725,7 +738,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                 response_language = (user_prefs or {}).get("response_language", "en")
                 time_of_day, quiet_hours_active = _context_mode_for_prefs(user_prefs or {})
                 related_history = _find_related_history(current("chat_history"), owner_key, session_id, text)
-                memory_notes = [n["text"] for n in current("memory_store").get_notes(effective_user_id)] if effective_user_id else []
+                memory_notes = _notes_for_provider(current("memory_store"), effective_user_id, decision.provider, x_jarvis_data_consent)
                 sys_prompt = build_system_prompt(
                     display_name, voice_mode=is_voice, persona_tone=persona_tone,
                     time_of_day=time_of_day, quiet_hours_active=quiet_hours_active,
@@ -805,6 +818,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
         x_jarvis_mode: str | None = Header(default=None),
         x_jarvis_role: str | None = Header(default=None),
         x_jarvis_confirm: str | None = Header(default=None),
+        x_jarvis_data_consent: str | None = Header(default=None),
     ):
         text = (payload.text or "").strip()
         source = (payload.source or "text").strip().lower()
@@ -1010,7 +1024,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                 response_language_r = (user_prefs_r or {}).get("response_language", "en")
                 time_of_day_r, quiet_hours_active_r = _context_mode_for_prefs(user_prefs_r or {})
                 related_history_r = _find_related_history(current("chat_history"), owner_key, session_id, text)
-                memory_notes_r = [n["text"] for n in current("memory_store").get_notes(effective_user_id)] if effective_user_id else []
+                memory_notes_r = _notes_for_provider(current("memory_store"), effective_user_id, decision_r.provider, x_jarvis_data_consent)
                 sys_prompt_r = build_system_prompt(
                     display_name_r, voice_mode=is_voice_r, persona_tone=persona_tone_r,
                     time_of_day=time_of_day_r, quiet_hours_active=quiet_hours_active_r,

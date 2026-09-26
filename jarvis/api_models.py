@@ -316,12 +316,18 @@ class PushSubscriptionIn(BaseModel):
 
 class MemoryNoteCreate(BaseModel):
     text: str
+    data_class: str | None = None
 
 
 class MemoryNoteResponse(BaseModel):
     id: str
     text: str
     created_at: int
+    data_class: str = "personal"
+
+
+class MemoryNoteUpdate(BaseModel):
+    data_class: str
 
 
 class MemoryAliasCreate(BaseModel):

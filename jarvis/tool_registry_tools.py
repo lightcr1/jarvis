@@ -39,7 +39,7 @@ def _save_memory_note_handler(ctx: ToolExecutionContext, args: dict) -> dict:
     text = str(args.get("text") or "").strip()
     if not text:
         return {"reply": "There's nothing there worth remembering.", "data": {"route": "tool_error", "error": "empty_text"}}
-    note = memory_store.add_note(ctx.user_id, text)
+    note = memory_store.add_note(ctx.user_id, text, args.get("data_class"))
     return {"reply": f'Noted, sir: "{text}"', "data": {"route": "memory_note_saved", "note": note}}
 
 
@@ -343,7 +343,11 @@ def build_pilot_tool_registry() -> ToolRegistry:
         ),
         parameters={
             "type": "object",
-            "properties": {"text": {"type": "string", "description": "The fact or preference to remember, written in third person."}},
+            "properties": {
+                "text": {"type": "string", "description": "The fact or preference to remember, written in third person."},
+                "data_class": {"type": "string", "enum": ["public", "personal", "sensitive"],
+                               "description": "How private this is. Default personal; use sensitive for anything that must never reach a cloud model."},
+            },
             "required": ["text"],
         },
         required_permission="assistant.chat",
