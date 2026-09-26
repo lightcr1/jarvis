@@ -9,6 +9,7 @@ injizierbar, damit die Logik ohne Docker testbar ist.
 from __future__ import annotations
 
 import json
+import time
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -33,7 +34,11 @@ class DockerRuntime:
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
                 payload = response.read().decode("utf-8", errors="replace")
-                return response.status, (json.loads(payload) if payload else {})
+                try:
+                    data = json.loads(payload) if payload.strip() else {}
+                except json.JSONDecodeError:
+                    data = {}  # z.B. roher Exec-Stream: kein Fehler
+                return response.status, data
         except urllib.error.HTTPError as exc:
             return exc.code, {}
         except Exception as exc:  # noqa: BLE001
@@ -85,8 +90,14 @@ class DockerRuntime:
                              {"Cmd": ["sh", "-lc", str(command)],
                               "AttachStdout": True, "AttachStderr": True})
         exec_id = str(created.get("Id") or "")
-        self._call("POST", f"/exec/{exec_id}/start", {"Detach": False, "Tty": False})
-        info = self._call("GET", f"/exec/{exec_id}/json")
+        # Detached starten (kein roher Multiplex-Stream), dann den Exitcode pollen.
+        self._call("POST", f"/exec/{exec_id}/start", {"Detach": True, "Tty": False})
+        info: dict = {}
+        for _ in range(120):
+            info = self._call("GET", f"/exec/{exec_id}/json")
+            if not info.get("Running"):
+                break
+            time.sleep(0.25)
         return {"exit_code": info.get("ExitCode"), "running": bool(info.get("Running"))}
 
     # ---- Hostconfig aus der Zonen-Spec ---------------------------------
