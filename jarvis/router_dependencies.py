@@ -74,6 +74,7 @@ def build_auth_chat_deps(state: object) -> dict:
         "email_service": live_attr(state, "email_service"),
         "proxmox_vm_action": proxmox_vm_action,
         "proxmox_lxc_action": proxmox_lxc_action,
+        "executor_client": live_attr(state, "executor_client"),
         "get_anthropic": state.get_anthropic,
         "get_gemini": state.get_gemini,
         "get_openai": state.get_openai,

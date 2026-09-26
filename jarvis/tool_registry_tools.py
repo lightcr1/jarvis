@@ -236,6 +236,65 @@ def _login_history_handler(ctx: ToolExecutionContext, args: dict) -> dict:
     return {"reply": reply, "data": {"route": "login_history", "events": events[:10], "hours": hours}}
 
 
+def _sandbox_client(ctx: ToolExecutionContext):
+    return (ctx.deps or {}).get("executor_client")
+
+
+def _sandbox_create_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    client = _sandbox_client(ctx)
+    if client is None:
+        return {"reply": "The sandbox zone is not configured on this host.",
+                "data": {"route": "tool_error", "error": "executor_unconfigured"}}
+    image = str(args.get("image") or "").strip()
+    command = str(args.get("command") or "").strip()
+    if not image:
+        return {"reply": "Which image should the sandbox use?",
+                "data": {"route": "tool_error", "error": "missing_image"}}
+    try:
+        result = client.create(image=image, command=command)
+    except Exception as exc:  # noqa: BLE001
+        return {"reply": f"I could not start a sandbox: {exc}",
+                "data": {"route": "sandbox_error", "error": str(exc)}}
+    name = (result.get("sandbox") or {}).get("name") or result.get("sandbox")
+    return {"reply": f"Sandbox running: {name}", "data": {"route": "sandbox_created", **result}}
+
+
+def _sandbox_exec_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    client = _sandbox_client(ctx)
+    if client is None:
+        return {"reply": "The sandbox zone is not configured on this host.",
+                "data": {"route": "tool_error", "error": "executor_unconfigured"}}
+    name = str(args.get("name") or "").strip()
+    command = str(args.get("command") or "").strip()
+    if not name or not command:
+        return {"reply": "I need a sandbox name and a command.",
+                "data": {"route": "tool_error", "error": "missing_args"}}
+    try:
+        result = client.run(name, command)
+    except Exception as exc:  # noqa: BLE001
+        return {"reply": f"The command failed: {exc}",
+                "data": {"route": "sandbox_error", "error": str(exc)}}
+    return {"reply": f"Sandbox {name} exited with {result.get('exit_code')}.",
+            "data": {"route": "sandbox_exec", **result}}
+
+
+def _sandbox_destroy_handler(ctx: ToolExecutionContext, args: dict) -> dict:
+    client = _sandbox_client(ctx)
+    if client is None:
+        return {"reply": "The sandbox zone is not configured on this host.",
+                "data": {"route": "tool_error", "error": "executor_unconfigured"}}
+    name = str(args.get("name") or "").strip()
+    if not name:
+        return {"reply": "Which sandbox should I remove?",
+                "data": {"route": "tool_error", "error": "missing_name"}}
+    try:
+        client.destroy(name)
+    except Exception as exc:  # noqa: BLE001
+        return {"reply": f"I could not remove the sandbox: {exc}",
+                "data": {"route": "sandbox_error", "error": str(exc)}}
+    return {"reply": f"Sandbox {name} removed.", "data": {"route": "sandbox_destroyed", "name": name}}
+
+
 def build_pilot_tool_registry() -> ToolRegistry:
     registry = ToolRegistry()
     registry.register(Tool(
@@ -301,6 +360,52 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="actions.write.execute",
         risk=RiskLevel.WRITE,
         handler=_restart_service_handler,
+    ))
+    registry.register(Tool(
+        name="sandbox_create",
+        description=("Start a disposable sandbox container in an isolated network for installing and testing "
+                     "software. The sandbox is confined (no host access) and removed afterwards."),
+        parameters={
+            "type": "object",
+            "properties": {
+                "image": {"type": "string", "description": "Allowed base image, e.g. 'debian:bookworm-slim'."},
+                "command": {"type": "string", "description": "Optional startup command."},
+            },
+            "required": ["image"],
+        },
+        required_permission="actions.write.execute",
+        risk=RiskLevel.WRITE,
+        handler=_sandbox_create_handler,
+        capability="vm.sandbox.create",
+    ))
+    registry.register(Tool(
+        name="sandbox_exec",
+        description="Run a shell command inside an existing sandbox container and return its exit code.",
+        parameters={
+            "type": "object",
+            "properties": {
+                "name": {"type": "string", "description": "The sandbox container name (jarvis-sandbox-*)."},
+                "command": {"type": "string", "description": "The shell command to run."},
+            },
+            "required": ["name", "command"],
+        },
+        required_permission="actions.write.execute",
+        risk=RiskLevel.WRITE,
+        handler=_sandbox_exec_handler,
+        capability="vm.sandbox.exec",
+    ))
+    registry.register(Tool(
+        name="sandbox_destroy",
+        description="Stop and remove a sandbox container.",
+        parameters={
+            "type": "object",
+            "properties": {"name": {"type": "string", "description": "The sandbox container name."}},
+            "required": ["name"],
+        },
+        required_permission="actions.write.execute",
+        risk=RiskLevel.WRITE,
+        handler=_sandbox_destroy_handler,
+        capability="vm.sandbox.destroy",
     ))
     registry.register(Tool(
         name="list_devices",

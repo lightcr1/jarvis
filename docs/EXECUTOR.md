@@ -29,6 +29,21 @@ JARVIS_AGENT_REQUEST_TOKEN="$(grep -E '^JARVIS_AGENT_REQUEST_TOKEN=' /home/media
 Danach ist der Dienst unter `jarvis-executor:8120` aus dem Agenten-Netz
 (`agent-isolated`) erreichbar; er veröffentlicht **keinen** Host-Port.
 
+
+## Aufruf aus Jarvis (Client + Tools)
+
+Jarvis ruft den Executor ueber `jarvis/executor_client.py` an (Token-geschuetzt).
+Die Chat-Tools `sandbox_create`, `sandbox_exec`, `sandbox_destroy` (T1, ueber den
+Freigabe-Kern) nutzen ihn. Aktivierung:
+
+```bash
+export JARVIS_EXECUTOR_URL="http://jarvis-executor:8120"
+export JARVIS_AGENT_REQUEST_TOKEN="..."   # bereits gesetzt
+```
+
+Der Executor haengt dafuer zusaetzlich im Netz `runpod-internal` (wie `jarvis-app`).
+Ohne `JARVIS_EXECUTOR_URL` melden die Tools freundlich "sandbox zone not configured".
+
 ## Endpunkte (Agent-Token: `X-Jarvis-Agent-Request-Token`)
 
 | Methode | Pfad | Wirkung |

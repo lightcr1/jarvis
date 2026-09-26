@@ -66,6 +66,7 @@ services:
       - executor-internal
       - sandbox
       - agent-isolated
+      - runpod-internal
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -88,3 +89,8 @@ networks:
   agent-isolated:
     external: true
     name: ${JARVIS_AGENT_NETWORK:-openhands_agent-isolated}
+  # Gleiches Netz wie jarvis-app, damit der Chat-Backend den Executor erreicht.
+  # Zugriff bleibt token-geschuetzt; kein Host-Port.
+  runpod-internal:
+    external: true
+    name: ${RUNPOD_NETWORK_NAME:-runpod_default}
