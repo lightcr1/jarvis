@@ -68,6 +68,20 @@ Jede Sandbox (Netz `jarvis-sandbox`):
 - nur erlaubte Images (`allowed_images` in `config/zones.json`)
 - Quoten mit Host-Reserve (`host_reserve`)
 
+## Selbstaufräumen, Not-Aus, Audit
+
+- **Laufzeit-Limit**: jede Sandbox bekommt `jarvis.expires_at`; ein Hintergrund-
+  **Reaper** (Default alle 120 s, `JARVIS_EXECUTOR_REAP_SECONDS`) entfernt
+  abgelaufene Sandboxen → Slots werden frei (manuell: `POST /sandboxes/reap`).
+- **Not-Aus**: `JARVIS_EMERGENCY_STOP=1` → `authorize_action` verweigert **alle**
+  Sandbox-Aktionen (T0/T1/T2/T3), der Executor führt nichts mehr aus.
+- **Audit-Log**: JSON-Zeilen unter `/var/lib/jarvis/executor-audit.log`
+  (Volume `executor-audit`; `event` = sandbox.create/exec/destroy/reaped).
+- **Token**: Vergleich mit `hmac.compare_digest`.
+- **Disk (`disk_gb`)**: als `StorageOpt: size` best-effort, nur wo der
+  Storage-Treiber Quotas unterstützt (`JARVIS_SANDBOX_STORAGE_OPT=1`), sonst nur
+  über Laufzeit/Reaper begrenzt — bewusst konservativ.
+
 ## Egress
 
 Empfehlung Plan: Egress nur über den **Allowlist-Proxy** (`allowlist-proxy`,

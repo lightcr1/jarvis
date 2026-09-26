@@ -91,3 +91,27 @@ def test_create_refuses_lan_enabled_zones():
     executor = Executor(FakeRuntime(), zones=zones, host_cpus=4, host_memory_mb=16384)
     with pytest.raises(SandboxError):
         executor.create(image="alpine:latest")
+
+
+def test_emergency_stop_blocks_all_sandbox_actions():
+    from jarvis.executor import Executor, SandboxError
+    blocked = Executor(FakeRuntime(), zones=load_zones(), host_cpus=4, host_memory_mb=16384,
+                       emergency_stop=lambda: True)
+    for call in (lambda: blocked.create(image="alpine:latest"),
+                 lambda: blocked.run("jarvis-sandbox-x", "id"),
+                 lambda: blocked.destroy("jarvis-sandbox-x")):
+        with pytest.raises(SandboxError):
+            call()
+
+
+def test_reap_expired_frees_slots_and_audits():
+    runtime = FakeRuntime()
+    events = []
+    executor = Executor(runtime, zones=load_zones(), host_cpus=4, host_memory_mb=16384,
+                        clock=lambda: 1000, audit=lambda e, d: events.append(e))
+    executor.create(image="alpine:latest")
+    assert runtime.created[0]["labels"]["jarvis.expires_at"] == str(1000 + 120 * 60)
+    assert "sandbox.create" in events
+    assert executor.reap_expired(now=1000) == []            # noch nicht abgelaufen
+    assert executor.reap_expired(now=1000 + 120 * 60 + 1)   # jetzt abgelaufen
+    assert runtime.destroyed and "sandbox.reaped" in events

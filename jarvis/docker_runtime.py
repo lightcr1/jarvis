@@ -9,6 +9,7 @@ injizierbar, damit die Logik ohne Docker testbar ist.
 from __future__ import annotations
 
 import json
+import os
 import time
 import urllib.error
 import urllib.parse
@@ -60,7 +61,8 @@ class DockerRuntime:
             if not name:
                 continue
             result.append({"name": name, "id": container.get("Id"),
-                           "image": container.get("Image"), "state": container.get("State")})
+                           "image": container.get("Image"), "state": container.get("State"),
+                           "labels": container.get("Labels") or {}})
         return result
 
     def create_sandbox(self, spec: dict) -> dict:
@@ -106,7 +108,7 @@ class DockerRuntime:
     # ---- Hostconfig aus der Zonen-Spec ---------------------------------
     @staticmethod
     def _host_config(spec: dict) -> dict:
-        return {
+        config = {
             "NetworkMode": spec.get("network"),
             "CapDrop": list(spec.get("cap_drop") or ["ALL"]),
             "ReadonlyRootfs": bool(spec.get("read_only")),
@@ -117,3 +119,8 @@ class DockerRuntime:
             "Tmpfs": {"/tmp": "rw,noexec,nosuid,size=256m"},
             "AutoRemove": False,
         }
+        # Disk-Limit best-effort (nur wo der Storage-Treiber Quotas unterstuetzt).
+        disk_gb = int(spec.get("disk_gb") or 0)
+        if disk_gb > 0 and os.getenv("JARVIS_SANDBOX_STORAGE_OPT", "0").strip() == "1":
+            config["StorageOpt"] = {"size": f"{disk_gb}G"}
+        return config
