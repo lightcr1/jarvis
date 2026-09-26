@@ -149,6 +149,16 @@ Cron-Eintrag (Beispiel):
 Sofort testen: `bash scripts/agent/self_deploy_loop.sh --force` (bzw. `--dry-run`
 im Deploy-Skript).
 
+## Zentraler Not-Aus
+
+Ein Schalter gilt überall (App, Executor, Autonomy-Loop):
+
+- Env `JARVIS_EMERGENCY_STOP=1`, **oder** Stop-Datei `JARVIS_EMERGENCY_STOP_FILE`
+  (Default `/var/lib/jarvis/emergency_stop`).
+- Admin: `GET/POST /admin/emergency-stop` `{"active": true|false}`.
+- Wirkt sofort: blockt Tool-Aktionen (T0–T3), Sandbox-Aktionen und neue
+  Autonomy-Runden.
+
 ## Zwei-Faktor (TOTP) für kritische Freigaben
 
 Für Admin-Login und **T3-Freigaben** (Geld, E-Mail senden, Löschen, Rechte,
