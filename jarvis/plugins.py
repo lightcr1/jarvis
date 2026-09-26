@@ -115,3 +115,45 @@ def load_plugins(root: Path | None = None, registry: dict[str, dict] | None = No
             raise PluginManifestError(f"{manifest}: {exc}") from exc
         specs.append(parse_manifest(data, registry))
     return specs
+
+
+def task_spec_for_missing_capability(request_text: str, capability: str = "") -> dict:
+    """Baut die Spezifikation fuer eine Agent-Aufgabe, wenn eine Faehigkeit fehlt (5.1)."""
+    request_text = str(request_text or "").strip()
+    title = f"Neue Faehigkeit bauen: {capability or request_text[:80]}".strip()
+    description = (
+        "Der Besitzer braucht eine Faehigkeit, die es noch nicht gibt.\n"
+        f"Anliegen: {request_text}\n"
+        f"Capability-Vorschlag: {capability or '<noch zu bestimmen>'}\n\n"
+        "Spezifikation:\n- Eingaben:\n- Ausgaben:\n- Risiko-Vorschlag (T0-T3):\n- Tests:\n\n"
+        "Umsetzung: Tool in tool_registry_tools.py ODER Plugin "
+        "(jarvis/plugins/<name>/ mit manifest.json + tool.py + Tests), Eintrag in "
+        "config/capabilities.json als VORSCHLAG. Merge nach dev nur bei gruener CI und "
+        "ohne geschuetzte Pfade; die Einstufung macht der Besitzer."
+    )
+    return {"title": title[:140], "description": description[:4000],
+            "area": "build", "size": "medium", "source": "owner"}
+
+
+def load_plugin_tools(root: Path | None = None, registry: dict[str, dict] | None = None,
+                      allow_code: bool | None = None) -> list[dict]:
+    """Laedt Plugin-``tool.py`` -- nur wenn ``JARVIS_ALLOW_PLUGIN_CODE=1`` (Default: aus)."""
+    import importlib.util
+    import os
+    if allow_code is None:
+        allow_code = os.getenv("JARVIS_ALLOW_PLUGIN_CODE", "0").strip() == "1"
+    if not allow_code:
+        return []
+    directory = Path(root) if root is not None else default_plugins_dir()
+    tools: list[dict] = []
+    for spec in load_plugins(directory, registry):
+        tool_path = directory / spec.name / "tool.py"
+        if not tool_path.is_file():
+            continue
+        module_spec = importlib.util.spec_from_file_location(f"jarvis_plugin_{spec.name}", tool_path)
+        if module_spec is None or module_spec.loader is None:
+            raise PluginManifestError(f"{tool_path}: nicht ladbar")
+        module = importlib.util.module_from_spec(module_spec)
+        module_spec.loader.exec_module(module)
+        tools.append({"plugin": spec, "module": module})
+    return tools

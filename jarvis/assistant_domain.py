@@ -8,6 +8,7 @@ import operator as _operator
 import os
 import platform
 import re
+from .plugins import task_spec_for_missing_capability
 from .untrusted import wrap_untrusted
 import secrets
 import socket
@@ -841,6 +842,27 @@ def try_skill(
                 "reply": ("Understood. Added to the agent backlog "
                           f"({task['id'][:8]}): {task_text[:140]}."),
                 "data": {"route": "agent_task", "task": task},
+            }
+
+    # ── "Werkzeug fehlt" -> Bau-Aufgabe (5.1) ─────────────────────────────────
+    build_patterns = (
+        r"^(?:jarvis[,!\s]+)?baue\s+(?:mir\s+)?(?P<task>.+)$",
+        r"^(?:jarvis[,!\s]+)?neue\s+f(?:ae|ä)higkeit[:\s]+(?P<task>.+)$",
+        r"^(?:jarvis[,!\s]+)?plugin\s+fuer[:\s]+(?P<task>.+)$",
+    )
+    for pattern in build_patterns:
+        match = re.match(pattern, text.strip(), re.IGNORECASE)
+        if match and autonomy_task_store is not None:
+            spec = task_spec_for_missing_capability(match.group("task").strip())
+            try:
+                task = autonomy_task_store.create_task(origin_session_id=session_id, **spec)
+            except ValueError as exc:
+                return {"reply": f"I could not add that build task: {exc}",
+                        "data": {"route": "build_task", "error": True}}
+            return {
+                "reply": ("Understood. Ich kann das noch nicht -- ich lege eine "
+                          f"Bau-Aufgabe an ({task['id'][:8]})."),
+                "data": {"route": "build_task", "task": task},
             }
 
     # ── Morning / status briefing ─────────────────────────────────────────────
