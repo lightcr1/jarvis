@@ -81,3 +81,50 @@ def test_chat_assigns_task_english(tmp_path):
 
 def test_chat_task_without_store_falls_through():
     assert try_skill("agent task: fix the failing tests", **_kwargs()) is None
+
+
+class _TaskSvc:
+    def list_tasks(self, **kwargs):
+        return {"tasks": [{"title": "Water plants", "status": "open"},
+                          {"title": "Done thing", "status": "done"}]}
+
+
+class _CalSvc:
+    def list_events(self, **kwargs):
+        return {"events": [{"title": "Standup", "start": 1_700_000_000}]}
+
+
+class _MailSvc:
+    def list_messages(self, **kwargs):
+        return {"messages": [{"id": "a"}, {"id": "b"}]}
+
+
+def test_briefing_includes_tasks_events_and_unread_mail():
+    result = try_skill("briefing", **_kwargs(user_id="u", task_service=_TaskSvc(),
+                                              calendar_service=_CalSvc(), email_service=_MailSvc()))
+    assert "1 open task(s): Water plants" in result["reply"]
+    assert "next: Standup at" in result["reply"]
+    assert "2 unread email(s)" in result["reply"]
+    assert result["data"]["open_tasks"] == 1
+    assert result["data"]["events_today"] == 1
+    assert result["data"]["unread_emails"] == 2
+
+
+def test_briefing_survives_broken_task_calendar_email():
+    class _Broken:
+        def __getattr__(self, name):
+            def _boom(*args, **kwargs):
+                raise RuntimeError("down")
+            return _boom
+
+    result = try_skill("briefing", **_kwargs(user_id="u", task_service=_Broken(),
+                                              calendar_service=_Broken(), email_service=_Broken()))
+    assert result is not None and result["data"]["route"] == "briefing"
+    assert result["data"]["open_tasks"] is None
+    assert result["data"]["events_today"] is None
+    assert result["data"]["unread_emails"] is None
+
+
+def test_briefing_omits_services_without_user():
+    result = try_skill("briefing", **_kwargs(task_service=_TaskSvc()))
+    assert "open_tasks" not in result["data"]
