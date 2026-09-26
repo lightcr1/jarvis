@@ -26,8 +26,8 @@ JARVIS_AGENT_REQUEST_TOKEN="$(grep -E '^JARVIS_AGENT_REQUEST_TOKEN=' /home/media
   docker compose -f deploy/sandbox/compose.yml up -d --build
 ```
 
-Danach: `curl -s localhost:8120/health` (nur intern; der Dienst veröffentlicht
-**keinen** Host-Port — erreichbar nur aus dem Agenten-Netz).
+Danach ist der Dienst unter `jarvis-executor:8120` aus dem Agenten-Netz
+(`agent-isolated`) erreichbar; er veröffentlicht **keinen** Host-Port.
 
 ## Endpunkte (Agent-Token: `X-Jarvis-Agent-Request-Token`)
 
