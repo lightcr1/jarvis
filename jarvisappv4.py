@@ -150,6 +150,7 @@ from jarvis.api_autonomy import build_autonomy_router
 from jarvis.api_autonomy_tasks import build_autonomy_tasks_router
 from jarvis.api_agent_grants import build_agent_grants_router
 from jarvis.agent_grants import AgentGrantStore
+from jarvis.executor_client import ExecutorClient
 from jarvis.autonomy_store import AutonomyStore
 from jarvis.autonomy_task_store import AutonomyTaskStore
 from jarvis.patch_review_store import PatchReviewStore
@@ -231,6 +232,7 @@ credit_store = CreditStore()
 user_limits_store = UserLimitsStore()
 plan_store = PlanStore()
 memory_store = MemoryStore()
+executor_client = ExecutorClient.from_env()
 pending_signup_store = PendingSignupStore()
 status_hub = JarvisStatusHub()
 home_assistant_store = HomeAssistantStore()
