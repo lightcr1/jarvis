@@ -62,6 +62,12 @@ services:
       JARVIS_AGENT_REQUEST_TOKEN: ${JARVIS_AGENT_REQUEST_TOKEN:?JARVIS_AGENT_REQUEST_TOKEN must be set}
       JARVIS_HOST_CPUS: ${JARVIS_HOST_CPUS:-4}
       JARVIS_HOST_MEMORY_MB: ${JARVIS_HOST_MEMORY_MB:-16384}
+      # Not-Aus (T0/T1/T2/T3 -> deny) und Aufraeum-Intervall:
+      JARVIS_EMERGENCY_STOP: ${JARVIS_EMERGENCY_STOP:-0}
+      JARVIS_EXECUTOR_REAP_SECONDS: ${JARVIS_EXECUTOR_REAP_SECONDS:-120}
+      JARVIS_EXECUTOR_AUDIT_LOG: /var/lib/jarvis/executor-audit.log
+    volumes:
+      - executor-audit:/var/lib/jarvis
     networks:
       - executor-internal
       - sandbox
@@ -77,6 +83,9 @@ services:
     mem_limit: 256m
     cpus: 0.5
     pids_limit: 256
+
+volumes:
+  executor-audit:
 
 networks:
   executor-internal:

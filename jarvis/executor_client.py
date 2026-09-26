@@ -80,3 +80,6 @@ class ExecutorClient:
 
     def run(self, name: str, command: str) -> dict:
         return self._call("POST", f"/sandboxes/{name}/exec", {"command": command})
+
+    def reap(self) -> list[str]:
+        return list(self._call("POST", "/sandboxes/reap").get("reaped") or [])

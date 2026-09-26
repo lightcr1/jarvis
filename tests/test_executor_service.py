@@ -34,11 +34,11 @@ class FakeRuntime:
         return {"exit_code": 0, "output": "ok"}
 
 
-def _client(monkeypatch, *, enabled=True, token="tok"):
+def _client(monkeypatch, *, enabled=True, token="tok", executor=None):
     monkeypatch.setenv("JARVIS_EXECUTOR_ENABLED", "1" if enabled else "0")
     monkeypatch.setenv("JARVIS_AGENT_REQUEST_TOKEN", token)
-    module.set_executor(Executor(FakeRuntime(), zones=load_zones(),
-                                 host_cpus=4, host_memory_mb=16384))
+    module.set_executor(executor or Executor(FakeRuntime(), zones=load_zones(),
+                                             host_cpus=4, host_memory_mb=16384))
     return TestClient(module.app)
 
 
@@ -57,7 +57,7 @@ def test_disabled_executor_returns_503(monkeypatch):
 def test_health_reports_enabled(monkeypatch):
     client = _client(monkeypatch)
     body = client.get("/health").json()
-    assert body == {"status": "ok", "service": "executor", "enabled": True}
+    assert body["status"] == "ok" and body["service"] == "executor" and body["enabled"] is True
 
 
 def test_create_list_and_destroy(monkeypatch):
@@ -83,3 +83,33 @@ def test_exec_and_critical_block(monkeypatch):
                        json={"command": "echo hi"}).json()["output"] == "ok"
     assert client.post("/sandboxes/searxng/exec", headers=HEADERS,
                        json={"command": "rm -rf /"}).status_code == 409
+
+
+def test_reap_endpoint(monkeypatch):
+    class Reaping(FakeRuntime):
+        def list_sandboxes(self, prefix):
+            return [{"name": "jarvis-sandbox-old", "labels": {"jarvis.expires_at": "1"}}]
+        def destroy_sandbox(self, name):
+            self.destroyed.append(name)
+    ex = Executor(Reaping(), zones=load_zones(), host_cpus=4, host_memory_mb=16384, clock=lambda: 1000)
+    client = _client(monkeypatch, executor=ex)
+    resp = client.post("/sandboxes/reap", headers=HEADERS)
+    assert resp.status_code == 200 and resp.json()["reaped"] == ["jarvis-sandbox-old"]
+
+
+def test_audit_log_is_written(monkeypatch, tmp_path):
+    log = tmp_path / "executor-audit.log"
+    monkeypatch.setenv("JARVIS_EXECUTOR_AUDIT_LOG", str(log))
+    ex = Executor(FakeRuntime(), zones=load_zones(), host_cpus=4, host_memory_mb=16384,
+                  audit=module._audit)
+    client = _client(monkeypatch, executor=ex)
+    client.post("/sandboxes", headers=HEADERS, json={"image": "alpine:latest"})
+    assert "sandbox.create" in log.read_text(encoding="utf-8")
+
+
+def test_emergency_stop_blocks_create(monkeypatch):
+    ex = Executor(FakeRuntime(), zones=load_zones(), host_cpus=4, host_memory_mb=16384,
+                  emergency_stop=lambda: True)
+    client = _client(monkeypatch, executor=ex)
+    resp = client.post("/sandboxes", headers=HEADERS, json={"image": "alpine:latest"})
+    assert resp.status_code == 409
