@@ -105,6 +105,8 @@ services:
     networks:
       - agent-isolated
       - runpod-internal
+      # Egress fuer die Sandbox: Proxy ist dual-homed ins interne Sandbox-Netz.
+      - jarvis-sandbox
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -123,3 +125,7 @@ networks:
   runpod-internal:
     external: true
     name: ${RUNPOD_NETWORK_NAME:-runpod_default}
+  # Vom deploy/sandbox-Stack erstellt (internal). Erst Sandbox-Stack starten.
+  jarvis-sandbox:
+    external: true
+    name: jarvis-sandbox

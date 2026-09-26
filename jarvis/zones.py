@@ -65,6 +65,29 @@ def sandbox_network(zones: dict | None = None) -> str:
     return str(zone("sandbox", zones).get("network") or "jarvis-sandbox")
 
 
+def sandbox_allow_lan(zones: dict | None = None) -> bool:
+    return bool(zone("sandbox", zones).get("allow_lan", False))
+
+
+def sandbox_egress(zones: dict | None = None) -> str:
+    return str(zone("sandbox", zones).get("egress") or "")
+
+
+def sandbox_egress_proxy(zones: dict | None = None) -> str:
+    return str(zone("sandbox", zones).get("egress_proxy") or "")
+
+
+def sandbox_env(zones: dict | None = None) -> dict:
+    """Env fuer Sandbox-Container: Egress nur ueber den Allowlist-Proxy."""
+    if sandbox_egress(zones) != "allowlist-proxy":
+        return {}
+    proxy = sandbox_egress_proxy(zones)
+    if not proxy:
+        return {}
+    return {"HTTP_PROXY": proxy, "HTTPS_PROXY": proxy, "http_proxy": proxy,
+            "https_proxy": proxy, "NO_PROXY": "localhost,127.0.0.1,::1"}
+
+
 def allowed_images(zones: dict | None = None) -> frozenset[str]:
     return frozenset(str(i) for i in (zone("sandbox", zones).get("allowed_images") or []))
 

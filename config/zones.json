@@ -2,7 +2,15 @@
   "_comment": "Zonen + Grenzen fuer Jarvis-Aktionen. Vom Besitzer gepflegt; der Agent kann sie nicht aendern. 'backend' ist docker|proxmox|k8s -- lokal ist es docker, spaeter kann dieselbe Policy auf echten VMs/K8s laufen.",
   "critical_services": [
     "runpod-controller",
-    "searxng"
+    "searxng",
+    "jarvis-app",
+    "jarvis-openhands",
+    "jarvis-executor",
+    "jarvis-docker-socket-proxy",
+    "openhands-allowlist-proxy-1",
+    "openhands-inference-gateway-1",
+    "allowlist-proxy",
+    "inference-gateway"
   ],
   "host_reserve": {
     "cpus": 1,
@@ -12,7 +20,7 @@
     "sandbox": {
       "backend": "docker",
       "network": "jarvis-sandbox",
-      "allow_lan": true,
+      "allow_lan": false,
       "egress": "allowlist-proxy",
       "container_prefix": "jarvis-sandbox-",
       "resources": {
@@ -33,7 +41,8 @@
         "python:3.12-slim",
         "alpine:latest"
       ],
-      "pids_limit": 512
+      "pids_limit": 512,
+      "egress_proxy": "http://allowlist-proxy:3128"
     },
     "managed": {
       "backend": "docker",
