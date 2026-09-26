@@ -9,6 +9,7 @@ export type JarvisLiveStatus = {
   active: number;
   counts: Record<string, number>;
   lastEvent: JarvisStatusEvent | null;
+  connected: boolean;
 };
 
 const DEFAULT_STATUS: JarvisLiveStatus = {
@@ -18,6 +19,7 @@ const DEFAULT_STATUS: JarvisLiveStatus = {
   active: 0,
   counts: {},
   lastEvent: null,
+  connected: false,
 };
 
 function wsUrl(path: string) {
@@ -35,6 +37,7 @@ export function useJarvisLiveStatus() {
 
     const connect = () => {
       socket = new WebSocket(wsUrl("/ws/status"));
+      socket.onopen = () => setStatus((prev) => ({ ...prev, connected: true }));
       socket.onmessage = (event) => {
         try {
           const payload = JSON.parse(event.data) as JarvisLiveStatus & { last_event?: JarvisStatusEvent | null };
@@ -45,12 +48,14 @@ export function useJarvisLiveStatus() {
             active: Number(payload.active || 0),
             counts: payload.counts || {},
             lastEvent: payload.last_event || null,
+            connected: true,
           });
         } catch {
           // ignore malformed payloads
         }
       };
       socket.onclose = () => {
+        setStatus((prev) => ({ ...prev, connected: false }));
         if (closed) return;
         retryTimer = window.setTimeout(connect, 1500);
       };
