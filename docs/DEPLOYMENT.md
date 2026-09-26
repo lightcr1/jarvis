@@ -149,6 +149,19 @@ Cron-Eintrag (Beispiel):
 Sofort testen: `bash scripts/agent/self_deploy_loop.sh --force` (bzw. `--dry-run`
 im Deploy-Skript).
 
+## Verfügbarkeit: Pod-Start (T3) und kleines Modell
+
+Ist der Pod aus, kann Jarvis ihn **nach Freigabe** starten (Punkt 2a):
+
+- Capability `pod.start` ist **T3** → Jarvis legt eine Freigabe-Anfrage an (Push).
+- Bei Zustimmung startet `jarvis/pod_control.py` über `POST /api/pod/start`;
+  **vorher** wird das Monatsbudget geprüft (`JARVIS_POD_MONTHLY_BUDGET_CHF`, ohne
+  Budget kein Start). Bei T3 mit aktivem TOTP ist ein Code nötig.
+- Env: `JARVIS_CONTROLLER_URL`, `CONTROL_TOKEN`, `CONTROLLER_CA_FILE`.
+
+Empfehlung Punkt 2b: kleines lokales Modell für Chat/Klassifikation/Freigabe
+über `LOCAL_LLM_BASE_URL` (assistant-Modus), großes Modell nur für Bau-Aufgaben.
+
 ## Zentraler Not-Aus
 
 Ein Schalter gilt überall (App, Executor, Autonomy-Loop):

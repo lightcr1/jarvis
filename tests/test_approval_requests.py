@@ -15,7 +15,7 @@ class _Broadcaster:
         self.calls.append((user_id, payload))
 
 
-def _client(tmp_path, broadcaster=None, totp_store=None):
+def _client(tmp_path, broadcaster=None, totp_store=None, pod_control=None):
     store = AgentGrantStore(tmp_path / "grants.sqlite3", clock=lambda: 1000)
     deps = {
         "agent_grant_store": store,
@@ -30,6 +30,8 @@ def _client(tmp_path, broadcaster=None, totp_store=None):
         deps["alert_broadcaster"] = broadcaster
     if totp_store is not None:
         deps["totp_store"] = totp_store
+    if pod_control is not None:
+        deps["pod_control"] = pod_control
     app = FastAPI(); app.include_router(build_agent_grants_router(deps))
     return store, TestClient(app)
 
@@ -106,3 +108,35 @@ def test_t3_approval_requires_totp_when_enabled(tmp_path):
     ok = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER,
                      json={"approve": True, "totp": totp.totp(secret)})
     assert ok.status_code == 200 and ok.json()["request"]["status"] == "approved"
+
+
+class _FakePod:
+    def __init__(self):
+        self.starts = []
+    def start(self, profile="default"):
+        self.starts.append(profile)
+        return {"status": "starting"}
+
+
+def test_pod_start_approval_starts_within_budget(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_POD_MONTHLY_BUDGET_CHF", "20")
+    pod = _FakePod()
+    _store, client = _client(tmp_path, pod_control=pod)
+    created = client.post("/agent/approval-requests", headers=AGENT,
+                          json={"capability": "pod.start",
+                                "params": {"estimated_chf": 2, "spent_chf": 5, "profile": "default"}})
+    req_id = created.json()["request"]["id"]
+    ok = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER, json={"approve": True})
+    assert ok.status_code == 200 and pod.starts == ["default"]
+
+
+def test_pod_start_budget_exceeded_blocks(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_POD_MONTHLY_BUDGET_CHF", "5")
+    pod = _FakePod()
+    _store, client = _client(tmp_path, pod_control=pod)
+    created = client.post("/agent/approval-requests", headers=AGENT,
+                          json={"capability": "pod.start",
+                                "params": {"estimated_chf": 4, "spent_chf": 4, "profile": "default"}})
+    req_id = created.json()["request"]["id"]
+    resp = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER, json={"approve": True})
+    assert resp.status_code == 409 and pod.starts == []

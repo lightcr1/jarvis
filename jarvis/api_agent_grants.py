@@ -1,6 +1,8 @@
 """Owner approval inbox; agent can request/check only, never grant rights."""
 from __future__ import annotations
 
+import json
+
 import hmac
 from typing import Callable
 
@@ -609,14 +611,35 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
             if (existing and existing.get("tier") == "T3" and totp_store is not None
                     and totp_store.enabled(actor) and not totp_store.verify(actor, body.totp or "")):
                 raise HTTPException(403, "totp_required")
+            # pod.start: Budget VOR der Entscheidung pruefen (sonst kein Start).
+            if existing and existing.get("capability") == "pod.start" and body.approve:
+                from .pod_control import within_budget
+                try:
+                    params = json.loads(existing.get("params") or "{}")
+                except (ValueError, TypeError):
+                    params = {}
+                if not within_budget(params.get("estimated_chf"), params.get("spent_chf")):
+                    raise HTTPException(409, "pod budget exceeded")
             item = current("agent_grant_store").decide_approval(
                 request_id, actor=actor, approve=body.approve, channel="admin",
                 always=body.always, grant_store=current("agent_grant_store"))
             if item is None:
                 raise HTTPException(409, "request missing, expired, or already decided")
+            started = None
+            pod_control = optional("pod_control")
+            if body.approve and item.get("capability") == "pod.start" and pod_control is not None:
+                try:
+                    params = json.loads(item.get("params") or "{}")
+                except (ValueError, TypeError):
+                    params = {}
+                try:
+                    started = pod_control.start(str(params.get("profile") or "default"))
+                except Exception as exc:  # noqa: BLE001 - Entscheidung bleibt bestehen
+                    audit("agent.pod.start_failed", actor, {"request_id": request_id, "error": str(exc)})
+                    started = {"error": str(exc)}
             audit("agent.approval.decided", actor,
                   {"request_id": request_id, "approved": body.approve, "always": body.always})
-            return {"request": item}
+            return {"request": item, "pod_start": started}
 
         @router.get("/admin/standing-grants")
         def list_standing_grants(x_jarvis_session: str | None = Header(default=None)):
