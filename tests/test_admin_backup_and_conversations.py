@@ -73,6 +73,12 @@ class AdminBackupRestoreTests(unittest.TestCase):
             res = self.client.post("/admin/login", json={"username": "admin", "password": "admin123", "totp": _totp.totp(secret)})
             self.assertEqual(200, res.status_code)
 
+    def test_secret_key_status_reports_env_source(self):
+        status = self.client.get("/admin/secret-key", headers=self.admin_headers).json()
+        self.assertTrue(status["configured"])
+        self.assertEqual("env", status["source"])
+        self.assertNotIn("secret", status)
+
     def test_backup_restore_version_99_returns_400(self):
         res = self.client.post(
             "/admin/backup/restore",
