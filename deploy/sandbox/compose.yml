@@ -12,8 +12,8 @@ name: jarvis-sandbox
 
 services:
   docker-socket-proxy:
-    # TODO: auf einen Digest pinnen (reproduzierbar), sobald lokal verfuegbar.
-    image: ${JARVIS_SOCKET_PROXY_IMAGE:-tecnativa/docker-socket-proxy:0.2.0}
+    # Digest-gepinnt (reproduzierbar); Override via JARVIS_SOCKET_PROXY_IMAGE.
+    image: ${JARVIS_SOCKET_PROXY_IMAGE:-tecnativa/docker-socket-proxy@sha256:083bd0ed8783e366d745f332f0e4489816dd35d984bef8f16e6d89484a22c082}
     container_name: jarvis-docker-socket-proxy
     restart: unless-stopped
     environment:
