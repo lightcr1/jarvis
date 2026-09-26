@@ -31,7 +31,7 @@ class SandboxRuntime(Protocol):
 class Executor:
     def __init__(self, runtime: SandboxRuntime, *, zones: dict | None = None,
                  host_cpus: float = 4.0, host_memory_mb: float = 16384.0,
-                 clock=None, emergency_stop=None, audit=None):
+                 clock=None, emergency_stop=None, audit=None, grant_store=None):
         import time as _time
         self.runtime = runtime
         self.zones = zones if zones is not None else load_zones()
@@ -40,6 +40,7 @@ class Executor:
         self.clock = clock or _time.time
         self.emergency_stop = emergency_stop
         self.audit = audit
+        self.grant_store = grant_store
 
     # ---- Sandbox --------------------------------------------------------
     def list_sandboxes(self) -> list[dict]:
@@ -128,8 +129,20 @@ class Executor:
         ok, info = authorize_service(service, self.zones)
         if not ok:
             raise SandboxError(info)
-        return authorize_action(capability, target=service, params=params,
-                                standing_grant=standing_grant)
+        grant = standing_grant
+        if grant is None and self.grant_store is not None:
+            try:
+                grant = self.grant_store.match_standing_grant(capability, service)
+            except Exception:  # noqa: BLE001
+                grant = None
+        decision = authorize_action(capability, target=service, params=params, standing_grant=grant)
+        if grant is not None and decision.decision == "allow" and decision.tier == "T2" \
+                and self.grant_store is not None:
+            try:
+                self.grant_store.consume_standing_grant(grant["id"])
+            except Exception:  # noqa: BLE001
+                pass
+        return decision
 
     # ---- intern ---------------------------------------------------------
     def _assert_sandbox(self, name: str) -> None:
@@ -149,10 +162,21 @@ class Executor:
 
     def _allow(self, capability: str, *, target: str = "", params: dict | None = None,
                standing_grant: dict | None = None) -> None:
+        grant = standing_grant
+        if grant is None and self.grant_store is not None:
+            try:
+                grant = self.grant_store.match_standing_grant(capability, target)
+            except Exception:  # noqa: BLE001
+                grant = None
         decision = authorize_action(capability, target=target, params=params,
-                                    standing_grant=standing_grant,
+                                    standing_grant=grant,
                                     emergency_stop=self.emergency_stop_active())
         if decision.decision == "deny":
             raise SandboxError(f"verweigert: {decision.reason}")
         if decision.decision == "ask":
             raise SandboxError(f"Freigabe erforderlich: {decision.reason}")
+        if grant is not None and decision.tier == "T2" and self.grant_store is not None:
+            try:
+                self.grant_store.consume_standing_grant(grant["id"])
+            except Exception:  # noqa: BLE001
+                pass
