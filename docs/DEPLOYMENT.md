@@ -113,8 +113,10 @@ aber `jarvis.deploy` ist **T2** (nie ohne Freigabe).
 ### Containerisierter Self-Deploy (empfohlen für diese Maschine)
 
 `scripts/update.sh` zielt auf die **systemd-Installation** `/opt/jarvis`. Für die
-aktive Container-App `jarvis-app` diese Skripte nutzen — sie merken sich das
-vorherige Image und stellen es beim Rollback wieder her:
+aktive Container-App `jarvis-app` diese Skripte **auf dem Host** nutzen — der
+App-Container hat **keinen** Docker-Zugriff, daher laufen sie host-seitig (wie
+der Autonomy-/Rollout-Loop per Cron). Die Skripte merken sich das vorherige
+Image und stellen es beim Rollback wieder her:
 
 ```bash
 export JARVIS_DEPLOY_COMMAND="bash scripts/agent/self_deploy.sh"
