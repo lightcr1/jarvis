@@ -13,7 +13,7 @@ services:
       HTTP_PROXY: ${PROXY_URL:-http://allowlist-proxy:3128}
       HTTPS_PROXY: ${PROXY_URL:-http://allowlist-proxy:3128}
       # Interne Dienste und lokale Pfade niemals ueber den Proxy.
-      NO_PROXY: ${NO_PROXY:-inference-gateway,canvas-edge,controller,openhands,127.0.0.1,localhost,::1}
+      NO_PROXY: ${NO_PROXY:-inference-gateway,canvas-edge,controller,openhands,jarvis-executor,socket-proxy,127.0.0.1,localhost,::1}
     volumes:
       - type: bind
         source: ${OPENHANDS_STATE_DIR:?Set OPENHANDS_STATE_DIR}
