@@ -66,8 +66,11 @@ services:
       JARVIS_EMERGENCY_STOP: ${JARVIS_EMERGENCY_STOP:-0}
       JARVIS_EXECUTOR_REAP_SECONDS: ${JARVIS_EXECUTOR_REAP_SECONDS:-120}
       JARVIS_EXECUTOR_AUDIT_LOG: /var/lib/jarvis/executor-audit.log
+      # Zentraler Not-Aus: dieselbe Datei wie in der App.
+      JARVIS_EMERGENCY_STOP_FILE: /var/lib/jarvis/emergency/stop
     volumes:
       - executor-audit:/var/lib/jarvis
+      - jarvis-emergency:/var/lib/jarvis/emergency
     networks:
       - executor-internal
       - sandbox
@@ -86,6 +89,10 @@ services:
 
 volumes:
   executor-audit:
+  # Von der App definiert (name: jarvis-emergency); hier nur referenziert.
+  jarvis-emergency:
+    external: true
+    name: jarvis-emergency
 
 networks:
   executor-internal:
