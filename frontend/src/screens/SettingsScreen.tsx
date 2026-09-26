@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, IconSettings, IconMic, IconChat, IconMemory, IconGrid, IconShield, IconCode, IconActivity, IconCheck, IconVolume, IconKey, IconBell, IconBook, Toggle, Row, Sel } from './jarvis-shared';
 import { getStoredPreferences, setStoredPreferences, getSessionToken, getStoredUser, getStoredCapabilities, isGuestMode, apiRequest, type UserPreferences } from '../shared/api/client';
 import { synthesizeSpeech } from '../shared/api/chat';
-import { listNotes, createNote, deleteNote, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias } from '../shared/api/memory';
+import { listNotes, createNote, deleteNote, setNoteClass, listAliases, createAlias, deleteAlias, clearAllMemory, type MemoryNote, type MemoryAlias, type DataClass } from '../shared/api/memory';
 import {
   fetchMyBilling, fetchMyByokKeys, setByokKey, deleteByokKey, createCheckoutSession,
   fetchStripeStatus, setStripeCredentials, clearStripeCredentials, testStripeConnection,
@@ -65,6 +65,7 @@ function MemoryPanel() {
   const [aliases, setAliases] = useState<MemoryAlias[]>([]);
   const [loading, setLoading] = useState(true);
   const [noteText, setNoteText] = useState('');
+  const [newNoteClass, setNewNoteClass] = useState<DataClass>('personal');
   const [aliasKey, setAliasKey] = useState('');
   const [aliasVal, setAliasVal] = useState('');
   const [addingNote, setAddingNote] = useState(false);
@@ -90,13 +91,22 @@ function MemoryPanel() {
     if (!text) return;
     setAddingNote(true);
     try {
-      const note = await createNote(text);
+      const note = await createNote(text, newNoteClass);
       setNotes(prev => [...prev, note]);
       setNoteText('');
     } catch {
       setError('Failed to save note.');
     } finally {
       setAddingNote(false);
+    }
+  };
+
+  const handleSetClass = async (id: string, dataClass: DataClass) => {
+    try {
+      const updated = await setNoteClass(id, dataClass);
+      setNotes(prev => prev.map(n => (n.id === id ? updated : n)));
+    } catch {
+      setError('Failed to update note privacy.');
     }
   };
 
@@ -207,6 +217,13 @@ function MemoryPanel() {
             {notes.map(n => (
               <div key={n.id} style={{ display: 'flex', alignItems: 'flex-start', gap: 8, background: J.bg3, borderRadius: 7, padding: '7px 10px', border: `1px solid ${J.border}` }}>
                 <span style={{ fontSize: 12, color: J.textSec, flex: 1, lineHeight: 1.5 }}>{n.text}</span>
+                <select value={n.data_class} onChange={e => void handleSetClass(n.id, e.target.value as DataClass)}
+                  title="Who may see this: public = cloud allowed, personal = only with your consent, sensitive = never cloud"
+                  style={{ background: J.bg2, color: J.textSec, border: `1px solid ${J.border}`, borderRadius: 6, fontSize: 11, padding: '3px 4px', flexShrink: 0 }}>
+                  <option value="public">public</option>
+                  <option value="personal">personal</option>
+                  <option value="sensitive">sensitive</option>
+                </select>
                 <button onClick={() => void handleDeleteNote(n.id)}
                   style={{ background: 'none', border: 'none', cursor: 'pointer', color: J.textMuted, fontSize: 14, lineHeight: 1, padding: '0 2px', flexShrink: 0 }}
                   onMouseEnter={e => { e.currentTarget.style.color = J.error; }}
@@ -222,6 +239,13 @@ function MemoryPanel() {
             placeholder="Add a note…"
             onKeyDown={e => { if (e.key === 'Enter') void handleAddNote(); }}
             style={{ flex: 1, borderRadius: 7, padding: '8px 11px', fontSize: 13 }} />
+          <select value={newNoteClass} onChange={e => setNewNoteClass(e.target.value as DataClass)}
+            title="Privacy of the new note"
+            style={{ background: J.bg2, color: J.textSec, border: `1px solid ${J.border}`, borderRadius: 7, fontSize: 12, padding: '0 6px' }}>
+            <option value="public">public</option>
+            <option value="personal">personal</option>
+            <option value="sensitive">sensitive</option>
+          </select>
           <button onClick={() => void handleAddNote()} disabled={addingNote || !noteText.trim()}
             style={{ background: J.amber, color: J.bg0, border: 'none', borderRadius: 7, padding: '8px 16px', fontSize: 13, fontWeight: 600, cursor: addingNote || !noteText.trim() ? 'not-allowed' : 'pointer', opacity: addingNote || !noteText.trim() ? 0.6 : 1, flexShrink: 0 }}>
             {addingNote ? '…' : 'Add'}

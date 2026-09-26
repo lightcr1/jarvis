@@ -7,6 +7,8 @@ import time
 import uuid
 from pathlib import Path
 
+from .data_classes import normalize
+
 
 def _default_memory_path() -> Path:
     configured = os.getenv("JARVIS_MEMORY_PATH")
@@ -59,17 +61,32 @@ class MemoryStore:
 
     def get_notes(self, user_id: str) -> list[dict]:
         with self._lock:
-            return list(self._user(user_id).get("notes") or [])
+            notes = []
+            for note in self._user(user_id).get("notes") or []:
+                item = dict(note)
+                item["data_class"] = normalize(item.get("data_class"))
+                notes.append(item)
+            return notes
 
-    def add_note(self, user_id: str, text: str) -> dict:
+    def add_note(self, user_id: str, text: str, data_class: str | None = None) -> dict:
         text = (text or "").strip()
         if not text:
             raise ValueError("note text cannot be empty")
-        note = {"id": uuid.uuid4().hex, "text": text, "created_at": int(time.time())}
+        note = {"id": uuid.uuid4().hex, "text": text, "created_at": int(time.time()),
+                "data_class": normalize(data_class)}
         with self._lock:
             self._user(user_id).setdefault("notes", []).append(note)
             self._save()
         return note
+
+    def set_note_class(self, user_id: str, note_id: str, data_class: str) -> dict | None:
+        with self._lock:
+            for note in self._user(user_id).get("notes") or []:
+                if note.get("id") == note_id:
+                    note["data_class"] = normalize(data_class)
+                    self._save()
+                    return dict(note)
+        return None
 
     def delete_note(self, user_id: str, note_id: str) -> bool:
         with self._lock:

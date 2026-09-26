@@ -100,7 +100,7 @@ class ChatMemoryContextTests(unittest.TestCase):
         headers = {"X-Jarvis-Session": session_token}
         user_id = self.client.get("/auth/me", headers=headers).json()["user"]["id"]
 
-        jarvisappv4.memory_store.add_note(user_id, "prefers dry, concise answers")
+        jarvisappv4.memory_store.add_note(user_id, "prefers dry, concise answers", "public")
 
         responses = [ChatResult(text="Understood, sir.", input_tokens=10, output_tokens=5, model="gpt-4o-mini", provider="openai")]
         patcher, fake = self._patched_provider(responses)
@@ -110,6 +110,36 @@ class ChatMemoryContextTests(unittest.TestCase):
         self.assertEqual(200, res.status_code)
         self.assertEqual(1, len(fake.calls))
         self.assertIn("prefers dry, concise answers", fake.calls[0]["system_prompt"])
+
+    def test_personal_note_is_not_sent_to_a_cloud_model(self):
+        session_token = self._create_user_with_permissions("memprivuser", ["assistant.chat"])
+        headers = {"X-Jarvis-Session": session_token}
+        user_id = self.client.get("/auth/me", headers=headers).json()["user"]["id"]
+
+        jarvisappv4.memory_store.add_note(user_id, "my passport number is X123", "personal")
+
+        responses = [ChatResult(text="Understood, sir.", input_tokens=10, output_tokens=5, model="gpt-4o-mini", provider="openai")]
+        patcher, fake = self._patched_provider(responses)
+        with patcher:
+            res = self.client.post("/chat", headers=headers, json={"text": "Tell me something interesting about space"})
+
+        self.assertEqual(200, res.status_code)
+        self.assertNotIn("passport number", fake.calls[0]["system_prompt"])
+
+    def test_personal_note_sent_with_explicit_consent(self):
+        session_token = self._create_user_with_permissions("memconsentuser", ["assistant.chat"])
+        headers = {"X-Jarvis-Session": session_token, "X-Jarvis-Data-Consent": "personal"}
+        user_id = self.client.get("/auth/me", headers=headers).json()["user"]["id"]
+
+        jarvisappv4.memory_store.add_note(user_id, "prefers window seats", "personal")
+
+        responses = [ChatResult(text="Understood, sir.", input_tokens=10, output_tokens=5, model="gpt-4o-mini", provider="openai")]
+        patcher, fake = self._patched_provider(responses)
+        with patcher:
+            res = self.client.post("/chat", headers=headers, json={"text": "Tell me something interesting about space"})
+
+        self.assertEqual(200, res.status_code)
+        self.assertIn("prefers window seats", fake.calls[0]["system_prompt"])
 
     def test_no_saved_notes_omits_notes_section(self):
         session_token = self._create_user_with_permissions("nonotesuser", ["assistant.chat"])

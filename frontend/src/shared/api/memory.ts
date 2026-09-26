@@ -1,9 +1,12 @@
 import { apiRequest } from "./client";
 
+export type DataClass = "public" | "personal" | "sensitive";
+
 export type MemoryNote = {
   id: string;
   text: string;
   created_at: number;
+  data_class: DataClass;
 };
 
 export type MemoryAlias = {
@@ -23,11 +26,19 @@ export async function listNotes(): Promise<MemoryNote[]> {
   return apiRequest<MemoryNote[]>("/memory/notes", { includeUser: true });
 }
 
-export async function createNote(text: string): Promise<MemoryNote> {
+export async function createNote(text: string, dataClass: DataClass = "personal"): Promise<MemoryNote> {
   return apiRequest<MemoryNote>("/memory/notes", {
     method: "POST",
     includeUser: true,
-    body: { text },
+    body: { text, data_class: dataClass },
+  });
+}
+
+export async function setNoteClass(id: string, dataClass: DataClass): Promise<MemoryNote> {
+  return apiRequest<MemoryNote>(`/memory/notes/${id}`, {
+    method: "PATCH",
+    includeUser: true,
+    body: { data_class: dataClass },
   });
 }
 

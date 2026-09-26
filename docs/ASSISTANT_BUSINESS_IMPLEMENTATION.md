@@ -21,7 +21,7 @@ Veröffentlichungen oder Produktionsdeployments aus diesem Plan ableiten.
 | 0.3 | Pod-Budget aus vertrauenswürdigen Laufzeit-/Profildaten | Implementiert (serverseitige Pod-Sitzungen + Profil-Stundensatz + geplante Dauer, Fail-Closed; Controller-Reconciliation); Owner-Review ausstehend |
 | 0.4 | Verschlüsseltes TOTP-Secret, atomarer Replay-Schutz | Implementiert (Fernet-verschlüsselt, dateibasierter Lock, monotone Zeitschritt-Sperre); Owner-Review ausstehend |
 | 1 | App, mobile Sprache/Push, gemeinsamer Verlauf, sichere Wiederverbindung | Teilweise: PWA + Tailscale-Runbook + sichtbare Verbindungsanzeige (`Live`/`Reconnecting`/`Offline`) ohne Aktionswiederholung umgesetzt; native iOS/Android-App und echte Geräteabnahme offen |
-| 2 | Bestätigtes Profil-Gedächtnis und Datenklassen | Offen |
+| 2 | Bestätigtes Profil-Gedächtnis und Datenklassen | Teilweise: Datenklassen `public`/`personal`/`sensitive` (2.4) an Gedächtnisnotizen + Cloud-Gating (nur `public`, `personal` mit `X-Jarvis-Data-Consent: personal`, `sensitive` nie) und Notiz-Klasse in API/UI änderbar; strukturiertes Profil-Feldmodell (2.1) folgt auf derselben Basis |
 | 3 | Briefing und Ruhe-Regeln | Offen |
 | 4 | E-Mail-Assistent und dienst-/toolgebundener Credential-Tresor | Offen |
 | 5 | Persönliche Wissensbasis | Offen |
