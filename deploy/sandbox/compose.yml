@@ -81,9 +81,12 @@ services:
 networks:
   executor-internal:
     internal: true
+  # Internes Netz: KEIN direkter Internet-/LAN-Zugang. Egress nur ueber den
+  # Allowlist-Proxy, der diesem Netz beitritt (siehe deploy/openhands/compose.yml).
   sandbox:
     name: jarvis-sandbox
     driver: bridge
+    internal: true
   # Der Agent (openhands-Stack) erreicht den Executor nur ueber dieses Netz.
   # Externes Netz des openhands-Projekts -> dort zuerst starten.
   agent-isolated:

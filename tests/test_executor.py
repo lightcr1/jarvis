@@ -41,6 +41,7 @@ def test_create_applies_isolation_and_limits():
     assert spec["no_new_privileges"] is True
     assert spec["cpus"] == 1.0 and spec["memory_mb"] == 2048 and spec["pids_limit"] == 512
     assert spec["network"] == "jarvis-sandbox" and spec["max_lifetime_minutes"] == 120
+    assert spec["env"]["HTTPS_PROXY"] == "http://allowlist-proxy:3128"
     assert spec["name"].startswith("jarvis-sandbox-")
     assert spec["labels"]["jarvis.zone"] == "sandbox"
 
@@ -79,5 +80,14 @@ def test_authorize_managed_blocks_critical_and_reports_tier():
     executor = _ex()
     with pytest.raises(SandboxError):
         executor.authorize_managed("searxng")
-    decision = executor.authorize_managed("jarvis-app", capability="service.restart")
+    decision = executor.authorize_managed("some-workload", capability="service.restart")
     assert decision.tier == "T2" and decision.decision in ("ask", "allow")
+
+
+def test_create_refuses_lan_enabled_zones():
+    from jarvis.executor import Executor, SandboxError
+    zones = load_zones()
+    zones["zones"]["sandbox"]["allow_lan"] = True
+    executor = Executor(FakeRuntime(), zones=zones, host_cpus=4, host_memory_mb=16384)
+    with pytest.raises(SandboxError):
+        executor.create(image="alpine:latest")
