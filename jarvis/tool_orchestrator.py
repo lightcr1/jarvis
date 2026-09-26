@@ -76,7 +76,7 @@ def run_chat_with_tools(
         # Tool-Ausgaben sind unvertraute Daten: ab jetzt T2-Aktionen eskalieren.
         if isinstance(ctx.deps, dict):
             ctx.deps["untrusted_context"] = True
-        if (tool_result.get("data") or {}).get("route") == "tool_confirmation_required":
+        if (tool_result.get("data") or {}).get("route") in {"tool_confirmation_required", "tool_approval_required"}:
             # Don't feed a confirmation prompt back into the LLM as a tool result —
             # surface it as the turn's final reply and let the confirm/deny round-trip
             # happen at the chat-turn level (see pending_tool_call in api_auth_chat.py).

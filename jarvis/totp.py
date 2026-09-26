@@ -37,15 +37,21 @@ def totp(secret: str, at: float | None = None, digits: int = 6, period: int = 30
 
 def verify(secret: str, code: str, at: float | None = None, window: int = 1,
            digits: int = 6, period: int = 30, algo=hashlib.sha1) -> bool:
+    return matching_counter(secret, code, at, window, digits, period, algo) is not None
+
+
+def matching_counter(secret: str, code: str, at: float | None = None, window: int = 1,
+                     digits: int = 6, period: int = 30, algo=hashlib.sha1) -> int | None:
+    """Return the matched time step so a store can atomically reject replay."""
     candidate = str(code or "").strip().replace(" ", "")
     if not candidate.isdigit() or len(candidate) != digits or not secret:
-        return False
+        return None
     moment = time.time() if at is None else at
     counter = int(moment // period)
-    for step in range(-window, window + 1):
-        if hmac.compare_digest(hotp(secret, counter + step, digits, algo), candidate):
-            return True
-    return False
+    for step in range(window, -window - 1, -1):
+        if counter + step >= 0 and hmac.compare_digest(hotp(secret, counter + step, digits, algo), candidate):
+            return counter + step
+    return None
 
 
 def provisioning_uri(secret: str, account: str, issuer: str = "Jarvis",

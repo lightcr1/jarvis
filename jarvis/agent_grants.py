@@ -361,6 +361,58 @@ class AgentGrantStore:
                  str(reason or "")[:1000], str(created_by or "agent"), now, now + int(duration_seconds)))
         return self.get_approval(identifier)
 
+    def claim_tool_approval(self, *, capability: str, tool: str, user_id: str, params: dict) -> dict:
+        """Deduplicate requests and atomically consume an exact admin-approved call.
+
+        A chat confirmation is never a decision. The admin API is responsible for
+        checking the second factor before setting channel='admin'. Failed tool
+        execution consumes the approval as well, so retries need new approval.
+        """
+        digest = digest_params(params)
+        creator = f"chat:{user_id}"
+        now = int(self.clock())
+        body = json.dumps(params, ensure_ascii=False, sort_keys=True)
+        if len(body) > 20000:
+            raise ValueError("approval parameters too large")
+        # Own connection with explicit control so the read-modify-write claim is a
+        # single serialized transaction; exactly one caller may consume it.
+        db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
+        db.row_factory = sqlite3.Row
+        try:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("""SELECT * FROM approval_requests
+                WHERE capability=? AND target=? AND created_by=? AND digest=?
+                  AND tier='T3' AND expires_at>?
+                  AND (status='pending' OR (status='approved' AND channel='admin'))
+                ORDER BY created_at, id LIMIT 1""",
+                (capability, tool, creator, digest, now)).fetchone()
+            if row is not None:
+                request = dict(row)
+                if digest_params(json.loads(request["params"])) != digest:
+                    raise ValueError("approval digest mismatch")
+                if request["status"] == "approved":
+                    db.execute("UPDATE approval_requests SET status='consumed' WHERE id=?", (request["id"],))
+                    request["status"] = "consumed"
+                db.execute("COMMIT")
+                return request
+            identifier = uuid.uuid4().hex
+            db.execute("""INSERT INTO approval_requests
+                (id,capability,target,params,digest,tier,reason,status,created_by,
+                 created_at,expires_at,always)
+                VALUES (?,?,?,?,?,'T3',?,'pending',?,?,?,0)""",
+                (identifier, capability, tool, body, digest,
+                 f"Chat tool {tool}: approve with TOTP, then resume in chat", creator, now, now + 900))
+            db.execute("COMMIT")
+        except BaseException:
+            try:
+                db.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+        finally:
+            db.close()
+        return self.get_approval(identifier)
+
     def get_approval(self, request_id: str) -> dict | None:
         with self._connect() as db:
             row = db.execute("SELECT * FROM approval_requests WHERE id=?", (request_id,)).fetchone()
@@ -407,8 +459,8 @@ class AgentGrantStore:
                               actor: str = "owner") -> dict:
         """Dauerhafte, widerrufbare Freigabe. Nur T1/T2 -- T3 nie per Freigabe."""
         capability = str(capability or "").strip()
-        if capability == "*":
-            raise ValueError("concrete capability required (no wildcard '*')")
+        if capability in ("*", "unclassified.action"):
+            raise ValueError("concrete capability required (no wildcard or unclassified action)")
         if not capability or len(capability) > 120 or not re.fullmatch(r"[A-Za-z0-9_.\-]+", capability):
             raise ValueError("valid capability required")
         target_pattern = str(target_pattern or "*").strip() or "*"
@@ -456,7 +508,7 @@ class AgentGrantStore:
                 ORDER BY created_at DESC, id DESC""", (now,)).fetchall()
         for row in rows:
             grant = dict(row)
-            if grant["capability"] == "*":   # Wildcard ist nicht zulaessig
+            if grant["capability"] in ("*", "unclassified.action"):  # Also ignore legacy grants
                 continue
             if grant["capability"] != capability:
                 continue
