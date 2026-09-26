@@ -51,8 +51,16 @@ Sicherheitsfreigabe für neue Handlungsrechte verstehen.
 
 - **`JARVIS_SECRET_KEY` muss gesetzt sein**, sonst schlägt die 2FA-Einrichtung
   bewusst fehl (503) und ein bereits aktivierter Faktor kann nicht deaktiviert
-  werden. Dies ist Fail-Closed: ohne Schlüssel wird 2FA nie stillschweigend
-  abgeschaltet.
+  werden. Dies ist Fail-Closed. Der Schlüssel ist ein Bootstrap-Geheimnis und
+  wird **nur** über `.env` gesetzt (`scripts/generate_master_key.sh` erzeugt den
+  Wert); die Admin-UI zeigt nur den Status und gibt den Schlüssel nie aus.
+  Dateien mit `secret` im Namen sind dem Agenten per Policy gesperrt, daher kein
+  automatisches Erzeugen/Schreiben durch den Agenten. Schlüssel gehört ins
+  Backup; ohne ihn sind verschlüsselte Daten verloren.
+- Pod-Budget: `JARVIS_POD_MONTHLY_BUDGET_CHF`, `JARVIS_POD_COST_PER_HOUR_CHF`
+  und `JARVIS_POD_PLANNED_HOURS` (Start wird sonst fail-closed verweigert).
+  Startwerte in `config/jarvis.env.example` (5 CHF/Monat, 0.60 CHF/h).
+- Backup umfasst jetzt Pod-Budget-DB und TOTP-Store.
 - T3-Freigaben sind jetzt an Capability, Nutzer, Parameter-Digest und einen
   Moment-Snapshot gebunden und werden nach einmaliger Nutzung verbraucht.
   Ein „Ja“ im Chat reicht nicht mehr.

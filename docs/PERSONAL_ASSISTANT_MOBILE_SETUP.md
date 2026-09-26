@@ -31,21 +31,18 @@ Tailscale baut ein privates, verschlüsseltes Netz zwischen deinen Geräten — 
 Jarvis-Server ist dann aus dem Mobilfunknetz erreichbar, ohne Ports im Router zu
 öffnen. Empfohlen, weil keine öffentliche Angriffsfläche entsteht.
 
-**Auf dem Jarvis-Server:**
+**Auf dem Jarvis-Server:** es gibt bereits ein Skript dafür.
 ```bash
-curl -fsSL https://tailscale.com/install.sh | sh
-sudo tailscale up
-tailscale status            # zeigt die 100.x.y.z-Adresse des Servers
+sudo bash scripts/setup_tailscale.sh
 ```
+Das installiert Tailscale, meldet den Server an und zeigt die `100.x.y.z`-Adresse
+sowie die nächsten Schritte. Danach ist Jarvis unter `https://<tailscale-ip>/`
+erreichbar (TLS über `scripts/deploy_local.sh`, das auf `:443` lauscht). Keine
+Portfreigaben, keine öffentliche IP.
 
-**HTTPS für die PWA/Push** (Push und Mikrofon brauchen einen sicheren Kontext):
-```bash
-# Nur im Tailnet erreichbar, TLS übernimmt Tailscale:
-sudo tailscale serve --bg --https=443 http://127.0.0.1:8100
-tailscale serve status      # zeigt die https://<host>.<tailnet>.ts.net-Adresse
-```
-`tailscale serve` erzeugt automatisch ein gültiges Zertifikat (Tailscale cert).
-Kein eigenes Zertifikat, keine offenen Ports nötig.
+**Variante „nur im Tailnet, TLS von Tailscale“:** statt eines eigenen Zertifikats
+kannst du `tailscale serve --bg --https=443 http://127.0.0.1:8100` nutzen. Beide
+Wege liefern einen sicheren Kontext (nötig für Push und Mikrofon).
 
 **Auf iOS/Android:**
 1. Tailscale-App installieren, mit demselben Konto anmelden.

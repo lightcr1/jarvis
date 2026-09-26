@@ -34,3 +34,13 @@ export function enrollTwoFactor() {
 export function activateTwoFactor(code: string) {
   return apiRequest("/admin/2fa/activate", { method: "POST", includeAdmin: true, body: { code } });
 }
+
+export interface SecretKeyStatus {
+  configured: boolean;
+  source: "env" | "file" | "none";
+  hint?: string;
+}
+
+export function fetchSecretKeyStatus() {
+  return apiRequest<SecretKeyStatus>("/admin/secret-key", { includeAdmin: true });
+}

@@ -22,6 +22,7 @@ from .api_models import (
 from .plan_service import assign_plan
 from . import emergency
 from . import totp
+from .secret_crypto import encryption_available
 from .router_dependencies import LiveRef
 
 
@@ -530,6 +531,14 @@ def build_admin_router(deps: dict) -> APIRouter:
             raise HTTPException(400, "invalid code")
         current("audit_log").write("admin_2fa_disabled", {"user_id": x_jarvis_user_id})
         return {"enabled": False}
+
+    @router.get("/admin/secret-key")
+    def secret_key_status(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        import os as _os
+        return {"configured": encryption_available(),
+                "source": "env" if (_os.getenv("JARVIS_SECRET_KEY") or "").strip() else "none",
+                "hint": "Set JARVIS_SECRET_KEY in .env (scripts/generate_master_key.sh); it is a bootstrap secret and is never editable via the API."}
 
     @router.get("/admin/backup")
     def admin_backup(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):

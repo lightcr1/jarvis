@@ -18,10 +18,12 @@ DB_TARGETS = (
     ("agent_grants", "JARVIS_AGENT_GRANTS_PATH", "/var/lib/jarvis/agent_grants.sqlite3"),
     ("autonomy_tasks", "JARVIS_AUTONOMY_TASKS_PATH", "/var/lib/jarvis/autonomy_tasks.sqlite3"),
     ("patch_review", "JARVIS_PATCH_REVIEW_PATH", "/var/lib/jarvis/patch_review.sqlite3"),
+    ("pod_budget", "JARVIS_POD_BUDGET_PATH", "/var/lib/jarvis/pod_budget.sqlite3"),
 )
 CONFIG_TARGETS = (
     ("capabilities", "JARVIS_CAPABILITIES_FILE", "config/capabilities.json"),
     ("zones", "JARVIS_ZONES_FILE", "config/zones.json"),
+    ("totp", "JARVIS_TOTP_STORE_PATH", "/var/lib/jarvis/admin_2fa.json"),
 )
 
 
