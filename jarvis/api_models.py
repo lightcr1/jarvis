@@ -56,6 +56,7 @@ class UnlockOut(BaseModel):
 class AdminLoginIn(BaseModel):
     username: str
     password: str
+    totp: str | None = None
 
 
 class AdminLoginOut(UnlockOut):

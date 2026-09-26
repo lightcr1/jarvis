@@ -110,6 +110,7 @@ class ApprovalRequestIn(BaseModel):
 class ApprovalDecision(BaseModel):
     approve: bool
     always: bool = False
+    totp: str | None = None
 
 
 class StandingGrantCreate(BaseModel):
@@ -603,6 +604,11 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         def decide_approval(request_id: str, body: ApprovalDecision,
                             x_jarvis_session: str | None = Header(default=None)):
             actor = owner(x_jarvis_session)
+            existing = current("agent_grant_store").get_approval(request_id)
+            totp_store = optional("totp_store")
+            if (existing and existing.get("tier") == "T3" and totp_store is not None
+                    and totp_store.enabled(actor) and not totp_store.verify(actor, body.totp or "")):
+                raise HTTPException(403, "totp_required")
             item = current("agent_grant_store").decide_approval(
                 request_id, actor=actor, approve=body.approve, channel="admin",
                 always=body.always, grant_store=current("agent_grant_store"))

@@ -64,6 +64,7 @@ def build_auth_chat_deps(state: object) -> dict:
         "user_limits_store": live_attr(state, "user_limits_store"),
         "plan_store": live_attr(state, "plan_store"),
         "admin_settings_store": live_attr(state, "admin_settings_store"),
+        "totp_store": live_attr(state, "totp_store"),
         "file_service": live_attr(state, "file_service"),
         "memory_store": live_attr(state, "memory_store"),
         "proxmox_health": proxmox_health,
@@ -92,6 +93,7 @@ def build_auth_chat_deps(state: object) -> dict:
 
 def build_admin_deps(state: object) -> dict:
     return {
+        "totp_store": live_attr(state, "totp_store"),
         "require_admin_access": state.require_admin_access,
         "identity_tokens": live_attr(state, "_identity_tokens"),
         "prune_identity_tokens": getattr(state, "_prune_identity_tokens", lambda t: None),
@@ -260,6 +262,7 @@ def build_autonomy_tasks_deps(state: object) -> dict:
         "agent_request_token": os.getenv("JARVIS_AGENT_REQUEST_TOKEN", ""),
         "owner_user_id": os.getenv("JARVIS_OWNER_USER_ID", "").strip(),
         "alert_broadcaster": get_alert_broadcaster(),
+        "totp_store": live_attr(state, "totp_store"),
         "github_token": os.getenv("GITHUB_TOKEN", "") or "",
         "github_repo": os.getenv("GITHUB_REPO", "lightcr1/jarvis"),
         "loop_rollout_marker": os.getenv("JARVIS_LOOP_ROLLOUT_MARKER", ""),

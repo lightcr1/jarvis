@@ -192,6 +192,15 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
             current("audit_log").write("admin_login_failed", {"username": user.get("username", ""), "user_id": user["id"], "reason": "invalid_credentials"})
             raise HTTPException(401, "Invalid admin credentials")
 
+        totp_store = current("totp_store")
+        if totp_store is not None and totp_store.enabled(user["id"]):
+            code = (payload.totp or "").strip()
+            if not code:
+                raise HTTPException(401, "totp_required")
+            if not totp_store.verify(user["id"], code):
+                current("audit_log").write("admin_login_failed", {"user_id": user["id"], "reason": "invalid_totp"})
+                raise HTTPException(401, "invalid_totp")
+
         issued = issue_token()
         current("audit_log").write(
             "admin_login_succeeded",
