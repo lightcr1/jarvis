@@ -89,3 +89,18 @@ def test_create_passes_proxy_env():
     runtime.create_sandbox(spec)
     create = next(c for c in calls if "/containers/create" in c[1])
     assert create[2]["Env"] == ["HTTP_PROXY=http://allowlist-proxy:3128"]
+
+
+def test_list_includes_labels():
+    containers = [{"Id": "1", "Names": ["/jarvis-sandbox-a"], "Image": "alpine",
+                   "State": "running", "Labels": {"jarvis.expires_at": "999"}}]
+    runtime, _ = _runtime(lambda m, p: (200, containers))
+    assert runtime.list_sandboxes("jarvis-sandbox-")[0]["labels"]["jarvis.expires_at"] == "999"
+
+
+def test_storage_opt_is_opt_in(monkeypatch):
+    spec = dict(SPEC, disk_gb=25)
+    monkeypatch.delenv("JARVIS_SANDBOX_STORAGE_OPT", raising=False)
+    assert "StorageOpt" not in DockerRuntime._host_config(spec)
+    monkeypatch.setenv("JARVIS_SANDBOX_STORAGE_OPT", "1")
+    assert DockerRuntime._host_config(spec)["StorageOpt"] == {"size": "25G"}
