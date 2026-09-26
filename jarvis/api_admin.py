@@ -472,8 +472,9 @@ def build_admin_router(deps: dict) -> APIRouter:
     @router.get("/admin/backup")
     def admin_backup(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
         require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        from .state_backup import collect_state
         data = {
-            "backup_version": 1,
+            "backup_version": 2,
             "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
             "users": current("user_store").list_users(),
             "groups": current("group_store").list_groups(),
@@ -485,6 +486,8 @@ def build_admin_router(deps: dict) -> APIRouter:
             "settings": current("admin_settings_store").get(),
             "credits": (current("credit_store").data if "credit_store" in deps else {}),
             "user_limits": (current("user_limits_store").data if "user_limits_store" in deps else {}),
+            # Vollstaendiger Zustand: Freigaben, Aufgaben/Berichte, Live-Configs, Audit-Log.
+            "state": collect_state(),
             # byok_store excluded — users must re-enter API keys after restore
             # usage_log excluded — high-volume, not suitable for backup
         }
@@ -511,8 +514,8 @@ def build_admin_router(deps: dict) -> APIRouter:
     def admin_backup_restore(payload: dict, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
         require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
         ver = payload.get("backup_version")
-        if ver != 1:
-            raise HTTPException(400, f"Unsupported backup_version: {ver!r} — only version 1 is accepted.")
+        if ver not in (1, 2):
+            raise HTTPException(400, f"Unsupported backup_version: {ver!r} — only 1 or 2 are accepted.")
 
         restored: dict[str, int] = {}
 
@@ -571,6 +574,9 @@ def build_admin_router(deps: dict) -> APIRouter:
                 restored["user_limits"] = len(uls.data["limits"])
 
         current("audit_log").write("admin_backup_restored", {"restored": restored, "admin_user_id": x_jarvis_user_id})
+        if ver == 2 and isinstance(payload.get("state"), dict):
+            from .state_backup import restore_state
+            restored["state"] = restore_state(payload["state"])
         return {"ok": True, "restored": restored}
 
     @router.post("/admin/credits/topup")
