@@ -904,6 +904,39 @@ def try_skill(
             lines.append(f"Location set to {location}. Say 'weather' for a full forecast.")
         if notes_count:
             lines.append(f"You have {notes_count} note(s) on file.")
+        # 3.1: offene Aufgaben, heutige Termine, ungelesene Mails – je defensiv.
+        data_extra: dict[str, object] = {}
+        try:
+            if task_service is not None and user_id:
+                open_tasks = [item for item in task_service.list_tasks(user_id=user_id, role=role).get("tasks", [])
+                              if item.get("status") != "done"]
+                data_extra["open_tasks"] = len(open_tasks)
+                if open_tasks:
+                    titles = ", ".join(str(item.get("title") or "?") for item in open_tasks[:3])
+                    lines.append(f"{len(open_tasks)} open task(s): {titles}.")
+        except Exception:  # noqa: BLE001 - Briefing darf nie an einem Dienst scheitern
+            data_extra["open_tasks"] = None
+        try:
+            if calendar_service is not None and user_id:
+                end_of_day = int(now.replace(hour=23, minute=59, second=59, microsecond=0).timestamp())
+                events = calendar_service.list_events(
+                    user_id=user_id, role=role, start=int(now.timestamp()), end=end_of_day).get("events", [])
+                data_extra["events_today"] = len(events)
+                if events:
+                    first = events[0]
+                    start_dt = datetime.fromtimestamp(int(first.get("start") or now.timestamp())).strftime("%H:%M")
+                    lines.append(f"{len(events)} event(s) left today, next: {first.get('title')} at {start_dt}.")
+        except Exception:  # noqa: BLE001
+            data_extra["events_today"] = None
+        try:
+            if email_service is not None and user_id:
+                unread = email_service.list_messages(
+                    user_id=user_id, role=role, unread_only=True).get("messages", [])
+                data_extra["unread_emails"] = len(unread)
+                if unread:
+                    lines.append(f"{len(unread)} unread email(s).")
+        except Exception:  # noqa: BLE001
+            data_extra["unread_emails"] = None
         agent_summary = None
         if autonomy_task_store is not None:
             try:
@@ -932,6 +965,7 @@ def try_skill(
             "uptime": uptime_raw,
             "notes_count": notes_count,
             "location": location,
+            **data_extra,
         }
         if agent_summary is not None:
             data["agent_summary"] = agent_summary
