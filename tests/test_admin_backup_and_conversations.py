@@ -41,7 +41,16 @@ class AdminBackupRestoreTests(unittest.TestCase):
     def tearDown(self):
         self.tmpdir.cleanup()
 
-    def test_backup_restore_version_mismatch_returns_400(self):
+    def test_backup_export_includes_full_state(self):
+        res = self.client.get("/admin/backup", headers=self.admin_headers)
+        self.assertEqual(200, res.status_code)
+        body = res.json()
+        self.assertEqual(2, body["backup_version"])
+        self.assertIn("state", body)
+        self.assertIn("databases", body["state"])
+        self.assertIn("configs", body["state"])
+
+    def test_backup_restore_version_99_returns_400(self):
         res = self.client.post(
             "/admin/backup/restore",
             json={"backup_version": 99},

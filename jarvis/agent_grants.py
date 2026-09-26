@@ -338,7 +338,9 @@ class AgentGrantStore:
                          tier: str = "T2", reason: str = "", created_by: str = "agent",
                          duration_seconds: int = 3600) -> dict:
         capability = str(capability or "").strip()
-        if not capability or len(capability) > 120 or not re.fullmatch(r"[A-Za-z0-9_.*\-]+", capability):
+        if capability == "*":
+            raise ValueError("concrete capability required (no wildcard '*')")
+        if not capability or len(capability) > 120 or not re.fullmatch(r"[A-Za-z0-9_.\-]+", capability):
             raise ValueError("valid capability required")
         if tier not in TIERS:
             tier = "T2"
@@ -405,7 +407,9 @@ class AgentGrantStore:
                               actor: str = "owner") -> dict:
         """Dauerhafte, widerrufbare Freigabe. Nur T1/T2 -- T3 nie per Freigabe."""
         capability = str(capability or "").strip()
-        if not capability or len(capability) > 120 or not re.fullmatch(r"[A-Za-z0-9_.*\-]+", capability):
+        if capability == "*":
+            raise ValueError("concrete capability required (no wildcard '*')")
+        if not capability or len(capability) > 120 or not re.fullmatch(r"[A-Za-z0-9_.\-]+", capability):
             raise ValueError("valid capability required")
         target_pattern = str(target_pattern or "*").strip() or "*"
         if any(c in target_pattern for c in ("\0", "\r", "\n")):
@@ -452,7 +456,9 @@ class AgentGrantStore:
                 ORDER BY created_at DESC, id DESC""", (now,)).fetchall()
         for row in rows:
             grant = dict(row)
-            if grant["capability"] not in ("*", capability):
+            if grant["capability"] == "*":   # Wildcard ist nicht zulaessig
+                continue
+            if grant["capability"] != capability:
                 continue
             pattern = grant["target_pattern"] or "*"
             if pattern == "*" or _grant_target_match(pattern, target):
