@@ -149,6 +149,20 @@ Cron-Eintrag (Beispiel):
 Sofort testen: `bash scripts/agent/self_deploy_loop.sh --force` (bzw. `--dry-run`
 im Deploy-Skript).
 
+## Zwei-Faktor (TOTP) für kritische Freigaben
+
+Für Admin-Login und **T3-Freigaben** (Geld, E-Mail senden, Löschen, Rechte,
+Pod-Kosten) gibt es TOTP (RFC 6238, Standardbibliothek).
+
+- `POST /admin/2fa/enroll` → `{secret, otpauth_uri}` (QR in der App scannen)
+- `POST /admin/2fa/activate` `{code}` → scharf schalten
+- `GET /admin/2fa` → `{enabled, pending}`; `POST /admin/2fa/disable` `{code}`
+- Admin-Login: bei aktivem TOTP `{username, password, totp}` (sonst 401 `totp_required`).
+- T3-Freigabe: `POST /admin/approval-requests/{id}/decide` `{approve, totp}` —
+  bei aktivem TOTP wird ein gültiger Code verlangt (sonst 403 `totp_required`).
+
+Speicher: `JARVIS_TOTP_STORE_PATH` (Default neben `users.json`).
+
 ## Backup & Wiederherstellung
 
 `GET /admin/backup` (Owner) erzeugt ein JSON mit `backup_version: 2`:

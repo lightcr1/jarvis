@@ -15,7 +15,7 @@ class _Broadcaster:
         self.calls.append((user_id, payload))
 
 
-def _client(tmp_path, broadcaster=None):
+def _client(tmp_path, broadcaster=None, totp_store=None):
     store = AgentGrantStore(tmp_path / "grants.sqlite3", clock=lambda: 1000)
     deps = {
         "agent_grant_store": store,
@@ -28,6 +28,8 @@ def _client(tmp_path, broadcaster=None):
     }
     if broadcaster is not None:
         deps["alert_broadcaster"] = broadcaster
+    if totp_store is not None:
+        deps["totp_store"] = totp_store
     app = FastAPI(); app.include_router(build_agent_grants_router(deps))
     return store, TestClient(app)
 
@@ -87,3 +89,20 @@ def test_api_t3_tier_and_auth(tmp_path):
     created = client.post("/agent/approval-requests", headers=AGENT, json={"capability": "email.send"})
     assert created.json()["request"]["tier"] == "T3"
     assert client.get("/admin/approval-requests", headers=AGENT).status_code == 401
+
+
+def test_t3_approval_requires_totp_when_enabled(tmp_path):
+    from jarvis import totp
+    from jarvis.totp_store import TotpStore
+    ts = TotpStore(tmp_path / "2fa.json")
+    secret = ts.start_enrollment("owner")
+    ts.activate("owner", totp.totp(secret))
+    _store, client = _client(tmp_path, totp_store=ts)
+    created = client.post("/agent/approval-requests", headers=AGENT, json={"capability": "email.send"})
+    req_id = created.json()["request"]["id"]
+    assert created.json()["request"]["tier"] == "T3"
+    assert client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER,
+                       json={"approve": True}).status_code == 403
+    ok = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER,
+                     json={"approve": True, "totp": totp.totp(secret)})
+    assert ok.status_code == 200 and ok.json()["request"]["status"] == "approved"

@@ -20,6 +20,7 @@ from .api_models import (
     UserPlanAssign,
 )
 from .plan_service import assign_plan
+from . import totp
 from .router_dependencies import LiveRef
 
 
@@ -468,6 +469,46 @@ def build_admin_router(deps: dict) -> APIRouter:
             deps.get("persist_identity_tokens", lambda: None)()
         current("audit_log").write("admin_sessions_revoked", {"target_user_id": user_id, "revoked_count": len(revoked)})
         return {"ok": True, "revoked": len(revoked), "user_id": user_id}
+
+    @router.get("/admin/2fa")
+    def admin_2fa_status(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        store = current("totp_store")
+        entry = store.get(x_jarvis_user_id) if store else None
+        return {"enabled": bool(store and store.enabled(x_jarvis_user_id)),
+                "pending": bool(entry and not entry.get("enabled"))}
+
+    @router.post("/admin/2fa/enroll")
+    def admin_2fa_enroll(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        store = current("totp_store")
+        if store is None:
+            raise HTTPException(503, "2FA not configured")
+        secret = store.start_enrollment(x_jarvis_user_id)
+        user = current("user_store").get_user(x_jarvis_user_id) or {}
+        account = user.get("username") or x_jarvis_user_id
+        current("audit_log").write("admin_2fa_enrollment_started", {"user_id": x_jarvis_user_id})
+        return {"secret": secret, "otpauth_uri": totp.provisioning_uri(secret, account)}
+
+    @router.post("/admin/2fa/activate")
+    def admin_2fa_activate(payload: dict, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        store = current("totp_store")
+        code = str((payload or {}).get("code") or "")
+        if store is None or not store.activate(x_jarvis_user_id, code):
+            raise HTTPException(400, "invalid code")
+        current("audit_log").write("admin_2fa_activated", {"user_id": x_jarvis_user_id})
+        return {"enabled": True}
+
+    @router.post("/admin/2fa/disable")
+    def admin_2fa_disable(payload: dict, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        store = current("totp_store")
+        code = str((payload or {}).get("code") or "")
+        if store is None or not store.disable(x_jarvis_user_id, code):
+            raise HTTPException(400, "invalid code")
+        current("audit_log").write("admin_2fa_disabled", {"user_id": x_jarvis_user_id})
+        return {"enabled": False}
 
     @router.get("/admin/backup")
     def admin_backup(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):

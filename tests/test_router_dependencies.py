@@ -199,6 +199,7 @@ class RouterDependencyTests(unittest.TestCase):
             local_ai_stub_reply=lambda text: "reply",
             byok_store=None,
             executor_client=None,
+            totp_store=None,
             get_anthropic=lambda: None,
             get_gemini=lambda: None,
             get_openai=lambda: None,

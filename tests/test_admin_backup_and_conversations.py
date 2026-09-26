@@ -19,6 +19,7 @@ class AdminBackupRestoreTests(unittest.TestCase):
         os.environ["JARVIS_PERMISSION_STORE_PATH"] = os.path.join(base, "permissions.json")
         os.environ["JARVIS_ADMIN_PASSWORD_STORE_PATH"] = os.path.join(base, "admin_passwords.json")
         os.environ["JARVIS_USER_PREFERENCES_PATH"] = os.path.join(base, "user_preferences.json")
+        os.environ["JARVIS_TOTP_STORE_PATH"] = os.path.join(base, "admin_2fa.json")
         jarvisappv4.audit_log = jarvisappv4.AuditLogStore()
         jarvisappv4.user_store = jarvisappv4.UserStore()
         jarvisappv4.group_store = jarvisappv4.GroupStore()
@@ -26,6 +27,7 @@ class AdminBackupRestoreTests(unittest.TestCase):
         jarvisappv4.permission_store = jarvisappv4.PermissionStore()
         jarvisappv4.admin_password_store = jarvisappv4.AdminPasswordStore()
         jarvisappv4.user_preferences_store = jarvisappv4.UserPreferencesStore()
+        jarvisappv4.totp_store = jarvisappv4.TotpStore()
         jarvisappv4._tokens.clear()
         self.client = TestClient(jarvisappv4.app)
 
@@ -49,6 +51,21 @@ class AdminBackupRestoreTests(unittest.TestCase):
         self.assertIn("state", body)
         self.assertIn("databases", body["state"])
         self.assertIn("configs", body["state"])
+
+    def test_admin_2fa_login_is_enforced(self):
+        from jarvis import totp as _totp
+        res = self.client.post("/admin/2fa/enroll", headers=self.admin_headers)
+        self.assertEqual(200, res.status_code)
+        secret = res.json()["secret"]
+        res = self.client.post("/admin/2fa/activate", json={"code": _totp.totp(secret)}, headers=self.admin_headers)
+        self.assertEqual(200, res.status_code)
+        res = self.client.get("/admin/2fa", headers=self.admin_headers)
+        self.assertTrue(res.json()["enabled"])
+        # Login ohne Code scheitert, mit Code klappt es.
+        res = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"})
+        self.assertEqual(401, res.status_code)
+        res = self.client.post("/admin/login", json={"username": "admin", "password": "admin123", "totp": _totp.totp(secret)})
+        self.assertEqual(200, res.status_code)
 
     def test_backup_restore_version_99_returns_400(self):
         res = self.client.post(

@@ -402,6 +402,7 @@ def _build_full_app(
     admin_deps = {
         "user_store": user_store,
         "admin_password_store": password_store,
+        "totp_store": None,
         "audit_log": audit_log,
         "group_store": group_store,
         "membership_store": membership_store,
@@ -426,6 +427,7 @@ def _build_full_app(
         "ensure_default_admin_seeded": lambda: None,
         "user_store": user_store,
         "admin_password_store": password_store,
+        "totp_store": None,
         "audit_log": audit_log,
         "issue_token": issue_token,
         "token_fingerprint": lambda tok: f"fp-{tok[:8]}",
