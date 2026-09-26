@@ -20,6 +20,7 @@ from .api_models import (
     UserPlanAssign,
 )
 from .plan_service import assign_plan
+from . import emergency
 from . import totp
 from .router_dependencies import LiveRef
 
@@ -469,6 +470,20 @@ def build_admin_router(deps: dict) -> APIRouter:
             deps.get("persist_identity_tokens", lambda: None)()
         current("audit_log").write("admin_sessions_revoked", {"target_user_id": user_id, "revoked_count": len(revoked)})
         return {"ok": True, "revoked": len(revoked), "user_id": user_id}
+
+    @router.get("/admin/emergency-stop")
+    def get_emergency_stop(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        return {"active": emergency.is_active(), "file": str(emergency.stop_file())}
+
+    @router.post("/admin/emergency-stop")
+    def set_emergency_stop(payload: dict, x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        active = bool((payload or {}).get("active"))
+        if not emergency.set_active(active):
+            raise HTTPException(500, "could not change emergency stop")
+        current("audit_log").write("emergency_stop_changed", {"active": active, "user_id": x_jarvis_user_id})
+        return {"active": emergency.is_active()}
 
     @router.get("/admin/2fa")
     def admin_2fa_status(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
