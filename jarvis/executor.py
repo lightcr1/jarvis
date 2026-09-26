@@ -157,7 +157,8 @@ class Executor:
         if callable(value):
             return bool(value())
         if value is None:
-            return os.getenv("JARVIS_EMERGENCY_STOP", "0").strip() in ("1", "true", "yes")
+            from .emergency import is_active
+            return is_active()
         return bool(value)
 
     def _allow(self, capability: str, *, target: str = "", params: dict | None = None,

@@ -305,7 +305,21 @@ def http(method: str, url: str, headers: dict | None = None, body: dict | None =
         return {"status": 0, "data": {"error": str(exc)}}
 
 
+def emergency_stop_active() -> bool:
+    import pathlib
+    if (os.getenv("JARVIS_EMERGENCY_STOP") or "0").strip().lower() in ("1", "true", "yes", "on"):
+        return True
+    stop = pathlib.Path(os.getenv("JARVIS_EMERGENCY_STOP_FILE") or "/var/lib/jarvis/emergency_stop")
+    try:
+        return stop.exists()
+    except OSError:
+        return False
+
+
 def autonomy_enabled() -> bool:
+    if emergency_stop_active():
+        log("Not-Aus aktiv - keine neuen Runden")
+        return False
     try:
         cfg = json.loads(AUTONOMY_SWITCH.read_text(encoding="utf-8"))
         return cfg.get("enabled", True) is True

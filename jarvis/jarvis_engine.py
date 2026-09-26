@@ -51,7 +51,8 @@ def has_permission(role: str | None, permission: str, granted_permissions: list[
 
 
 def emergency_stop_enabled() -> bool:
-    return (os.getenv("JARVIS_EMERGENCY_STOP") or "0").strip().lower() in {"1", "true", "yes", "on"}
+    from .emergency import is_active
+    return is_active()
 
 
 def _default_memory_path() -> Path:
