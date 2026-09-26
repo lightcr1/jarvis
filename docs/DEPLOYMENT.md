@@ -149,6 +149,21 @@ Cron-Eintrag (Beispiel):
 Sofort testen: `bash scripts/agent/self_deploy_loop.sh --force` (bzw. `--dry-run`
 im Deploy-Skript).
 
+## Backup & Wiederherstellung
+
+`GET /admin/backup` (Owner) erzeugt ein JSON mit `backup_version: 2`:
+
+- Benutzer, Gruppen, Mitgliedschaften, Rechte, Einstellungen, Credits/Limits
+- **kompletter Zustand** (`state`): SQLite-Stores (Freigaben, Aufgaben,
+  Rundenberichte, Patch-Reviews) als Base64, die Live-Configs
+  (`capabilities.json`, `zones.json`) und das Executor-Audit-Log
+- `POST /admin/backup/restore` akzeptiert Version 1 und 2; DBs/Configs werden
+  **nur** an die aktuell konfigurierten Pfade geschrieben (nie an einen Pfad aus
+  der Datei).
+
+> Das Executor-Audit-Log ist nur enthalten, wenn `JARVIS_EXECUTOR_AUDIT_LOG`
+> auf einen fuer die App lesbaren Pfad zeigt (z. B. geteiltes Volume).
+
 ## Rollback
 
 - Jarvis-App: `scripts/rollback.sh` (siehe Repo) bzw. Compose-Image-Tag zurück.

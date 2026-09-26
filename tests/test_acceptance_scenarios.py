@@ -875,11 +875,11 @@ def test_acceptance_8_backup_and_restore():
     client = TestClient(app)
     admin_hdrs = {"X-Jarvis-User-Id": admin["id"], "X-Jarvis-Role": "admin"}
 
-    # 1. GET /admin/backup — captures full snapshot with backup_version: 1
+    # 1. GET /admin/backup — captures full snapshot with backup_version: 2
     resp = client.get("/admin/backup", headers=admin_hdrs)
     assert resp.status_code == 200
     backup = resp.json()
-    assert backup["backup_version"] == 1
+    assert backup["backup_version"] == 2
     original_user_ids = {u["id"] for u in backup["users"]}
     assert alice["id"] in original_user_ids
 
