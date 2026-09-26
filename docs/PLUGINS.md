@@ -46,7 +46,10 @@ jarvis/plugins/<name>/
 
 ## Status / nächste Schritte
 
-- Umgesetzt: Manifest-Prüfung + Tests (`tests/test_plugins.py`).
-- Offen (Plan 5.1/5.3): Tool-Code laden und als Tool registrieren,
-  „Werkzeug fehlt“ → Agent-Aufgabe, und `jarvis.deploy` (T2) mit Health-Check
-  und Rollback.
+- Umgesetzt: Manifest-Prüfung (`parse_manifest`/`load_plugins`) + Tests.
+- Umgesetzt (5.1): „Werkzeug fehlt“ → Bau-Aufgabe
+  (`task_spec_for_missing_capability`, über den Chat: „jarvis baue mir …“).
+- Umgesetzt (5.2): Tool-Code laden über `load_plugin_tools` — **nur** wenn
+  `JARVIS_ALLOW_PLUGIN_CODE=1` (Default aus; Code wird sonst nicht importiert).
+- Offen: Plugin-Tools automatisch in die Tool-Registry einhängen und im
+  Freigabe-Kern als Vorschlag führen.

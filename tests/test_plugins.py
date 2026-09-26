@@ -70,3 +70,35 @@ def test_load_plugins_reads_and_validates_directory(tmp_path):
 
 def test_missing_plugins_dir_is_empty(tmp_path):
     assert load_plugins(Path(tmp_path) / "nope", REGISTRY) == []
+
+
+def test_task_spec_for_missing_capability():
+    from jarvis.plugins import task_spec_for_missing_capability
+
+    spec = task_spec_for_missing_capability("baue mir ein Wetter-Plugin", capability="weather.read")
+    assert spec["area"] == "build" and spec["size"] == "medium" and spec["source"] == "owner"
+    assert "weather.read" in spec["title"] and "Risiko-Vorschlag" in spec["description"]
+
+
+def _write_plugin(tmp_path, body="LOADED = True\n"):
+    plugin = tmp_path / "demo"
+    plugin.mkdir()
+    (plugin / "manifest.json").write_text(json.dumps(_manifest(name="demo")), encoding="utf-8")
+    (plugin / "tool.py").write_text(body, encoding="utf-8")
+    return plugin
+
+
+def test_load_plugin_tools_is_disabled_by_default(tmp_path):
+    from jarvis.plugins import load_plugin_tools
+    _write_plugin(tmp_path)
+    assert load_plugin_tools(tmp_path, REGISTRY, allow_code=False) == []
+
+
+def test_load_plugin_tools_executes_when_enabled(tmp_path):
+    from jarvis.plugins import load_plugin_tools
+    plugin = _write_plugin(tmp_path)
+    tools = load_plugin_tools(tmp_path, REGISTRY, allow_code=True)
+    assert len(tools) == 1
+    assert tools[0]["plugin"].name == "demo"
+    assert tools[0]["module"].LOADED is True
+    assert plugin.is_dir()
