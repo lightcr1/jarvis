@@ -31,7 +31,15 @@ def main() -> int:
     os.environ.setdefault("JARVIS_DEPLOY_COMMAND", f"bash {ROOT}/scripts/agent/self_deploy.sh")
     os.environ.setdefault("JARVIS_ROLLBACK_COMMAND", f"bash {ROOT}/scripts/agent/rollback_self.sh")
     service = os.getenv("SELF_DEPLOY_SERVICE", "jarvis")
-    deployer = SelfDeployer(runner)
+    grant_store = None
+    db = os.getenv("JARVIS_GRANTS_DB", "").strip()
+    if db:
+        try:
+            from jarvis.agent_grants import AgentGrantStore
+            grant_store = AgentGrantStore(db)
+        except Exception:  # noqa: BLE001
+            grant_store = None
+    deployer = SelfDeployer(runner, grant_store=grant_store)
     result = deployer.deploy(service, approved=True, actor="self-deploy-loop")
     print(json.dumps(result.to_dict(), ensure_ascii=False))
     return 0 if result.ok else 1

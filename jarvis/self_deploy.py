@@ -53,7 +53,7 @@ def default_health_check(url: str, timeout: float = 3.0):
 class SelfDeployer:
     def __init__(self, run, *, zones: dict | None = None, health_check=None,
                  deploy_command: list[str] | None = None, rollback_command: list[str] | None = None,
-                 attempts: int = 15, delay: float = 2.0, sleep=time.sleep):
+                 attempts: int = 15, delay: float = 2.0, sleep=time.sleep, grant_store=None):
         self.run = run
         self.zones = zones if zones is not None else load_zones()
         self.health_check = health_check or default_health_check(
@@ -65,6 +65,7 @@ class SelfDeployer:
         self.attempts = attempts
         self.delay = delay
         self.sleep = sleep
+        self.grant_store = grant_store
 
     def deploy(self, service: str = "jarvis", *, approved: bool = False,
                standing_grant: dict | None = None, actor: str = "agent") -> DeployResult:
@@ -72,10 +73,20 @@ class SelfDeployer:
         if not allowed:
             raise DeployError(info)
         if not approved:
-            decision = authorize_action("jarvis.deploy", target=service,
-                                        standing_grant=standing_grant)
+            grant = standing_grant
+            if grant is None and self.grant_store is not None:
+                try:
+                    grant = self.grant_store.match_standing_grant("jarvis.deploy", service)
+                except Exception:  # noqa: BLE001
+                    grant = None
+            decision = authorize_action("jarvis.deploy", target=service, standing_grant=grant)
             if decision.decision != "allow":
                 raise DeployError(f"Freigabe erforderlich: {decision.reason}")
+            if grant is not None and decision.tier == "T2" and self.grant_store is not None:
+                try:
+                    self.grant_store.consume_standing_grant(grant["id"])
+                except Exception:  # noqa: BLE001
+                    pass
         steps = [f"authorize jarvis.deploy target={service} by={actor}"]
         rc, _ = self.run(self.deploy_command)
         steps.append(f"deploy rc={int(rc)}")

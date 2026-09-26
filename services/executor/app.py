@@ -61,6 +61,18 @@ def _auth(token: str | None) -> None:
         raise HTTPException(401, "unauthorized")
 
 
+def _grant_store():
+    """Stehende Freigaben, falls die DB geteilt ist (JARVIS_GRANTS_DB)."""
+    path = os.getenv("JARVIS_GRANTS_DB", "").strip()
+    if not path:
+        return None
+    try:
+        from jarvis.agent_grants import AgentGrantStore
+        return AgentGrantStore(path)
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def get_executor() -> Executor:
     if _EXECUTOR_OVERRIDE is not None:
         return _EXECUTOR_OVERRIDE
@@ -70,7 +82,7 @@ def get_executor() -> Executor:
     return Executor(runtime,
                     host_cpus=float(os.getenv("JARVIS_HOST_CPUS", "4")),
                     host_memory_mb=float(os.getenv("JARVIS_HOST_MEMORY_MB", "16384")),
-                    audit=_audit)
+                    audit=_audit, grant_store=_grant_store())
 
 
 def _reaper_loop() -> None:

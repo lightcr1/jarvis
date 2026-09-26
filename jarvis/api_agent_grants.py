@@ -167,456 +167,494 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
         fn: Callable = current("audit_admin_event")
         fn(event, actor, "admin" if actor != "agent" else "service_system", data)
 
-    @router.post("/agent/grants/requests", status_code=201)
-    def request_grant(body: GrantRequest, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "grants-request", 15)
-        try:
-            item = current("agent_grant_store").request(**body.model_dump())
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        audit("agent.grant.requested", "agent", {"request_id": item["id"]})
-        return {"request": item}
 
-    @router.get("/agent/grants/requests/{request_id}")
-    def request_status(request_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "grant-status", 60)
-        item = current("agent_grant_store").get(request_id)
-        if item is None:
-            raise HTTPException(404, "request not found")
-        return {"request": item}
+    def _register_0():
+        @router.post("/agent/grants/requests", status_code=201)
+        def request_grant(body: GrantRequest, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "grants-request", 15)
+            try:
+                item = current("agent_grant_store").request(**body.model_dump())
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            audit("agent.grant.requested", "agent", {"request_id": item["id"]})
+            return {"request": item}
 
-    @router.post("/agent/ideas", status_code=201)
-    def propose_idea(body: IdeaProposal, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "idea-propose", 10)
-        try:
-            item = current("agent_grant_store").propose_idea(source="agent", **body.model_dump())
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        audit("agent.idea.proposed", "agent", {"idea_id": item["id"]})
-        return {"idea": item}
+        @router.get("/agent/grants/requests/{request_id}")
+        def request_status(request_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "grant-status", 60)
+            item = current("agent_grant_store").get(request_id)
+            if item is None:
+                raise HTTPException(404, "request not found")
+            return {"request": item}
 
-    @router.get("/agent/ideas")
-    def agent_ideas(x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "idea-list", 60)
-        return {"ideas": current("agent_grant_store").list_ideas()}
+        @router.post("/agent/ideas", status_code=201)
+        def propose_idea(body: IdeaProposal, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "idea-propose", 10)
+            try:
+                item = current("agent_grant_store").propose_idea(source="agent", **body.model_dump())
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            audit("agent.idea.proposed", "agent", {"idea_id": item["id"]})
+            return {"idea": item}
 
-    @router.get("/agent/ideas/{idea_id}")
-    def idea_status(idea_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "idea-status", 60)
-        item = current("agent_grant_store").get_idea(idea_id)
-        if item is None:
-            raise HTTPException(404, "idea not found")
-        return {"idea": item}
+        @router.get("/agent/ideas")
+        def agent_ideas(x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "idea-list", 60)
+            return {"ideas": current("agent_grant_store").list_ideas()}
 
-    @router.get("/agent/repositories/{repo_owner}/{repo_name}/metadata")
-    def github_metadata(repo_owner: str, repo_name: str,
-                        x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "repo-lookup", 20)
-        try:
-            target = canonical_repo(repo_owner, repo_name)
-        except GithubGatewayError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        if not current("agent_grant_store").authorize(
-            kind="other_project", target=target, operation="read_metadata",
-        ):
-            raise HTTPException(403, "owner grant required for this repository")
-        try:
-            result = public_repository_metadata(repo_owner, repo_name)
-        except GithubGatewayError as exc:
-            raise HTTPException(502, str(exc)) from exc
-        audit("agent.repository.metadata_read", "agent", {"repository": target})
-        return {"metadata": result}
 
-    @router.post("/agent/research/search")
-    def research(body: ResearchQuery, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "research", 30)
-        require_operational()
-        store = current("agent_grant_store")
-        if not store.authorize(kind="business_research", target=body.project_target, operation="web_search"):
-            raise HTTPException(403, "approved research project required")
-        if not store.consume_research_quota(body.project_target):
-            raise HTTPException(429, "daily research quota reached")
-        provider = str(optional("search_provider") or "brave").strip().lower()
-        try:
-            if provider == "searxng":
-                results = search_searxng(body.query, optional("searxng_url") or "", limit=body.limit)
+    def _register_1():
+        @router.get("/agent/ideas/{idea_id}")
+        def idea_status(idea_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "idea-status", 60)
+            item = current("agent_grant_store").get_idea(idea_id)
+            if item is None:
+                raise HTTPException(404, "idea not found")
+            return {"idea": item}
+
+        @router.get("/agent/repositories/{repo_owner}/{repo_name}/metadata")
+        def github_metadata(repo_owner: str, repo_name: str,
+                            x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "repo-lookup", 20)
+            try:
+                target = canonical_repo(repo_owner, repo_name)
+            except GithubGatewayError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            if not current("agent_grant_store").authorize(
+                kind="other_project", target=target, operation="read_metadata",
+            ):
+                raise HTTPException(403, "owner grant required for this repository")
+            try:
+                result = public_repository_metadata(repo_owner, repo_name)
+            except GithubGatewayError as exc:
+                raise HTTPException(502, str(exc)) from exc
+            audit("agent.repository.metadata_read", "agent", {"repository": target})
+            return {"metadata": result}
+
+
+    def _register_2():
+        @router.post("/agent/research/search")
+        def research(body: ResearchQuery, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "research", 30)
+            require_operational()
+            store = current("agent_grant_store")
+            if not store.authorize(kind="business_research", target=body.project_target, operation="web_search"):
+                raise HTTPException(403, "approved research project required")
+            if not store.consume_research_quota(body.project_target):
+                raise HTTPException(429, "daily research quota reached")
+            provider = str(optional("search_provider") or "brave").strip().lower()
+            try:
+                if provider == "searxng":
+                    results = search_searxng(body.query, optional("searxng_url") or "", limit=body.limit)
+                else:
+                    results = search_web(body.query, current("web_search_token"), limit=body.limit)
+            except ResearchError as exc: raise HTTPException(502, str(exc)) from exc
+            audit("agent.research.searched", "agent", {"project_target": body.project_target, "query_length": len(body.query), "result_count": len(results)})
+            return {"results": results, "untrusted": True}
+
+        @router.post("/agent/projects", status_code=201)
+        def request_project(body: ProjectRequest, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "project-request", 15)
+            try:
+                item = current("agent_grant_store").request_project(**body.model_dump())
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            audit("agent.project.requested", "agent", {"project_id": item["id"]})
+            return {"project": item}
+
+        @router.get("/agent/projects/{project_id}")
+        def project_status(project_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "project-status", 60)
+            item = current("agent_grant_store").get_project(project_id)
+            if item is None: raise HTTPException(404, "project not found")
+            return {"project": item}
+
+        @router.get("/admin/agent-projects")
+        def projects(x_jarvis_session: str | None = Header(default=None)):
+            owner(x_jarvis_session); return {"projects": current("agent_grant_store").list_projects()}
+
+
+    def _register_3():
+        @router.post("/admin/agent-projects/{project_id}/decide")
+        def decide_project(project_id: str, body: GrantDecision, x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
+            item = current("agent_grant_store").decide_project(project_id, actor=actor, approve=body.approve)
+            if item is None: raise HTTPException(409, "project missing, expired, or already decided")
+            audit("agent.project.decided", actor, {"project_id": project_id, "approved": body.approve})
+            return {"project": item}
+
+        @router.post("/admin/agent-projects/{project_id}/revoke")
+        def revoke_project(project_id: str, x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
+            item = current("agent_grant_store").revoke_project(project_id, actor=actor)
+            if item is None: raise HTTPException(409, "project missing or not approved")
+            audit("agent.project.revoked", actor, {"project_id": project_id})
+            return {"project": item}
+
+        @router.post("/agent/repositories/{repo_owner}/{repo_name}/branches")
+        def create_branch(repo_owner: str, repo_name: str, body: BranchCreate,
+                          x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "branch-create", 10)
+            require_operational()
+            try: target = canonical_repo(repo_owner, repo_name)
+            except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
+            if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="create_branch"):
+                raise HTTPException(403, "approved project operation required")
+            try: result = create_agent_branch(repo_owner, repo_name, token=current("github_write_token"), **body.model_dump())
+            except GithubGatewayError as exc: raise HTTPException(502, str(exc)) from exc
+            audit("agent.repository.branch_created", "agent", {"repository": target, "branch": body.branch, "base": body.base})
+            return {"result": result}
+
+
+    def _register_4():
+        @router.put("/agent/repositories/{repo_owner}/{repo_name}/files")
+        def write_file(repo_owner: str, repo_name: str, body: BranchFileWrite,
+                       x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "file-write", 10)
+            require_operational()
+            try: target = canonical_repo(repo_owner, repo_name)
+            except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
+            if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="write_branch_file"):
+                raise HTTPException(403, "approved project operation required")
+            try: result = write_branch_file(repo_owner, repo_name, token=current("github_write_token"), **body.model_dump())
+            except GithubGatewayError as exc: raise HTTPException(502, str(exc)) from exc
+            audit("agent.repository.file_written", "agent", {"repository": target, "path": body.path, "branch": body.branch, "commit": result["commit"]})
+            return {"result": result}
+
+        @router.post("/agent/repositories/{repo_owner}/{repo_name}/patches", status_code=201)
+        def submit_repository_patch(repo_owner: str, repo_name: str, body: PatchSubmit,
+                                    x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "patch-submit", 5)
+            require_operational()
+            try: target = canonical_repo(repo_owner, repo_name)
+            except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
+            if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="write"):
+                raise HTTPException(403, "approved project operation required")
+            try:
+                payload = body.model_dump()
+                payload["patch_text"] = payload.pop("patch")
+                result = submit_patch(repo_owner, repo_name, token=current("github_write_token"), **payload)
+            except GithubGatewayError as exc:
+                message = str(exc)
+                status = 403 if ("protected path" in message or "denied path" in message) else 422
+                raise HTTPException(status, message) from exc
+            review_store = optional("patch_review_store")
+            if review_store is not None:
+                try:
+                    review_store.record(repository=target, branch=body.branch, base=body.base,
+                                        commit=result["commit"], message=body.message,
+                                        patch=body.patch, paths=result["paths"])
+                except Exception:  # noqa: BLE001 - review queue must not break submission
+                    pass
+            audit("agent.repository.patch_submitted", "agent",
+                  {"repository": target, "branch": body.branch, "commit": result["commit"], "paths": result["paths"]})
+            return {"result": result}
+
+
+    def _register_5():
+        @router.post("/agent/actions/github-pull-request", status_code=201)
+        def request_pull_request(body: PullRequestAction, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "action-request", 10)
+            require_operational()
+            try:
+                owner_name, repo_name = body.repository.split("/", 1)
+                target = canonical_repo(owner_name, repo_name)
+                item = current("agent_grant_store").request_one_time_action(
+                    kind="github_create_pr", target=target,
+                    payload=body.model_dump(exclude={"repository"}),
+                )
+            except (ValueError, GithubGatewayError) as exc:
+                raise HTTPException(422, str(exc)) from exc
+            audit("agent.action.requested", "agent", {"action_id": item["id"], "digest": item["digest"]})
+            return {"action": item}
+
+        @router.post("/agent/actions/email-send", status_code=201)
+        def request_email_send(body: EmailSendAction, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "action-request", 10)
+            require_operational()
+            try:
+                item = current("agent_grant_store").request_one_time_action(
+                    kind="email_send", target=body.to.lower(), payload=body.model_dump())
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            audit("agent.action.requested", "agent", {"action_id": item["id"], "digest": item["digest"]})
+            return {"action": item}
+
+        @router.post("/admin/agent-actions/{action_id}/decide")
+        def decide_action(action_id: str, body: ActionDecision, x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
+            item = current("agent_grant_store").decide_one_time_action(action_id, actor=actor, approve=body.approve)
+            if item is None:
+                raise HTTPException(409, "action missing, expired, or already decided")
+            audit("agent.action.decided", actor, {"action_id": action_id, "approved": body.approve, "digest": item["digest"]})
+            return {"action": item}
+
+
+    def _register_6():
+        @router.post("/agent/actions/{action_id}/execute")
+        def execute_action(action_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "action-execute", 5)
+            require_operational()
+            item = current("agent_grant_store").consume_one_time_action(action_id)
+            if item is None:
+                raise HTTPException(403, "approved, unused action required")
+            payload = __import__("json").loads(item["payload"])
+            if item["kind"] == "github_create_pr":
+                owner_name, repo_name = item["target"].split("/", 1)
+                try:
+                    result = create_pull_request(owner_name, repo_name, payload, current("github_write_token"))
+                except GithubGatewayError as exc:
+                    audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"]})
+                    raise HTTPException(502, str(exc)) from exc
+            elif item["kind"] == "email_send":
+                owner_user_id = current("owner_user_id")
+                email_service = current("email_service")
+                if not owner_user_id or email_service is None:
+                    audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"], "error": "email_not_configured"})
+                    raise HTTPException(502, "owner email account not configured")
+                try:
+                    draft = email_service.create_draft(
+                        {"to": payload["to"], "subject": payload["subject"], "body": payload["body"]},
+                        user_id=owner_user_id, role="admin")
+                    sent = email_service.send_draft(
+                        draft["draft"]["id"], user_id=owner_user_id, role="admin", confirm=True)
+                    result = {"sent": sent["status"], "to": payload["to"]}
+                except Exception as exc:  # noqa: BLE001 - gateway surfaces service errors
+                    audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"], "error": str(exc)[:200]})
+                    raise HTTPException(502, str(exc)) from exc
             else:
-                results = search_web(body.query, current("web_search_token"), limit=body.limit)
-        except ResearchError as exc: raise HTTPException(502, str(exc)) from exc
-        audit("agent.research.searched", "agent", {"project_target": body.project_target, "query_length": len(body.query), "result_count": len(results)})
-        return {"results": results, "untrusted": True}
+                raise HTTPException(422, "unsupported action kind")
+            audit("agent.action.executed", "agent", {"action_id": action_id, "digest": item["digest"], "result": result})
+            return {"result": result}
 
-    @router.post("/agent/projects", status_code=201)
-    def request_project(body: ProjectRequest, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "project-request", 15)
-        try:
-            item = current("agent_grant_store").request_project(**body.model_dump())
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        audit("agent.project.requested", "agent", {"project_id": item["id"]})
-        return {"project": item}
 
-    @router.get("/agent/projects/{project_id}")
-    def project_status(project_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "project-status", 60)
-        item = current("agent_grant_store").get_project(project_id)
-        if item is None: raise HTTPException(404, "project not found")
-        return {"project": item}
+    def _register_7():
+        @router.post("/admin/agent-patches/{patch_id}/decide")
+        def decide_patch(patch_id: str, body: PatchReviewDecision,
+                         x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
+            store_obj = optional("patch_review_store")
+            if store_obj is None:
+                raise HTTPException(503, "patch review store not configured")
+            item = store_obj.get(patch_id)
+            if item is None or item["status"] != "pending":
+                raise HTTPException(409, "patch missing or already decided")
+            if body.approve:
+                repo_owner, repo_name = item["repository"].split("/", 1)
+                title = body.title or item["message"] or f"Agent patch {item['branch']}"
+                pr_body = body.body or ("Automated agent patch, reviewed by the owner.\n\n"
+                                        f"Paths: {', '.join(item['paths'])}")
+                try:
+                    result = create_pull_request(repo_owner, repo_name, {
+                        "title": title, "body": pr_body, "head": item["branch"], "base": item["base"],
+                    }, current("github_write_token"))
+                except GithubGatewayError as exc:
+                    raise HTTPException(502, str(exc)) from exc
+                updated = store_obj.decide(patch_id, actor=actor, decision="pr_requested",
+                                           pr_number=result["number"])
+                audit("agent.patch.pr_created", actor, {"patch_id": patch_id, "pr": result["number"]})
+                return {"patch": updated, "pr": result}
+            updated = store_obj.decide(patch_id, actor=actor, decision="rejected")
+            audit("agent.patch.rejected", actor, {"patch_id": patch_id})
+            return {"patch": updated}
 
-    @router.get("/admin/agent-projects")
-    def projects(x_jarvis_session: str | None = Header(default=None)):
-        owner(x_jarvis_session); return {"projects": current("agent_grant_store").list_projects()}
+        @router.get("/admin/agent-patches")
+        def list_patches(status: str | None = None,
+                         x_jarvis_session: str | None = Header(default=None)):
+            owner(x_jarvis_session)
+            store_obj = optional("patch_review_store")
+            if store_obj is None:
+                return {"patches": []}
+            items = [{k: v for k, v in item.items() if k != "patch"}
+                     for item in store_obj.list(status=status)]
+            return {"patches": items}
 
-    @router.post("/admin/agent-projects/{project_id}/decide")
-    def decide_project(project_id: str, body: GrantDecision, x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        item = current("agent_grant_store").decide_project(project_id, actor=actor, approve=body.approve)
-        if item is None: raise HTTPException(409, "project missing, expired, or already decided")
-        audit("agent.project.decided", actor, {"project_id": project_id, "approved": body.approve})
-        return {"project": item}
 
-    @router.post("/admin/agent-projects/{project_id}/revoke")
-    def revoke_project(project_id: str, x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        item = current("agent_grant_store").revoke_project(project_id, actor=actor)
-        if item is None: raise HTTPException(409, "project missing or not approved")
-        audit("agent.project.revoked", actor, {"project_id": project_id})
-        return {"project": item}
+    def _register_8():
+        @router.get("/admin/agent-patches/{patch_id}")
+        def get_patch(patch_id: str, x_jarvis_session: str | None = Header(default=None)):
+            owner(x_jarvis_session)
+            store_obj = optional("patch_review_store")
+            if store_obj is None:
+                raise HTTPException(503, "patch review store not configured")
+            item = store_obj.get(patch_id)
+            if item is None:
+                raise HTTPException(404, "patch not found")
+            return {"patch": item}
 
-    @router.post("/agent/repositories/{repo_owner}/{repo_name}/branches")
-    def create_branch(repo_owner: str, repo_name: str, body: BranchCreate,
-                      x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "branch-create", 10)
-        require_operational()
-        try: target = canonical_repo(repo_owner, repo_name)
-        except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
-        if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="create_branch"):
-            raise HTTPException(403, "approved project operation required")
-        try: result = create_agent_branch(repo_owner, repo_name, token=current("github_write_token"), **body.model_dump())
-        except GithubGatewayError as exc: raise HTTPException(502, str(exc)) from exc
-        audit("agent.repository.branch_created", "agent", {"repository": target, "branch": body.branch, "base": body.base})
-        return {"result": result}
+        @router.get("/admin/agent-actions")
+        def list_actions(x_jarvis_session: str | None = Header(default=None)):
+            owner(x_jarvis_session)
+            return {"actions": current("agent_grant_store").list_one_time_actions()}
 
-    @router.put("/agent/repositories/{repo_owner}/{repo_name}/files")
-    def write_file(repo_owner: str, repo_name: str, body: BranchFileWrite,
-                   x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "file-write", 10)
-        require_operational()
-        try: target = canonical_repo(repo_owner, repo_name)
-        except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
-        if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="write_branch_file"):
-            raise HTTPException(403, "approved project operation required")
-        try: result = write_branch_file(repo_owner, repo_name, token=current("github_write_token"), **body.model_dump())
-        except GithubGatewayError as exc: raise HTTPException(502, str(exc)) from exc
-        audit("agent.repository.file_written", "agent", {"repository": target, "path": body.path, "branch": body.branch, "commit": result["commit"]})
-        return {"result": result}
+        @router.get("/admin/ideas")
+        def list_ideas(x_jarvis_session: str | None = Header(default=None)):
+            owner(x_jarvis_session)
+            return {"ideas": current("agent_grant_store").list_ideas()}
 
-    @router.post("/agent/repositories/{repo_owner}/{repo_name}/patches", status_code=201)
-    def submit_repository_patch(repo_owner: str, repo_name: str, body: PatchSubmit,
-                                x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "patch-submit", 5)
-        require_operational()
-        try: target = canonical_repo(repo_owner, repo_name)
-        except GithubGatewayError as exc: raise HTTPException(422, str(exc)) from exc
-        if not current("agent_grant_store").authorize(kind="other_project", target=target, operation="write"):
-            raise HTTPException(403, "approved project operation required")
-        try:
-            payload = body.model_dump()
-            payload["patch_text"] = payload.pop("patch")
-            result = submit_patch(repo_owner, repo_name, token=current("github_write_token"), **payload)
-        except GithubGatewayError as exc:
-            message = str(exc)
-            status = 403 if ("protected path" in message or "denied path" in message) else 422
-            raise HTTPException(status, message) from exc
-        review_store = optional("patch_review_store")
-        if review_store is not None:
+        @router.post("/admin/ideas", status_code=201)
+        def owner_idea(body: OwnerIdea, x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
             try:
-                review_store.record(repository=target, branch=body.branch, base=body.base,
-                                    commit=result["commit"], message=body.message,
-                                    patch=body.patch, paths=result["paths"])
-            except Exception:  # noqa: BLE001 - review queue must not break submission
-                pass
-        audit("agent.repository.patch_submitted", "agent",
-              {"repository": target, "branch": body.branch, "commit": result["commit"], "paths": result["paths"]})
-        return {"result": result}
+                item = current("agent_grant_store").propose_idea(
+                    source="owner", **body.model_dump(), benefit="To be researched",
+                    risks="To be assessed", next_step="Research and propose a safe plan",
+                )
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            audit("agent.idea.owner_submitted", actor, {"idea_id": item["id"]})
+            return {"idea": item}
 
-    @router.post("/agent/actions/github-pull-request", status_code=201)
-    def request_pull_request(body: PullRequestAction, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "action-request", 10)
-        require_operational()
-        try:
-            owner_name, repo_name = body.repository.split("/", 1)
-            target = canonical_repo(owner_name, repo_name)
-            item = current("agent_grant_store").request_one_time_action(
-                kind="github_create_pr", target=target,
-                payload=body.model_dump(exclude={"repository"}),
-            )
-        except (ValueError, GithubGatewayError) as exc:
-            raise HTTPException(422, str(exc)) from exc
-        audit("agent.action.requested", "agent", {"action_id": item["id"], "digest": item["digest"]})
-        return {"action": item}
+        @router.post("/admin/ideas/{idea_id}/review")
+        def review_idea(idea_id: str, body: IdeaReview, x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
+            item = current("agent_grant_store").review_idea(idea_id, actor=actor, status=body.status)
+            if item is None:
+                raise HTTPException(409, "idea missing or already reviewed")
+            audit("agent.idea.reviewed", actor, {"idea_id": idea_id, "status": body.status})
+            return {"idea": item}
 
-    @router.post("/agent/actions/email-send", status_code=201)
-    def request_email_send(body: EmailSendAction, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "action-request", 10)
-        require_operational()
-        try:
-            item = current("agent_grant_store").request_one_time_action(
-                kind="email_send", target=body.to.lower(), payload=body.model_dump())
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        audit("agent.action.requested", "agent", {"action_id": item["id"], "digest": item["digest"]})
-        return {"action": item}
 
-    @router.post("/admin/agent-actions/{action_id}/decide")
-    def decide_action(action_id: str, body: ActionDecision, x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        item = current("agent_grant_store").decide_one_time_action(action_id, actor=actor, approve=body.approve)
-        if item is None:
-            raise HTTPException(409, "action missing, expired, or already decided")
-        audit("agent.action.decided", actor, {"action_id": action_id, "approved": body.approve, "digest": item["digest"]})
-        return {"action": item}
+    def _register_9():
+        @router.get("/admin/agent-grants")
+        def list_grants(x_jarvis_session: str | None = Header(default=None)):
+            owner(x_jarvis_session)
+            return {"requests": current("agent_grant_store").list_requests()}
 
-    @router.post("/agent/actions/{action_id}/execute")
-    def execute_action(action_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "action-execute", 5)
-        require_operational()
-        item = current("agent_grant_store").consume_one_time_action(action_id)
-        if item is None:
-            raise HTTPException(403, "approved, unused action required")
-        payload = __import__("json").loads(item["payload"])
-        if item["kind"] == "github_create_pr":
-            owner_name, repo_name = item["target"].split("/", 1)
+        @router.post("/admin/agent-grants/{request_id}/decide")
+        def decide(request_id: str, body: GrantDecision, x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
+            item = current("agent_grant_store").decide(request_id, actor=actor, approve=body.approve)
+            if item is None:
+                raise HTTPException(409, "request missing, expired, or already decided")
+            audit("agent.grant.decided", actor, {"request_id": request_id, "approved": body.approve})
+            return {"request": item}
+
+        @router.post("/admin/agent-grants/{request_id}/revoke")
+        def revoke(request_id: str, x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
+            item = current("agent_grant_store").revoke(request_id, actor=actor)
+            if item is None:
+                raise HTTPException(409, "request missing or not approved")
+            audit("agent.grant.revoked", actor, {"request_id": request_id})
+            return {"request": item}
+
+
+    def _register_10():
+        @router.post("/agent/approval-requests", status_code=201)
+        async def request_approval_endpoint(body: ApprovalRequestIn,
+                                            x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "approval-request", 20)
             try:
-                result = create_pull_request(owner_name, repo_name, payload, current("github_write_token"))
-            except GithubGatewayError as exc:
-                audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"]})
-                raise HTTPException(502, str(exc)) from exc
-        elif item["kind"] == "email_send":
-            owner_user_id = current("owner_user_id")
-            email_service = current("email_service")
-            if not owner_user_id or email_service is None:
-                audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"], "error": "email_not_configured"})
-                raise HTTPException(502, "owner email account not configured")
+                item = current("agent_grant_store").request_approval(
+                    capability=body.capability, target=body.target, params=body.params,
+                    tier=tier_for(body.capability), reason=body.reason,
+                    created_by="agent", duration_seconds=body.duration_seconds)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            audit("agent.approval.requested", "agent",
+                  {"request_id": item["id"], "capability": body.capability, "digest": item["digest"]})
+            broadcaster = optional("alert_broadcaster")
+            owner_id = str(optional("owner_user_id") or "")
+            if broadcaster is not None and owner_id:
+                try:
+                    await broadcaster.notify_user(owner_id, {
+                        "type": "approval_request", "severity": "warning", "user_id": owner_id,
+                        "message": f"Freigabe noetig ({item['tier']}): {body.capability} {body.target}".strip(),
+                        "request_id": item["id"], "digest": item["digest"],
+                    })
+                except Exception:  # noqa: BLE001 - notification must never break the request
+                    pass
+            return {"request": item}
+
+        @router.get("/agent/approval-requests/{request_id}")
+        def approval_status(request_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
+            agent(x_jarvis_agent_request_token)
+            cap(x_jarvis_agent_request_token, "approval-status", 60)
+            item = current("agent_grant_store").get_approval(request_id)
+            if item is None:
+                raise HTTPException(404, "request not found")
+            return {"request": item}
+
+        @router.get("/admin/approval-requests")
+        def list_approvals(status: str | None = "pending", x_jarvis_session: str | None = Header(default=None)):
+            owner(x_jarvis_session)
+            return {"requests": current("agent_grant_store").list_approvals(status=status)}
+
+
+    def _register_11():
+        @router.post("/admin/approval-requests/{request_id}/decide")
+        def decide_approval(request_id: str, body: ApprovalDecision,
+                            x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
+            item = current("agent_grant_store").decide_approval(
+                request_id, actor=actor, approve=body.approve, channel="admin",
+                always=body.always, grant_store=current("agent_grant_store"))
+            if item is None:
+                raise HTTPException(409, "request missing, expired, or already decided")
+            audit("agent.approval.decided", actor,
+                  {"request_id": request_id, "approved": body.approve, "always": body.always})
+            return {"request": item}
+
+        @router.get("/admin/standing-grants")
+        def list_standing_grants(x_jarvis_session: str | None = Header(default=None)):
+            owner(x_jarvis_session)
+            return {"grants": current("agent_grant_store").list_standing_grants()}
+
+        @router.post("/admin/standing-grants", status_code=201)
+        def create_standing_grant(body: StandingGrantCreate, x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
             try:
-                draft = email_service.create_draft(
-                    {"to": payload["to"], "subject": payload["subject"], "body": payload["body"]},
-                    user_id=owner_user_id, role="admin")
-                sent = email_service.send_draft(
-                    draft["draft"]["id"], user_id=owner_user_id, role="admin", confirm=True)
-                result = {"sent": sent["status"], "to": payload["to"]}
-            except Exception as exc:  # noqa: BLE001 - gateway surfaces service errors
-                audit("agent.action.failed", "agent", {"action_id": action_id, "digest": item["digest"], "error": str(exc)[:200]})
-                raise HTTPException(502, str(exc)) from exc
-        else:
-            raise HTTPException(422, "unsupported action kind")
-        audit("agent.action.executed", "agent", {"action_id": action_id, "digest": item["digest"], "result": result})
-        return {"result": result}
+                grant = current("agent_grant_store").create_standing_grant(actor=actor, **body.model_dump())
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            audit("agent.standing_grant.created", actor,
+                  {"grant_id": grant["id"], "capability": body.capability, "tier": body.tier})
+            return {"grant": grant}
 
-    @router.post("/admin/agent-patches/{patch_id}/decide")
-    def decide_patch(patch_id: str, body: PatchReviewDecision,
-                     x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        store_obj = optional("patch_review_store")
-        if store_obj is None:
-            raise HTTPException(503, "patch review store not configured")
-        item = store_obj.get(patch_id)
-        if item is None or item["status"] != "pending":
-            raise HTTPException(409, "patch missing or already decided")
-        if body.approve:
-            repo_owner, repo_name = item["repository"].split("/", 1)
-            title = body.title or item["message"] or f"Agent patch {item['branch']}"
-            pr_body = body.body or ("Automated agent patch, reviewed by the owner.\n\n"
-                                    f"Paths: {', '.join(item['paths'])}")
-            try:
-                result = create_pull_request(repo_owner, repo_name, {
-                    "title": title, "body": pr_body, "head": item["branch"], "base": item["base"],
-                }, current("github_write_token"))
-            except GithubGatewayError as exc:
-                raise HTTPException(502, str(exc)) from exc
-            updated = store_obj.decide(patch_id, actor=actor, decision="pr_requested",
-                                       pr_number=result["number"])
-            audit("agent.patch.pr_created", actor, {"patch_id": patch_id, "pr": result["number"]})
-            return {"patch": updated, "pr": result}
-        updated = store_obj.decide(patch_id, actor=actor, decision="rejected")
-        audit("agent.patch.rejected", actor, {"patch_id": patch_id})
-        return {"patch": updated}
+        @router.post("/admin/standing-grants/{grant_id}/revoke")
+        def revoke_standing_grant(grant_id: str, x_jarvis_session: str | None = Header(default=None)):
+            actor = owner(x_jarvis_session)
+            grant = current("agent_grant_store").revoke_standing_grant(grant_id, actor=actor)
+            if grant is None:
+                raise HTTPException(409, "grant missing or not approved")
+            audit("agent.standing_grant.revoked", actor, {"grant_id": grant_id})
+            return {"grant": grant}
 
-    @router.get("/admin/agent-patches")
-    def list_patches(status: str | None = None,
-                     x_jarvis_session: str | None = Header(default=None)):
-        owner(x_jarvis_session)
-        store_obj = optional("patch_review_store")
-        if store_obj is None:
-            return {"patches": []}
-        items = [{k: v for k, v in item.items() if k != "patch"}
-                 for item in store_obj.list(status=status)]
-        return {"patches": items}
+        @router.get("/admin/capabilities")
+        def list_capabilities(x_jarvis_session: str | None = Header(default=None)):
+            owner(x_jarvis_session)
+            registry = load_capabilities()
+            return {"capabilities": [{"name": name, **entry} for name, entry in sorted(registry.items())]}
 
-    @router.get("/admin/agent-patches/{patch_id}")
-    def get_patch(patch_id: str, x_jarvis_session: str | None = Header(default=None)):
-        owner(x_jarvis_session)
-        store_obj = optional("patch_review_store")
-        if store_obj is None:
-            raise HTTPException(503, "patch review store not configured")
-        item = store_obj.get(patch_id)
-        if item is None:
-            raise HTTPException(404, "patch not found")
-        return {"patch": item}
 
-    @router.get("/admin/agent-actions")
-    def list_actions(x_jarvis_session: str | None = Header(default=None)):
-        owner(x_jarvis_session)
-        return {"actions": current("agent_grant_store").list_one_time_actions()}
-
-    @router.get("/admin/ideas")
-    def list_ideas(x_jarvis_session: str | None = Header(default=None)):
-        owner(x_jarvis_session)
-        return {"ideas": current("agent_grant_store").list_ideas()}
-
-    @router.post("/admin/ideas", status_code=201)
-    def owner_idea(body: OwnerIdea, x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        try:
-            item = current("agent_grant_store").propose_idea(
-                source="owner", **body.model_dump(), benefit="To be researched",
-                risks="To be assessed", next_step="Research and propose a safe plan",
-            )
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        audit("agent.idea.owner_submitted", actor, {"idea_id": item["id"]})
-        return {"idea": item}
-
-    @router.post("/admin/ideas/{idea_id}/review")
-    def review_idea(idea_id: str, body: IdeaReview, x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        item = current("agent_grant_store").review_idea(idea_id, actor=actor, status=body.status)
-        if item is None:
-            raise HTTPException(409, "idea missing or already reviewed")
-        audit("agent.idea.reviewed", actor, {"idea_id": idea_id, "status": body.status})
-        return {"idea": item}
-
-    @router.get("/admin/agent-grants")
-    def list_grants(x_jarvis_session: str | None = Header(default=None)):
-        owner(x_jarvis_session)
-        return {"requests": current("agent_grant_store").list_requests()}
-
-    @router.post("/admin/agent-grants/{request_id}/decide")
-    def decide(request_id: str, body: GrantDecision, x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        item = current("agent_grant_store").decide(request_id, actor=actor, approve=body.approve)
-        if item is None:
-            raise HTTPException(409, "request missing, expired, or already decided")
-        audit("agent.grant.decided", actor, {"request_id": request_id, "approved": body.approve})
-        return {"request": item}
-
-    @router.post("/admin/agent-grants/{request_id}/revoke")
-    def revoke(request_id: str, x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        item = current("agent_grant_store").revoke(request_id, actor=actor)
-        if item is None:
-            raise HTTPException(409, "request missing or not approved")
-        audit("agent.grant.revoked", actor, {"request_id": request_id})
-        return {"request": item}
-
-    @router.post("/agent/approval-requests", status_code=201)
-    async def request_approval_endpoint(body: ApprovalRequestIn,
-                                        x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "approval-request", 20)
-        try:
-            item = current("agent_grant_store").request_approval(
-                capability=body.capability, target=body.target, params=body.params,
-                tier=tier_for(body.capability), reason=body.reason,
-                created_by="agent", duration_seconds=body.duration_seconds)
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        audit("agent.approval.requested", "agent",
-              {"request_id": item["id"], "capability": body.capability, "digest": item["digest"]})
-        broadcaster = optional("alert_broadcaster")
-        owner_id = str(optional("owner_user_id") or "")
-        if broadcaster is not None and owner_id:
-            try:
-                await broadcaster.notify_user(owner_id, {
-                    "type": "approval_request", "severity": "warning", "user_id": owner_id,
-                    "message": f"Freigabe noetig ({item['tier']}): {body.capability} {body.target}".strip(),
-                    "request_id": item["id"], "digest": item["digest"],
-                })
-            except Exception:  # noqa: BLE001 - notification must never break the request
-                pass
-        return {"request": item}
-
-    @router.get("/agent/approval-requests/{request_id}")
-    def approval_status(request_id: str, x_jarvis_agent_request_token: str | None = Header(default=None)):
-        agent(x_jarvis_agent_request_token)
-        cap(x_jarvis_agent_request_token, "approval-status", 60)
-        item = current("agent_grant_store").get_approval(request_id)
-        if item is None:
-            raise HTTPException(404, "request not found")
-        return {"request": item}
-
-    @router.get("/admin/approval-requests")
-    def list_approvals(status: str | None = "pending", x_jarvis_session: str | None = Header(default=None)):
-        owner(x_jarvis_session)
-        return {"requests": current("agent_grant_store").list_approvals(status=status)}
-
-    @router.post("/admin/approval-requests/{request_id}/decide")
-    def decide_approval(request_id: str, body: ApprovalDecision,
-                        x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        item = current("agent_grant_store").decide_approval(
-            request_id, actor=actor, approve=body.approve, channel="admin",
-            always=body.always, grant_store=current("agent_grant_store"))
-        if item is None:
-            raise HTTPException(409, "request missing, expired, or already decided")
-        audit("agent.approval.decided", actor,
-              {"request_id": request_id, "approved": body.approve, "always": body.always})
-        return {"request": item}
-
-    @router.get("/admin/standing-grants")
-    def list_standing_grants(x_jarvis_session: str | None = Header(default=None)):
-        owner(x_jarvis_session)
-        return {"grants": current("agent_grant_store").list_standing_grants()}
-
-    @router.post("/admin/standing-grants", status_code=201)
-    def create_standing_grant(body: StandingGrantCreate, x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        try:
-            grant = current("agent_grant_store").create_standing_grant(actor=actor, **body.model_dump())
-        except ValueError as exc:
-            raise HTTPException(422, str(exc)) from exc
-        audit("agent.standing_grant.created", actor,
-              {"grant_id": grant["id"], "capability": body.capability, "tier": body.tier})
-        return {"grant": grant}
-
-    @router.post("/admin/standing-grants/{grant_id}/revoke")
-    def revoke_standing_grant(grant_id: str, x_jarvis_session: str | None = Header(default=None)):
-        actor = owner(x_jarvis_session)
-        grant = current("agent_grant_store").revoke_standing_grant(grant_id, actor=actor)
-        if grant is None:
-            raise HTTPException(409, "grant missing or not approved")
-        audit("agent.standing_grant.revoked", actor, {"grant_id": grant_id})
-        return {"grant": grant}
-
-    @router.get("/admin/capabilities")
-    def list_capabilities(x_jarvis_session: str | None = Header(default=None)):
-        owner(x_jarvis_session)
-        registry = load_capabilities()
-        return {"capabilities": [{"name": name, **entry} for name, entry in sorted(registry.items())]}
+    _register_0()
+    _register_1()
+    _register_2()
+    _register_3()
+    _register_4()
+    _register_5()
+    _register_6()
+    _register_7()
+    _register_8()
+    _register_9()
+    _register_10()
+    _register_11()
 
     return router
