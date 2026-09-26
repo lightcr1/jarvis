@@ -442,7 +442,7 @@ class PilotToolsTests(unittest.TestCase):
                 "list_folder", "read_file", "save_memory_note", "proxmox_status", "restart_service", "list_devices", "control_device",
                 "list_tasks", "create_task", "complete_task", "list_calendar_events", "create_calendar_event",
                 "list_emails", "create_email_draft", "send_email_draft", "proxmox_vm_action", "proxmox_lxc_action",
-                "get_login_history",
+                "get_login_history", "sandbox_create", "sandbox_exec", "sandbox_destroy",
             },
             {t.name for t in self.registry.all()},
         )
