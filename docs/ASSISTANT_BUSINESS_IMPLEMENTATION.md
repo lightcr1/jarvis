@@ -20,7 +20,7 @@ Veröffentlichungen oder Produktionsdeployments aus diesem Plan ableiten.
 | 0.2 | T3 nie durch Chat-Ja; aktionsgebundene Admin-Freigabe mit TOTP | Implementiert (TOTP-gebundene, digest- und nutzergebundene Admin-Freigabe; Snapshot bindet die Aktion); Owner-Review ausstehend |
 | 0.3 | Pod-Budget aus vertrauenswürdigen Laufzeit-/Profildaten | Implementiert (serverseitige Pod-Sitzungen + Profil-Stundensatz + geplante Dauer, Fail-Closed; Controller-Reconciliation); Owner-Review ausstehend |
 | 0.4 | Verschlüsseltes TOTP-Secret, atomarer Replay-Schutz | Implementiert (Fernet-verschlüsselt, dateibasierter Lock, monotone Zeitschritt-Sperre); Owner-Review ausstehend |
-| 1 | App, mobile Sprache/Push, gemeinsamer Verlauf, sichere Wiederverbindung | Offen |
+| 1 | App, mobile Sprache/Push, gemeinsamer Verlauf, sichere Wiederverbindung | Teilweise: PWA + Tailscale-Runbook + sichtbare Verbindungsanzeige (`Live`/`Reconnecting`/`Offline`) ohne Aktionswiederholung umgesetzt; native iOS/Android-App und echte Geräteabnahme offen |
 | 2 | Bestätigtes Profil-Gedächtnis und Datenklassen | Offen |
 | 3 | Briefing und Ruhe-Regeln | Offen |
 | 4 | E-Mail-Assistent und dienst-/toolgebundener Credential-Tresor | Offen |
