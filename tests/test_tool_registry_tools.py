@@ -385,11 +385,16 @@ class PilotToolsTests(unittest.TestCase):
         result = tool.handler(self._ctx(user, email_service=self.email_service), {"to": "bob@example.com"})
         self.assertEqual("missing_args", result["data"]["error"])
 
-    def test_send_email_draft_sends_without_second_confirmation(self):
+    def test_send_email_draft_requires_approved_snapshot(self):
         user = self._email_user()
         draft = self.email_service.create_draft({"to": "bob@example.com", "body": "Hi Bob"}, user_id=user["id"], role=user["role"])["draft"]
         tool = self.registry.get("send_email_draft")
-        result = tool.handler(self._ctx(user, email_service=self.email_service), {"draft_id": draft["id"]})
+        ctx = self._ctx(user, email_service=self.email_service)
+        with self.assertRaises(PermissionError):
+            tool.handler(ctx, {"draft_id": draft["id"]})
+        ctx.deps["approved_tool_snapshot"] = self.email_service.approval_snapshot(
+            draft["id"], user_id=user["id"], role=user["role"])
+        result = tool.handler(ctx, {"draft_id": draft["id"]})
         self.assertEqual("email_sent", result["data"]["route"])
         self.assertEqual(1, len(self.fake_imap.sent_messages))
 

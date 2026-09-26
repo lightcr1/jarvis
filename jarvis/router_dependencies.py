@@ -235,6 +235,9 @@ def build_agent_grants_deps(state: object) -> dict:
         "owner_user_id": os.getenv("JARVIS_OWNER_USER_ID", "").strip(),
         "email_service": live_attr(state, "email_service"),
         "alert_broadcaster": get_alert_broadcaster(),
+        "totp_store": live_attr(state, "totp_store"),
+        "pod_control": live_attr(state, "pod_control"),
+        "pod_budget_store": live_attr(state, "pod_budget_store"),
     }
 
 

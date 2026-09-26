@@ -61,11 +61,13 @@ def test_t3_capability_ignores_agent_grant():
     class _Grant:
         def authorize(self, **kwargs):
             return True
+        def claim_tool_approval(self, **kwargs):
+            raise ValueError("no approved request")
 
     tool = _tool(RiskLevel.WRITE, capability="email.send", name="create_task")
     result = execute_tool(tool, _ctx(role="service_system"), {}, audit_log=_Audit(),
                           membership_store=None, permission_store=None, agent_grant_store=_Grant())
-    assert result["data"]["route"] == "tool_confirmation_required"
+    assert result["data"]["route"] == "tool_denied"
 
 
 def test_untrusted_context_escalates_t2_not_t1():

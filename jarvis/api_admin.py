@@ -499,7 +499,13 @@ def build_admin_router(deps: dict) -> APIRouter:
         store = current("totp_store")
         if store is None:
             raise HTTPException(503, "2FA not configured")
-        secret = store.start_enrollment(x_jarvis_user_id)
+        from .secret_crypto import SecretEncryptionUnavailable
+        try:
+            secret = store.start_enrollment(x_jarvis_user_id)
+        except SecretEncryptionUnavailable as exc:
+            raise HTTPException(503, "2FA encryption not configured") from exc
+        except ValueError as exc:
+            raise HTTPException(409, "disable existing 2FA before reenrolling") from exc
         user = current("user_store").get_user(x_jarvis_user_id) or {}
         account = user.get("username") or x_jarvis_user_id
         current("audit_log").write("admin_2fa_enrollment_started", {"user_id": x_jarvis_user_id})

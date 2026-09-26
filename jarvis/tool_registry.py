@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Callable
 
 from .authz import permission_decision, resolve_effective_permissions
@@ -27,6 +27,7 @@ class Tool:
     # Angabe wird sie aus dem Risk-Level abgeleitet (READ -> T0, sonst T2),
     # sodass das bestehende Verhalten unveraendert bleibt.
     capability: str | None = None
+    approval_snapshot: Callable[[ToolExecutionContext, dict], dict] | None = None
 
 
 class ToolRegistry:
@@ -140,10 +141,34 @@ def execute_tool(
         return {"reply": "I can't take that action right now.",
                 "data": {"route": "tool_denied", "tool": tool.name, "error": "denied", "tier": verdict.tier}}
     single_confirm = verdict.tier == "T3"  # T3 immer einzeln, nie per Agent-Grant
+    if single_confirm:
+        # Neither a chat 'yes' nor model-supplied approval IDs authorize T3.
+        store = agent_grant_store or ctx.deps.get("agent_grant_store")
+        if store is None or not ctx.user_id:
+            return {"reply": "Critical action blocked: the secure approval service is unavailable.",
+                    "data": {"route": "tool_denied", "tool": tool.name, "error": "approval_unavailable", "tier": "T3"}}
+        try:
+            snapshot = tool.approval_snapshot(ctx, args) if tool.approval_snapshot else {}
+            request = store.claim_tool_approval(
+                capability=capability, tool=tool.name, user_id=ctx.user_id,
+                params={"tool": tool.name, "args": args, "snapshot": snapshot},
+            )
+        except (PermissionError, LookupError, ValueError):
+            return {"reply": "The action could not be prepared for secure approval.",
+                    "data": {"route": "tool_denied", "tool": tool.name, "error": "approval_invalid", "tier": "T3"}}
+        if request["status"] != "consumed":
+            if audit_log:
+                audit_log.write("tool_secure_approval_required", {"tool": tool.name, "request_id": request["id"]})
+            return {"reply": "Approve this exact action with a fresh TOTP code in Admin → Approvals, then ask me to continue. A chat yes is not sufficient.",
+                    "data": {"route": "tool_approval_required", "tool": tool.name, "tier": "T3",
+                             "request_id": request["id"], "digest": request["digest"]}}
+        ctx = replace(ctx, deps={**ctx.deps, "approved_tool_snapshot": snapshot})
+        if audit_log:
+            audit_log.write("tool_secure_approval_consumed", {"tool": tool.name, "request_id": request["id"]})
     core_allowed = verdict.decision == "allow" and verdict.tier in ("T0", "T1")
     # T2 per stehender Freigabe gedeckt -> ohne Rueckfrage ausfuehren.
     grant_allowed = verdict.decision == "allow" and verdict.tier == "T2" and grant is not None
-    pre_authorized = (not single_confirm) and (agent_authorized or core_allowed or grant_allowed)
+    pre_authorized = single_confirm or agent_authorized or core_allowed or grant_allowed
 
     if (tool.risk != RiskLevel.READ or single_confirm) and not (confirm or pre_authorized):
         if audit_log:
