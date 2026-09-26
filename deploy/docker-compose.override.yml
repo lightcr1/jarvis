@@ -12,10 +12,12 @@ services:
   jarvis:
     environment:
       JARVIS_AUTONOMY_FILE: /var/lib/jarvis/autonomy.json
+      JARVIS_EMERGENCY_STOP_FILE: /var/lib/jarvis/emergency/stop
       JARVIS_SEARCH_PROVIDER: ${JARVIS_SEARCH_PROVIDER:-brave}
       JARVIS_SEARXNG_URL: ${JARVIS_SEARXNG_URL:-http://searxng:8080}
     volumes:
       - ${JARVIS_AUTONOMY_FILE_HOST:-../config/autonomy.json}:/var/lib/jarvis/autonomy.json
+      - jarvis-emergency:/var/lib/jarvis/emergency
     networks:
       - jarvis-search
 
@@ -47,3 +49,6 @@ networks:
     internal: true
   jarvis-search-egress:
     driver: bridge
+volumes:
+  jarvis-emergency:
+    name: jarvis-emergency
