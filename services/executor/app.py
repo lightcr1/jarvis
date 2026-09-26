@@ -24,7 +24,8 @@ from pathlib import Path
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel, Field
 
-from jarvis.docker_runtime import DockerError, DockerRuntime
+from jarvis.docker_runtime import DockerError
+from jarvis.runtime_factory import build_sandbox_runtime
 from jarvis.executor import Executor, SandboxError
 
 app = FastAPI(title="jarvis-executor", version="0.2.0")
@@ -78,7 +79,7 @@ def get_executor() -> Executor:
         return _EXECUTOR_OVERRIDE
     if not enabled():
         raise HTTPException(503, "executor disabled")
-    runtime = DockerRuntime(os.getenv("JARVIS_DOCKER_API", "http://docker-socket-proxy:2375"))
+    runtime = build_sandbox_runtime()
     return Executor(runtime,
                     host_cpus=float(os.getenv("JARVIS_HOST_CPUS", "4")),
                     host_memory_mb=float(os.getenv("JARVIS_HOST_MEMORY_MB", "16384")),
