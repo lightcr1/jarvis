@@ -98,3 +98,25 @@ def test_chat_agent_task_keeps_origin_session(tmp_path):
     task = result["data"]["task"]
     assert task["origin_session_id"] == "sess-chat-1"
     assert store.get_task(task["id"])["origin_session_id"] == "sess-chat-1"
+
+
+def test_owner_build_request_creates_task(tmp_path):
+    """5.1: fehlende Faehigkeit -> Bau-Aufgabe (area=build)."""
+    from jarvis.assistant_domain import try_skill
+    from jarvis.autonomy_task_store import AutonomyTaskStore
+
+    store = AutonomyTaskStore(tmp_path / "tasks.sqlite3")
+    noop = lambda *a, **k: None
+    result = try_skill(
+        "jarvis baue mir ein Wetter-Plugin",
+        role="admin", token=None, granted_permissions=[],
+        emergency_stop_enabled=lambda: False, permission_check=lambda *a: True,
+        run_cmd=noop, disk_usage=noop, format_bytes=noop, parse_meminfo=noop,
+        parse_ping=noop, tail_lines=noop, ensure_service_allowed=noop,
+        proxmox_vm_status=noop, proxmox_lxc_status=noop,
+        proxmox_vm_action=noop, proxmox_lxc_action=noop,
+        autonomy_task_store=store, session_id="sess-build",
+    )
+    assert result and result["data"]["route"] == "build_task"
+    task = result["data"]["task"]
+    assert task["area"] == "build" and task["origin_session_id"] == "sess-build"
