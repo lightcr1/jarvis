@@ -752,6 +752,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                             "executor_client": current("executor_client"),
                         },
                     )
+                    tool_ctx.deps["agent_grant_store"] = current("agent_grant_store")
                     tool_result = run_chat_with_tools(
                         router_obj, decision, messages=messages, system_prompt=sys_prompt,
                         registry=_TOOL_REGISTRY, ctx=tool_ctx, audit_log=current("audit_log"),
@@ -1044,6 +1045,7 @@ def build_auth_chat_router(deps: dict) -> APIRouter:
                                 "executor_client": current("executor_client"),
                             },
                         )
+                        tool_ctx.deps["agent_grant_store"] = current("agent_grant_store")
                         tool_result = run_chat_with_tools(
                             ro, dec, messages=msgs, system_prompt=sp,
                             registry=_TOOL_REGISTRY, ctx=tool_ctx, audit_log=current("audit_log"),

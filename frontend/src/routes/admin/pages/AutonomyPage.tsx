@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from "react";
 import { fetchAutonomyStatus, updateAutonomyStatus, fetchAgentGrants, decideAgentGrant, revokeAgentGrant, fetchAgentIdeas, submitOwnerIdea, reviewAgentIdea, fetchAgentActions, decideAgentAction, fetchAgentProjects, decideAgentProject, revokeAgentProject, type AgentIdea, type AgentProject, type AgentOneTimeAction, type AgentGrantRequest, type AutonomyStatus, fetchStandingGrants, createStandingGrant, revokeStandingGrant, fetchCapabilities, type StandingGrant, type CapabilityInfo } from "../../../shared/api/admin";
+import { fetchApprovals, decideApproval, fetchTwoFactorStatus, enrollTwoFactor, activateTwoFactor, type ApprovalRequest } from "../../../shared/api/approvals";
 import { useJ } from "../../../screens/jarvis-shared";
 
 export function AutonomyPage() {
@@ -25,6 +26,15 @@ export function AutonomyPage() {
   const [grantTarget, setGrantTarget] = useState("*");
   const [grantTier, setGrantTier] = useState("T2");
   const [grantMsg, setGrantMsg] = useState("");
+  const [approvals, setApprovals] = useState<ApprovalRequest[]>([]);
+  const [approvalTotp, setApprovalTotp] = useState<Record<string, string>>({});
+  const [approvalMsg, setApprovalMsg] = useState("");
+  const [twoFactorEnabled, setTwoFactorEnabled] = useState(false);
+  const [twoFactorPending, setTwoFactorPending] = useState(false);
+  const [twoFactorSecret, setTwoFactorSecret] = useState("");
+  const [twoFactorUri, setTwoFactorUri] = useState("");
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [twoFactorMsg, setTwoFactorMsg] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [ok, setOk] = useState("");
@@ -78,6 +88,60 @@ export function AutonomyPage() {
       setGrantMsg(`Fehler: ${e instanceof Error ? e.message : "widerrufen fehlgeschlagen"}`);
     }
   }, [loadGrants]);
+
+  const loadApprovals = useCallback(async () => {
+    try {
+      setApprovals((await fetchApprovals()).requests);
+    } catch { /* Freigabe-API noch nicht erreichbar */ }
+  }, []);
+
+  const loadTwoFactor = useCallback(async () => {
+    try {
+      const s = await fetchTwoFactorStatus();
+      setTwoFactorEnabled(s.enabled);
+      setTwoFactorPending(s.pending);
+    } catch { /* 2FA noch nicht konfiguriert */ }
+  }, []);
+
+  useEffect(() => { void loadApprovals(); void loadTwoFactor(); }, [loadApprovals, loadTwoFactor]);
+
+  const decide = useCallback(async (id: string, approve: boolean) => {
+    setApprovalMsg("");
+    try {
+      await decideApproval(id, approve, approvalTotp[id] ?? "");
+      setApprovalMsg(approve ? "Freigegeben." : "Abgelehnt.");
+      await loadApprovals();
+    } catch (e) {
+      setApprovalMsg(`Fehler: ${e instanceof Error ? e.message : "Entscheidung fehlgeschlagen"}`);
+    }
+  }, [approvalTotp, loadApprovals]);
+
+  const startEnroll = useCallback(async () => {
+    setTwoFactorMsg("");
+    try {
+      const r = await enrollTwoFactor();
+      setTwoFactorSecret(r.secret);
+      setTwoFactorUri(r.otpauth_uri);
+      setTwoFactorPending(true);
+      setTwoFactorMsg("Secret in der Authenticator-App hinterlegen, dann Code bestätigen.");
+    } catch (e) {
+      setTwoFactorMsg(`Fehler: ${e instanceof Error ? e.message : "Einrichtung fehlgeschlagen"}`);
+    }
+  }, []);
+
+  const confirmEnroll = useCallback(async () => {
+    setTwoFactorMsg("");
+    try {
+      await activateTwoFactor(twoFactorCode.trim());
+      setTwoFactorMsg("2. Faktor aktiv.");
+      setTwoFactorSecret("");
+      setTwoFactorUri("");
+      setTwoFactorCode("");
+      await loadTwoFactor();
+    } catch (e) {
+      setTwoFactorMsg(`Fehler: ${e instanceof Error ? e.message : "Code ungültig"}`);
+    }
+  }, [twoFactorCode, loadTwoFactor]);
 
   const refreshGrants = useCallback(async () => {
     try {
@@ -317,6 +381,58 @@ export function AutonomyPage() {
                 Widerrufen
               </button>
             )}
+          </div>
+        ))}
+      </div>
+
+      <div style={card}>
+        <div style={{ fontWeight: 600, marginBottom: 6 }}>Kritische Freigaben (T3)</div>
+        <p style={{ color: J.textMuted, fontSize: 12, margin: "0 0 8px" }}>
+          T3-Aktionen (E-Mail senden, Löschen, Rechte, Pod-Kosten) werden hier einzeln und
+          aktionsgebunden freigegeben – ein „Ja“ im Chat genügt nie. Mit aktivem 2. Faktor ist der
+          TOTP-Code erforderlich.
+        </p>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap", marginBottom: 8, fontSize: 12 }}>
+          <span>2. Faktor: <b>{twoFactorEnabled ? "aktiv" : twoFactorPending ? "unbestätigt" : "inaktiv"}</b></span>
+          {!twoFactorEnabled && <button onClick={() => void startEnroll()}
+            style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, cursor: "pointer", fontSize: 12 }}>
+            Einrichten
+          </button>}
+        </div>
+        {twoFactorSecret && (
+          <div style={{ fontSize: 12, marginBottom: 8 }}>
+            <div>Secret: <code>{twoFactorSecret}</code></div>
+            <div style={{ color: J.textMuted, wordBreak: "break-all" }}>{twoFactorUri}</div>
+            <input value={twoFactorCode} onChange={(e) => setTwoFactorCode(e.target.value)} placeholder="6-stelliger Code"
+              style={{ marginTop: 4, padding: "6px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, width: 140 }} />{" "}
+            <button onClick={() => void confirmEnroll()}
+              style={{ padding: "6px 12px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, cursor: "pointer", fontSize: 12 }}>
+              Bestätigen
+            </button>
+          </div>
+        )}
+        {twoFactorMsg && <div style={{ fontSize: 12, color: J.textMuted, marginBottom: 6 }}>{twoFactorMsg}</div>}
+        {approvalMsg && <div style={{ fontSize: 12, color: J.textMuted, marginBottom: 6 }}>{approvalMsg}</div>}
+        {approvals.length === 0 && <p style={{ color: J.textMuted, fontSize: 13 }}>Keine offenen Freigaben.</p>}
+        {approvals.map((a) => (
+          <div key={a.id} style={{ borderTop: `1px solid ${J.border}`, padding: "8px 0", fontSize: 13 }}>
+            <div><b>{a.capability}</b> · Tool {a.target} · {a.tier}</div>
+            <div style={{ color: J.textMuted, fontSize: 12 }}>{a.reason}</div>
+            <div style={{ marginTop: 4, display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+              {twoFactorEnabled && (
+                <input value={approvalTotp[a.id] ?? ""} onChange={(e) => setApprovalTotp({ ...approvalTotp, [a.id]: e.target.value })}
+                  placeholder="TOTP"
+                  style={{ padding: "4px 8px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, width: 100 }} />
+              )}
+              <button onClick={() => void decide(a.id, true)}
+                style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${J.border}`, background: "#2f7d32", color: "#fff", cursor: "pointer", fontSize: 12 }}>
+                Freigeben
+              </button>
+              <button onClick={() => void decide(a.id, false)}
+                style={{ padding: "4px 10px", borderRadius: 6, border: `1px solid ${J.border}`, background: J.bg3, color: J.text, cursor: "pointer", fontSize: 12 }}>
+                Ablehnen
+              </button>
+            </div>
           </div>
         ))}
       </div>

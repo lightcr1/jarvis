@@ -169,15 +169,24 @@ def _create_email_draft_handler(ctx: ToolExecutionContext, args: dict) -> dict:
     return {"reply": f"Draft ready for {to}, held for your approval.", "data": {"route": "email_draft_created", "draft": result["draft"]}}
 
 
+def _email_approval_snapshot(ctx: ToolExecutionContext, args: dict) -> dict:
+    return ctx.deps["email_service"].approval_snapshot(
+        str(args.get("draft_id") or ""), user_id=ctx.user_id, role=ctx.role,
+    )
+
+
 def _send_email_draft_handler(ctx: ToolExecutionContext, args: dict) -> dict:
     email_service = ctx.deps["email_service"]
     draft_id = str(args.get("draft_id") or "").strip()
     if not draft_id:
         return {"reply": "Which draft, sir?", "data": {"route": "tool_error", "error": "missing_draft_id"}}
-    # Our own WRITE-risk confirmation gate already served as the one confirmation
-    # step for this tool call — pass confirm=True straight through rather than
-    # making the user confirm a second time against send_draft's own internal gate.
-    result = email_service.send_draft(draft_id, user_id=ctx.user_id, role=ctx.role, confirm=True)
+    # The registry supplies this snapshot only after atomically consuming a
+    # digest-bound TOTP approval. Compare against the actual message being sent.
+    snapshot = ctx.deps.get("approved_tool_snapshot")
+    if snapshot is None:
+        raise PermissionError("secure email approval required")
+    result = email_service.send_draft(draft_id, user_id=ctx.user_id, role=ctx.role,
+                                      confirm=True, approved_snapshot=snapshot)
     return {"reply": "Done. Message sent.", "data": {"route": "email_sent", **result}}
 
 
@@ -547,6 +556,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         risk=RiskLevel.WRITE,
         handler=_send_email_draft_handler,
         capability="email.send",
+        approval_snapshot=_email_approval_snapshot,
     ))
     registry.register(Tool(
         name="proxmox_vm_action",

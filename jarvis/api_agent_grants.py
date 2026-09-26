@@ -608,9 +608,10 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
             actor = owner(x_jarvis_session)
             existing = current("agent_grant_store").get_approval(request_id)
             totp_store = optional("totp_store")
-            if (existing and existing.get("tier") == "T3" and totp_store is not None
-                    and totp_store.enabled(actor) and not totp_store.verify(actor, body.totp or "")):
-                raise HTTPException(403, "totp_required")
+            if existing and body.approve and tier_for(existing["capability"]) == "T3":
+                if (totp_store is None or not totp_store.enabled(actor)
+                        or not totp_store.verify(actor, body.totp or "")):
+                    raise HTTPException(403, "totp_required")
             # pod.start: Budget VOR der Entscheidung pruefen (sonst kein Start).
             if existing and existing.get("capability") == "pod.start" and body.approve:
                 from .pod_control import within_budget

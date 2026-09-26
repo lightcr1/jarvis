@@ -93,12 +93,17 @@ def test_api_t3_tier_and_auth(tmp_path):
     assert client.get("/admin/approval-requests", headers=AGENT).status_code == 401
 
 
-def test_t3_approval_requires_totp_when_enabled(tmp_path):
+def test_t3_approval_requires_totp_when_enabled(tmp_path, monkeypatch):
     from jarvis import totp
+    from jarvis.secret_crypto import generate_master_key
     from jarvis.totp_store import TotpStore
+    monkeypatch.setenv("JARVIS_SECRET_KEY", generate_master_key())
+    now = [1_000_020.0]
+    monkeypatch.setattr(totp.time, "time", lambda: now[0])
     ts = TotpStore(tmp_path / "2fa.json")
     secret = ts.start_enrollment("owner")
     ts.activate("owner", totp.totp(secret))
+    now[0] += 30  # Enrollment consumed the previous time step.
     _store, client = _client(tmp_path, totp_store=ts)
     created = client.post("/agent/approval-requests", headers=AGENT, json={"capability": "email.send"})
     req_id = created.json()["request"]["id"]
@@ -108,6 +113,13 @@ def test_t3_approval_requires_totp_when_enabled(tmp_path):
     ok = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER,
                      json={"approve": True, "totp": totp.totp(secret)})
     assert ok.status_code == 200 and ok.json()["request"]["status"] == "approved"
+
+
+class _Totp:
+    def enabled(self, user_id):
+        return True
+    def verify(self, user_id, code):
+        return code == "123456"
 
 
 class _FakePod:
@@ -121,22 +133,75 @@ class _FakePod:
 def test_pod_start_approval_starts_within_budget(tmp_path, monkeypatch):
     monkeypatch.setenv("JARVIS_POD_MONTHLY_BUDGET_CHF", "20")
     pod = _FakePod()
-    _store, client = _client(tmp_path, pod_control=pod)
+    _store, client = _client(tmp_path, pod_control=pod, totp_store=_Totp())
     created = client.post("/agent/approval-requests", headers=AGENT,
                           json={"capability": "pod.start",
                                 "params": {"estimated_chf": 2, "spent_chf": 5, "profile": "default"}})
     req_id = created.json()["request"]["id"]
-    ok = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER, json={"approve": True})
+    ok = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER, json={"approve": True, "totp": "123456"})
     assert ok.status_code == 200 and pod.starts == ["default"]
 
 
 def test_pod_start_budget_exceeded_blocks(tmp_path, monkeypatch):
     monkeypatch.setenv("JARVIS_POD_MONTHLY_BUDGET_CHF", "5")
     pod = _FakePod()
-    _store, client = _client(tmp_path, pod_control=pod)
+    _store, client = _client(tmp_path, pod_control=pod, totp_store=_Totp())
     created = client.post("/agent/approval-requests", headers=AGENT,
                           json={"capability": "pod.start",
                                 "params": {"estimated_chf": 4, "spent_chf": 4, "profile": "default"}})
     req_id = created.json()["request"]["id"]
-    resp = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER, json={"approve": True})
+    resp = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER, json={"approve": True, "totp": "123456"})
     assert resp.status_code == 409 and pod.starts == []
+
+
+def test_t3_without_enrollment_cannot_be_approved_but_can_be_rejected(tmp_path):
+    store, client = _client(tmp_path)
+    req = store.request_approval(capability="email.send", tier="T3")
+    url = f"/admin/approval-requests/{req['id']}/decide"
+    assert client.post(url, headers=OWNER, json={"approve": True, "totp": "123456"}).status_code == 403
+    assert store.get_approval(req["id"])["status"] == "pending"
+    assert client.post(url, headers=OWNER, json={"approve": False}).status_code == 200
+
+
+def test_chat_t3_is_bound_to_user_tool_and_params_and_consumed_once(tmp_path, monkeypatch):
+    from jarvis.tool_registry import Tool, ToolExecutionContext, execute_tool
+    from jarvis.jarvis_engine import RiskLevel
+    import jarvis.tool_registry as registry
+    monkeypatch.setattr(registry, "permission_decision", lambda *a, **k: {"allowed": True})
+    monkeypatch.setattr(registry, "emergency_stop_enabled", lambda: False)
+    store, client = _client(tmp_path, totp_store=_Totp())
+    calls = []
+    tool = Tool(name="send", description="Send a message", parameters={}, required_permission="email.write",
+                risk=RiskLevel.WRITE, capability="email.send",
+                handler=lambda ctx, args: calls.append(args) or {"data": {"route": "sent"}})
+    ctx = ToolExecutionContext(user_id="u", role="admin", deps={})
+    kwargs = dict(audit_log=None, membership_store=None, permission_store=None, agent_grant_store=store)
+    pending = execute_tool(tool, ctx, {"body": "hello"}, confirm=True, **kwargs)
+    assert pending["data"]["route"] == "tool_approval_required" and calls == []
+    req_id = pending["data"]["request_id"]
+    assert execute_tool(tool, ctx, {"body": "hello"}, confirm=True, **kwargs)["data"]["request_id"] == req_id
+    url = f"/admin/approval-requests/{req_id}/decide"
+    assert client.post(url, headers=OWNER, json={"approve": True}).status_code == 403
+    assert client.post(url, headers=OWNER, json={"approve": True, "totp": "123456"}).status_code == 200
+    # Changing args or the requesting user cannot reuse that approval.
+    assert execute_tool(tool, ctx, {"body": "changed"}, **kwargs)["data"]["route"] == "tool_approval_required"
+    other = ToolExecutionContext(user_id="other", role="admin", deps={})
+    assert execute_tool(tool, other, {"body": "hello"}, **kwargs)["data"]["route"] == "tool_approval_required"
+    assert calls == []
+    assert execute_tool(tool, ctx, {"body": "hello"}, **kwargs)["data"]["route"] == "sent"
+    assert calls == [{"body": "hello"}]
+    assert store.get_approval(req_id)["status"] == "consumed"
+    assert execute_tool(tool, ctx, {"body": "hello"}, confirm=True, **kwargs)["data"]["route"] == "tool_approval_required"
+    assert len(calls) == 1
+
+
+def test_chat_approval_claim_is_atomic(tmp_path):
+    from concurrent.futures import ThreadPoolExecutor
+    store = AgentGrantStore(tmp_path / "grants.sqlite3", clock=lambda: 1000)
+    kwargs = dict(capability="email.send", tool="send", user_id="u", params={"message": "hello"})
+    req = store.claim_tool_approval(**kwargs)
+    store.decide_approval(req["id"], actor="owner", approve=True, channel="admin")
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        claims = list(pool.map(lambda _: store.claim_tool_approval(**kwargs), range(8)))
+    assert sum(c["status"] == "consumed" for c in claims) == 1
+    assert len({c["id"] for c in claims if c["status"] == "pending"}) == 1
