@@ -59,10 +59,25 @@ def test_exec_returns_exit_code():
         return 204, {}
     runtime, calls = _runtime(handler)
     assert runtime.exec_in_sandbox("jarvis-sandbox-abc", "echo hi") == {"exit_code": 0, "running": False}
-    assert ("POST", "/exec/e1/start", {"Detach": False, "Tty": False}) in calls
+    assert ("POST", "/exec/e1/start", {"Detach": True, "Tty": False}) in calls
 
 
 def test_http_error_raises():
     runtime, _ = _runtime(lambda m, p: (403, {}))
     with pytest.raises(DockerError):
         runtime.list_sandboxes("jarvis-sandbox-")
+
+
+def test_http_tolerates_non_json_body(monkeypatch):
+    class _Resp:
+        status = 200
+        def read(self):
+            return b"raw-stream-bytes"
+        def __enter__(self):
+            return self
+        def __exit__(self, *exc):
+            return False
+
+    import jarvis.docker_runtime as mod
+    monkeypatch.setattr(mod.urllib.request, "urlopen", lambda *a, **k: _Resp())
+    assert mod.DockerRuntime("http://x")._call("POST", "/exec/e1/start", {"Detach": True}) == {}
