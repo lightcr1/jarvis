@@ -279,3 +279,28 @@ def test_weekly_metrics_endpoint(tmp_path):
     assert resp.status_code == 200
     body = resp.json()
     assert body["tasks"]["total"] >= 1 and "standing_grant_suggestions" in body
+
+
+def test_deploy_endpoint_blocks_critical_and_deploys(tmp_path):
+    from jarvis.api_autonomy_tasks import build_autonomy_tasks_router
+    from jarvis.self_deploy import DeployError, DeployResult
+
+    class FakeDeployer:
+        def deploy(self, service, *, approved=False, actor=""):
+            if service in ("searxng", "runpod-controller"):
+                raise DeployError(f"'{service}' ist ein kritischer Dienst und gesperrt")
+            return DeployResult(True, service, ["deploy", "health ok"], False, "ok")
+
+    store = AutonomyTaskStore(tmp_path / "t.sqlite3")
+    deps = {"autonomy_task_store": store, "require_admin_access": None,
+            "get_identity_session": lambda t: {"user_id": "owner", "role": "admin"} if t == "owner" else None,
+            "normalize_role": lambda r: r, "agent_request_token": "agent-token",
+            "audit_admin_event": lambda *a, **k: None, "owner_user_id": "owner",
+            "self_deployer": FakeDeployer()}
+    app = FastAPI(); app.include_router(build_autonomy_tasks_router(deps))
+    client = TestClient(app)
+    owner = {"X-Jarvis-Session": "owner"}
+    ok = client.post("/admin/autonomy/deploy", headers=owner, json={"service": "jarvis"})
+    assert ok.status_code == 200 and ok.json()["result"]["ok"] is True
+    blocked = client.post("/admin/autonomy/deploy", headers=owner, json={"service": "searxng"})
+    assert blocked.status_code == 409

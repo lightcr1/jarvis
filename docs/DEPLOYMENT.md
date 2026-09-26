@@ -92,6 +92,22 @@ Vorlagen: `config/prod.env.example`, `config/autonomy-loop.example.env`.
 | `jarvis-executor` | `GET /health` (intern `:8120`, nur Agent-Netz) |
 | `allowlist-proxy` | `TCP 127.0.0.1:3128` im Container |
 
+## Self-Deploy & verwaltete Zone (Plan 5.3 / 4.1)
+
+Die **verwaltete Zone** umfasst alle Dienste **außer** `runpod-controller` und
+`searxng` (siehe `config/zones.json`). Jarvis darf dort deployen/neustarten,
+aber `jarvis.deploy` ist **T2** (nie ohne Freigabe).
+
+- Logik: `jarvis/self_deploy.py` — `authorize_service` (kritische gesperrt) →
+  `authorize_action("jarvis.deploy")` → Deploy-Befehl → Health-Check → bei
+  Fehler **automatischer Rollback**.
+- Befehle/URL per Env: `JARVIS_DEPLOY_COMMAND` (Default `bash scripts/update.sh`),
+  `JARVIS_ROLLBACK_COMMAND` (Default `bash scripts/rollback.sh`),
+  `JARVIS_HEALTH_URL` (Default `http://127.0.0.1:8100/health`).
+- Besitzer-Auslöser: `POST /admin/autonomy/deploy` `{"service": "jarvis"}`
+  (Owner-Session; der Klick ist die Freigabe). Der Agent braucht eine stehende
+  Freigabe für `jarvis.deploy`.
+
 ## Rollback
 
 - Jarvis-App: `scripts/rollback.sh` (siehe Repo) bzw. Compose-Image-Tag zurück.

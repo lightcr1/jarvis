@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Callable
@@ -73,6 +74,10 @@ class RoundReport(BaseModel):
     tests: list[str] = Field(default_factory=list, max_length=50)
     next_step: str = Field(default="", max_length=800)
     owner_question: str = Field(default="", max_length=800)
+
+
+class DeployRequest(BaseModel):
+    service: str = Field(default="jarvis", max_length=120)
 
 
 def build_autonomy_tasks_router(deps: dict) -> APIRouter:
@@ -201,6 +206,24 @@ def build_autonomy_tasks_router(deps: dict) -> APIRouter:
         _admin_guard(x_jarvis_session, None, None, None)
         from .agent_metrics import weekly_metrics
         return weekly_metrics(store(), deps.get("agent_grant_store"), gpu_seconds=gpu_seconds)
+
+    def _run_command(cmd: list[str]) -> tuple[int, str]:
+        proc = subprocess.run(cmd, capture_output=True, text=True)
+        return proc.returncode, (proc.stdout or "") + (proc.stderr or "")
+
+    @router.post("/admin/autonomy/deploy")
+    def deploy_service(body: DeployRequest,
+                       x_jarvis_session: str | None = Header(default=None)):
+        actor = _admin_guard(x_jarvis_session, None, None, None)
+        from .self_deploy import DeployError, SelfDeployer
+        deployer = deps.get("self_deployer") or SelfDeployer(_run_command)
+        try:
+            result = deployer.deploy(body.service, approved=True, actor=actor)
+        except DeployError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        audit("agent.deploy", actor, {"service": body.service, "ok": result.ok,
+                                      "rolled_back": result.rolled_back})
+        return {"result": result.to_dict()}
 
     @router.get("/admin/autonomy/stats")
     def list_stats(x_jarvis_session: str | None = Header(default=None)):
