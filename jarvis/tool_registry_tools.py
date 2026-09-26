@@ -338,8 +338,9 @@ def build_pilot_tool_registry() -> ToolRegistry:
             "required": ["text"],
         },
         required_permission="assistant.chat",
-        risk=RiskLevel.READ,
+        risk=RiskLevel.WRITE,
         handler=_save_memory_note_handler,
+        capability="memory.write",
     ))
     registry.register(Tool(
         name="proxmox_status",
@@ -360,6 +361,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="actions.write.execute",
         risk=RiskLevel.WRITE,
         handler=_restart_service_handler,
+        capability="service.restart",
     ))
     registry.register(Tool(
         name="sandbox_create",
@@ -435,6 +437,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="home_assistant.access",
         risk=RiskLevel.WRITE,
         handler=_control_device_handler,
+        capability="home_assistant.set",
     ))
     registry.register(Tool(
         name="list_tasks",
@@ -461,6 +464,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="tasks.write",
         risk=RiskLevel.WRITE,
         handler=_create_task_handler,
+        capability="task.create",
     ))
     registry.register(Tool(
         name="complete_task",
@@ -473,6 +477,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="tasks.write",
         risk=RiskLevel.WRITE,
         handler=_complete_task_handler,
+        capability="task.complete",
     ))
     registry.register(Tool(
         name="list_calendar_events",
@@ -500,6 +505,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="calendar.write",
         risk=RiskLevel.WRITE,
         handler=_create_calendar_event_handler,
+        capability="calendar.create",
     ))
     registry.register(Tool(
         name="list_emails",
@@ -527,6 +533,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="email.write",
         risk=RiskLevel.WRITE,
         handler=_create_email_draft_handler,
+        capability="draft.create",
     ))
     registry.register(Tool(
         name="send_email_draft",
@@ -539,6 +546,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="email.write",
         risk=RiskLevel.WRITE,
         handler=_send_email_draft_handler,
+        capability="email.send",
     ))
     registry.register(Tool(
         name="proxmox_vm_action",
@@ -556,6 +564,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="proxmox.manage",
         risk=RiskLevel.WRITE,
         handler=_proxmox_vm_action_handler,
+        capability="vm.managed.change",
     ))
     registry.register(Tool(
         name="proxmox_lxc_action",
@@ -573,6 +582,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="proxmox.manage",
         risk=RiskLevel.WRITE,
         handler=_proxmox_lxc_action_handler,
+        capability="vm.managed.change",
     ))
     registry.register(Tool(
         name="get_login_history",

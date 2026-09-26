@@ -407,8 +407,8 @@ class AgentGrantStore:
                               actor: str = "owner") -> dict:
         """Dauerhafte, widerrufbare Freigabe. Nur T1/T2 -- T3 nie per Freigabe."""
         capability = str(capability or "").strip()
-        if capability == "*":
-            raise ValueError("concrete capability required (no wildcard '*')")
+        if capability in ("*", "unclassified.action"):
+            raise ValueError("concrete capability required (no wildcard or unclassified action)")
         if not capability or len(capability) > 120 or not re.fullmatch(r"[A-Za-z0-9_.\-]+", capability):
             raise ValueError("valid capability required")
         target_pattern = str(target_pattern or "*").strip() or "*"
@@ -456,7 +456,7 @@ class AgentGrantStore:
                 ORDER BY created_at DESC, id DESC""", (now,)).fetchall()
         for row in rows:
             grant = dict(row)
-            if grant["capability"] == "*":   # Wildcard ist nicht zulaessig
+            if grant["capability"] in ("*", "unclassified.action"):  # Also ignore legacy grants
                 continue
             if grant["capability"] != capability:
                 continue

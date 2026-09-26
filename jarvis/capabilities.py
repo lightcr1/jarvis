@@ -70,7 +70,9 @@ def _grant_covers(grant: dict | None, capability: str, target: str) -> bool:
     if not isinstance(grant, dict) or grant.get("status") not in (None, "approved"):
         return False
     granted = str(grant.get("capability") or "")
-    if granted not in ("*", capability):
+    if capability in ("*", "unclassified.action") or granted in ("*", "unclassified.action"):
+        return False
+    if granted != capability:
         return False
     pattern = str(grant.get("target_pattern") or "*")
     if pattern in ("", "*"):
