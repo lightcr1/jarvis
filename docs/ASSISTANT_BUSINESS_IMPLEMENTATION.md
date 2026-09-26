@@ -18,7 +18,7 @@ Veröffentlichungen oder Produktionsdeployments aus diesem Plan ableiten.
 |---|---|---|
 | 0.1 | Schreib-Tools explizit klassifizieren; Blanket-Grants verhindern | Implementiert, Regressionstests grün; Owner-Review ausstehend |
 | 0.2 | T3 nie durch Chat-Ja; aktionsgebundene Admin-Freigabe mit TOTP | Implementiert (TOTP-gebundene, digest- und nutzergebundene Admin-Freigabe; Snapshot bindet die Aktion); Owner-Review ausstehend |
-| 0.3 | Pod-Budget aus vertrauenswürdigen Laufzeit-/Profildaten | Offen – nutzt noch anfragegestützte Schätzwerte |
+| 0.3 | Pod-Budget aus vertrauenswürdigen Laufzeit-/Profildaten | Implementiert (serverseitige Pod-Sitzungen + Profil-Stundensatz + geplante Dauer, Fail-Closed; Controller-Reconciliation); Owner-Review ausstehend |
 | 0.4 | Verschlüsseltes TOTP-Secret, atomarer Replay-Schutz | Implementiert (Fernet-verschlüsselt, dateibasierter Lock, monotone Zeitschritt-Sperre); Owner-Review ausstehend |
 | 1 | App, mobile Sprache/Push, gemeinsamer Verlauf, sichere Wiederverbindung | Offen |
 | 2 | Bestätigtes Profil-Gedächtnis und Datenklassen | Offen |
@@ -56,6 +56,12 @@ Sicherheitsfreigabe für neue Handlungsrechte verstehen.
 - T3-Freigaben sind jetzt an Capability, Nutzer, Parameter-Digest und einen
   Moment-Snapshot gebunden und werden nach einmaliger Nutzung verbraucht.
   Ein „Ja“ im Chat reicht nicht mehr.
+- Pod-Budget (`JARVIS_POD_MONTHLY_BUDGET_CHF`) wird server-seitig geführt:
+  `JARVIS_POD_COST_PER_HOUR_CHF` und `JARVIS_POD_PLANNED_HOURS` sind nötig,
+  sonst wird ein Start fail-closed abgelehnt. Anfrage-Parameter zählen nicht.
+  Hinweis: Die Agent-Grants-Deps verdrahten jetzt `totp_store`, `pod_control`
+  und `pod_budget_store` – vorher fehlten sie, wodurch T3-Freigaben in
+  Produktion nie genehmigbar gewesen wären.
 - Mobile Zielplattformen und echte Headset-/Hintergrundtests bleiben erforderlich.
 - Geschäftsauftrag mit Budget, erlaubten Konten, Branchen und Eskalationsgrenzen
   muss der Besitzer explizit erteilen. Kein Default-Budget aktivieren.

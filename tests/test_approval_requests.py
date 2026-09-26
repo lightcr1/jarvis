@@ -15,7 +15,7 @@ class _Broadcaster:
         self.calls.append((user_id, payload))
 
 
-def _client(tmp_path, broadcaster=None, totp_store=None, pod_control=None):
+def _client(tmp_path, broadcaster=None, totp_store=None, pod_control=None, pod_budget_store=None):
     store = AgentGrantStore(tmp_path / "grants.sqlite3", clock=lambda: 1000)
     deps = {
         "agent_grant_store": store,
@@ -32,6 +32,8 @@ def _client(tmp_path, broadcaster=None, totp_store=None, pod_control=None):
         deps["totp_store"] = totp_store
     if pod_control is not None:
         deps["pod_control"] = pod_control
+    if pod_budget_store is not None:
+        deps["pod_budget_store"] = pod_budget_store
     app = FastAPI(); app.include_router(build_agent_grants_router(deps))
     return store, TestClient(app)
 
@@ -128,29 +130,60 @@ class _FakePod:
     def start(self, profile="default"):
         self.starts.append(profile)
         return {"status": "starting"}
+    def status(self):
+        return {"pod": {"id": "pod-1"}}
+
+
+def _budget_store(tmp_path):
+    from jarvis.pod_budget import PodBudgetStore
+    return PodBudgetStore(tmp_path / "pod_budget.sqlite3")
 
 
 def test_pod_start_approval_starts_within_budget(tmp_path, monkeypatch):
     monkeypatch.setenv("JARVIS_POD_MONTHLY_BUDGET_CHF", "20")
+    monkeypatch.setenv("JARVIS_POD_COST_PER_HOUR_CHF", "2")
+    monkeypatch.setenv("JARVIS_POD_PLANNED_HOURS", "1")
     pod = _FakePod()
-    _store, client = _client(tmp_path, pod_control=pod, totp_store=_Totp())
+    budget = _budget_store(tmp_path)
+    _store, client = _client(tmp_path, pod_control=pod, totp_store=_Totp(), pod_budget_store=budget)
+    # Anfrage-Parameter duerfen das Budget nicht mehr bestimmen.
     created = client.post("/agent/approval-requests", headers=AGENT,
                           json={"capability": "pod.start",
-                                "params": {"estimated_chf": 2, "spent_chf": 5, "profile": "default"}})
+                                "params": {"estimated_chf": 999, "spent_chf": 0, "profile": "default"}})
     req_id = created.json()["request"]["id"]
     ok = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER, json={"approve": True, "totp": "123456"})
     assert ok.status_code == 200 and pod.starts == ["default"]
+    assert ok.json()["pod_budget"]["estimate_chf"] == 2.0
+    assert budget.has_open_session() is True
 
 
 def test_pod_start_budget_exceeded_blocks(tmp_path, monkeypatch):
     monkeypatch.setenv("JARVIS_POD_MONTHLY_BUDGET_CHF", "5")
+    monkeypatch.setenv("JARVIS_POD_COST_PER_HOUR_CHF", "4")
+    monkeypatch.setenv("JARVIS_POD_PLANNED_HOURS", "2")
     pod = _FakePod()
-    _store, client = _client(tmp_path, pod_control=pod, totp_store=_Totp())
+    budget = _budget_store(tmp_path)
+    _store, client = _client(tmp_path, pod_control=pod, totp_store=_Totp(), pod_budget_store=budget)
     created = client.post("/agent/approval-requests", headers=AGENT,
                           json={"capability": "pod.start",
-                                "params": {"estimated_chf": 4, "spent_chf": 4, "profile": "default"}})
+                                "params": {"profile": "default"}})
     req_id = created.json()["request"]["id"]
-    resp = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER, json={"approve": True, "totp": "123456"})
+    resp = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER,
+                       json={"approve": True, "totp": "123456"})
+    assert resp.status_code == 409 and pod.starts == []
+    assert budget.has_open_session() is False
+
+
+def test_pod_start_without_known_rate_is_denied(tmp_path, monkeypatch):
+    monkeypatch.setenv("JARVIS_POD_MONTHLY_BUDGET_CHF", "50")
+    monkeypatch.delenv("JARVIS_POD_COST_PER_HOUR_CHF", raising=False)
+    pod = _FakePod()
+    _store, client = _client(tmp_path, pod_control=pod, totp_store=_Totp(),
+                             pod_budget_store=_budget_store(tmp_path))
+    req_id = client.post("/agent/approval-requests", headers=AGENT,
+                         json={"capability": "pod.start"}).json()["request"]["id"]
+    resp = client.post(f"/admin/approval-requests/{req_id}/decide", headers=OWNER,
+                       json={"approve": True, "totp": "123456"})
     assert resp.status_code == 409 and pod.starts == []
 
 

@@ -613,13 +613,20 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
                         or not totp_store.verify(actor, body.totp or "")):
                     raise HTTPException(403, "totp_required")
             # pod.start: Budget VOR der Entscheidung pruefen (sonst kein Start).
+            pod_budget = None
             if existing and existing.get("capability") == "pod.start" and body.approve:
-                from .pod_control import within_budget
+                from .pod_budget import pod_start_decision
                 try:
                     params = json.loads(existing.get("params") or "{}")
                 except (ValueError, TypeError):
                     params = {}
-                if not within_budget(params.get("estimated_chf"), params.get("spent_chf")):
+                budget_store = optional("pod_budget_store")
+                if budget_store is None:
+                    raise HTTPException(409, "pod budget store unavailable")
+                pod_budget = pod_start_decision(
+                    budget_store, str(params.get("profile") or "default"),
+                    pod_control=optional("pod_control"))
+                if not pod_budget["allowed"]:
                     raise HTTPException(409, "pod budget exceeded")
             item = current("agent_grant_store").decide_approval(
                 request_id, actor=actor, approve=body.approve, channel="admin",
@@ -638,9 +645,17 @@ def build_agent_grants_router(deps: dict) -> APIRouter:
                 except Exception as exc:  # noqa: BLE001 - Entscheidung bleibt bestehen
                     audit("agent.pod.start_failed", actor, {"request_id": request_id, "error": str(exc)})
                     started = {"error": str(exc)}
+                if isinstance(started, dict) and "error" not in started and pod_budget is not None:
+                    budget_store = optional("pod_budget_store")
+                    if budget_store is not None:
+                        try:
+                            budget_store.open_session(str(params.get("profile") or "default"),
+                                                      pod_budget["rate_chf"])
+                        except Exception:  # noqa: BLE001
+                            pass
             audit("agent.approval.decided", actor,
                   {"request_id": request_id, "approved": body.approve, "always": body.always})
-            return {"request": item, "pod_start": started}
+            return {"request": item, "pod_start": started, "pod_budget": pod_budget}
 
         @router.get("/admin/standing-grants")
         def list_standing_grants(x_jarvis_session: str | None = Header(default=None)):

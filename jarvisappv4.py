@@ -91,6 +91,7 @@ from jarvis.permission_store import PermissionStore, KNOWN_PERMISSIONS
 from jarvis.admin_password_store import AdminPasswordStore
 from jarvis.totp_store import TotpStore
 from jarvis.pod_control import PodControl
+from jarvis.pod_budget import PodBudgetStore
 from jarvis.admin_settings_store import AdminSettingsStore
 from jarvis.user_preferences_store import UserPreferencesStore
 from jarvis.byok_store import ByokKeyStore
@@ -224,6 +225,7 @@ permission_store = PermissionStore()
 admin_password_store = AdminPasswordStore()
 totp_store = TotpStore()
 pod_control = PodControl.from_env()
+pod_budget_store = PodBudgetStore()
 admin_settings_store = AdminSettingsStore()
 autonomy_store = AutonomyStore()
 agent_grant_store = AgentGrantStore()
