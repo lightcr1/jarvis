@@ -110,6 +110,24 @@ aber `jarvis.deploy` ist **T2** (nie ohne Freigabe).
   (Owner-Session; der Klick ist die Freigabe). Der Agent braucht eine stehende
   Freigabe für `jarvis.deploy`.
 
+### Containerisierter Self-Deploy (empfohlen für diese Maschine)
+
+`scripts/update.sh` zielt auf die **systemd-Installation** `/opt/jarvis`. Für die
+aktive Container-App `jarvis-app` diese Skripte nutzen — sie merken sich das
+vorherige Image und stellen es beim Rollback wieder her:
+
+```bash
+export JARVIS_DEPLOY_COMMAND="bash scripts/agent/self_deploy.sh"
+export JARVIS_ROLLBACK_COMMAND="bash scripts/agent/rollback_self.sh"
+export JARVIS_HEALTH_URL="http://127.0.0.1:8100/health"
+export SELF_DEPLOY_COMPOSE_FILES="deploy/docker-compose.yml deploy/docker-compose.override.yml"
+export SELF_DEPLOY_SERVICE="jarvis"
+export SELF_DEPLOY_IMAGE="ghcr.io/lightcr1/jarvis-app:latest"
+export SELF_DEPLOY_BUILD="1"   # oder SELF_DEPLOY_PULL=1
+```
+
+Trockenlauf: `bash scripts/agent/self_deploy.sh --dry-run` (führt nichts aus).
+
 ## Rollback
 
 - Jarvis-App: `scripts/rollback.sh` (siehe Repo) bzw. Compose-Image-Tag zurück.
