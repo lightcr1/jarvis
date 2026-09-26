@@ -13,8 +13,8 @@ from typing import Protocol
 
 from .capabilities import authorize_action
 from .zones import (allowed_images, authorize_service, available_sandbox_slots,
-                    is_forbidden, load_zones, sandbox_limits, sandbox_network,
-                    sandbox_pids_limit, sandbox_prefix)
+                    is_forbidden, load_zones, sandbox_allow_lan, sandbox_env,
+                    sandbox_limits, sandbox_network, sandbox_pids_limit, sandbox_prefix)
 
 
 class SandboxError(RuntimeError):
@@ -48,6 +48,8 @@ class Executor:
                standing_grant: dict | None = None) -> dict:
         if image not in allowed_images(self.zones):
             raise SandboxError(f"Image '{image}' ist nicht erlaubt")
+        if sandbox_allow_lan(self.zones):
+            raise SandboxError("Sandbox mit LAN-Zugriff ist nicht erlaubt (allow_lan=false erforderlich)")
         self._allow(capability, target=image, params=params, standing_grant=standing_grant)
         slots = available_sandbox_slots(len(self.list_sandboxes()), self.host_cpus,
                                         self.host_memory_mb, self.zones)
@@ -62,6 +64,7 @@ class Executor:
             "pids_limit": sandbox_pids_limit(self.zones),
             "read_only": True, "cap_drop": ["ALL"], "no_new_privileges": True,
             "max_lifetime_minutes": limits["max_lifetime_minutes"],
+            "env": sandbox_env(self.zones),
             "labels": {"jarvis.zone": "sandbox", "jarvis.actor": str(actor),
                        "jarvis.created_at": str(int(self.clock()))},
         }

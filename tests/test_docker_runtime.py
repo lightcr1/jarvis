@@ -81,3 +81,11 @@ def test_http_tolerates_non_json_body(monkeypatch):
     import jarvis.docker_runtime as mod
     monkeypatch.setattr(mod.urllib.request, "urlopen", lambda *a, **k: _Resp())
     assert mod.DockerRuntime("http://x")._call("POST", "/exec/e1/start", {"Detach": True}) == {}
+
+
+def test_create_passes_proxy_env():
+    runtime, calls = _runtime(lambda m, p: (201, {"Id": "abc"}) if "create" in p else (204, {}))
+    spec = dict(SPEC, env={"HTTP_PROXY": "http://allowlist-proxy:3128"})
+    runtime.create_sandbox(spec)
+    create = next(c for c in calls if "/containers/create" in c[1])
+    assert create[2]["Env"] == ["HTTP_PROXY=http://allowlist-proxy:3128"]

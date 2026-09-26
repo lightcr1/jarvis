@@ -33,9 +33,12 @@ Braucht Jarvis mehr, fragt er per **T3** nach (z. B. über `pod.start`).
 
 Die Policy legt die **Grenzen** fest; der Executor setzt sie beim Erstellen durch:
 
-- eigenes Docker-Netz, **Egress** nur über den Allowlist-Proxy
+- eigenes Docker-Netz **`jarvis-sandbox` mit `internal: true`** → **kein** direkter
+  Internet-/LAN-Zugang; `allow_lan: false` ist Pflicht (der Executor lehnt sonst ab)
+- **Egress nur über den Allowlist-Proxy**: der Executor setzt `HTTP(S)_PROXY`;
+  der Proxy (`allowlist-proxy`) ist dual-homed und der einzige Weg nach draußen
 - `cap_drop: ALL`, `no-new-privileges`, `read_only`-Root + `tmpfs`
-- harte Limits (`cpus`, `mem_limit`, `pids_limit`)
+- harte Limits (`cpus`, `mem_limit`, `pids_limit`), max. Laufzeit + Aufräumen
 - Zugriff auf **nur** die deklarierten Netzziele
 - vor Aktionen in der **verwalteten** Zone: Snapshot/Freigabe, Ausgabe gekürzt ins Log
 

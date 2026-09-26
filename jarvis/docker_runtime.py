@@ -69,6 +69,9 @@ class DockerRuntime:
             "Labels": dict(spec.get("labels") or {}),
             "HostConfig": self._host_config(spec),
         }
+        env = spec.get("env") or {}
+        if env:
+            payload["Env"] = [f"{key}={value}" for key, value in env.items()]
         if spec.get("command"):
             payload["Cmd"] = ["sh", "-lc", str(spec["command"])]
         name = urllib.parse.quote(str(spec["name"]), safe="")
