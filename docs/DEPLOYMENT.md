@@ -34,6 +34,8 @@ Compose-Dateien; hier steht die Übersicht.
   direkter Internetzugang. Internet nur über `allowlist-proxy`.
 - **`jarvis-search`** (`internal: true`): nur App ↔ SearXNG.
 - **`executor-internal`** (`internal: true`): nur Executor ↔ Socket-Proxy.
+- Der Executor hängt zusätzlich in `agent-isolated`, damit der Agent ihn als
+  `jarvis-executor:8120` erreicht (kein Host-Port).
 - **`jarvis-sandbox`**: Wegwerf-Container, `runpod-controller`/`searxng` gesperrt.
 
 ## Dienste im Detail
@@ -48,7 +50,7 @@ Compose-Dateien; hier steht die Übersicht.
 | `allowlist-proxy` | `allowlist-proxy:local` (build) | Egress nur auf Allowlist | `agent-isolated`, `runpod-internal` | `ALLOW_GITHUB=0` (Phase 6) |
 | `controller` | build (`controller/`) | Pod-/Modell-Steuerung, Nutzung | `runpod_default` | TLS auf `:8443` |
 | `open-webui` | `${OPEN_WEBUI_IMAGE}` | Chat-UI fürs Modell | `runpod_default` | |
-| `jarvis-executor` | `jarvis-executor:local` (build) | Sandbox-Zone (siehe `docs/EXECUTOR.md`) | `executor-internal`, `jarvis-sandbox` | **standardmäßig deaktiviert** |
+| `jarvis-executor` | `jarvis-executor:local` (build) | Sandbox-Zone (siehe `docs/EXECUTOR.md`) | `executor-internal`, `jarvis-sandbox`, `agent-isolated` | **standardmäßig deaktiviert** |
 | `docker-socket-proxy` | `tecnativa/docker-socket-proxy` | eingeschränkter Docker-Zugriff | `executor-internal` | nur Containers/Images/Networks/Exec |
 
 Details zu Isolation und Quoten: [`docs/ZONES.md`](ZONES.md).

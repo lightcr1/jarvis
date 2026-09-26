@@ -65,6 +65,7 @@ services:
     networks:
       - executor-internal
       - sandbox
+      - agent-isolated
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -82,3 +83,8 @@ networks:
   sandbox:
     name: jarvis-sandbox
     driver: bridge
+  # Der Agent (openhands-Stack) erreicht den Executor nur ueber dieses Netz.
+  # Externes Netz des openhands-Projekts -> dort zuerst starten.
+  agent-isolated:
+    external: true
+    name: ${JARVIS_AGENT_NETWORK:-openhands_agent-isolated}
