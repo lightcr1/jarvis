@@ -130,6 +130,25 @@ export SELF_DEPLOY_BUILD="1"   # oder SELF_DEPLOY_PULL=1
 
 Trockenlauf: `bash scripts/agent/self_deploy.sh --dry-run` (führt nichts aus).
 
+### Automatisch per Cron (host-seitig, Marker-basiert)
+
+Der Besitzer/Admin schreibt nur einen **Marker**; der Host-Loop führt den Deploy
+mit Health-Check + Rollback aus (wie der Rollout-Loop):
+
+```bash
+mkdir -p /home/media/jarvis-openhands/autonomy
+cp config/self-deploy.example.env /home/media/jarvis-openhands/autonomy/self-deploy.env
+touch /home/media/jarvis-openhands/autonomy/self-deploy-requested   # Deploy anfordern
+```
+
+Cron-Eintrag (Beispiel):
+```cron
+*/5 * * * * flock -n /tmp/jarvis-selfdeploy.lock bash /home/media/jarvis-deploy/scripts/agent/self_deploy_loop.sh >> /home/media/jarvis-openhands/autonomy/self-deploy-loop.log 2>&1
+```
+
+Sofort testen: `bash scripts/agent/self_deploy_loop.sh --force` (bzw. `--dry-run`
+im Deploy-Skript).
+
 ## Rollback
 
 - Jarvis-App: `scripts/rollback.sh` (siehe Repo) bzw. Compose-Image-Tag zurück.
