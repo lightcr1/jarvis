@@ -25,6 +25,22 @@
       "tier": "T1",
       "description": "Aufgabe/Notiz anlegen"
     },
+    "memory.write": {
+      "tier": "T1",
+      "description": "Eigene, reversible Gedaechtnisnotiz speichern"
+    },
+    "task.write": {
+      "tier": "T2",
+      "description": "Aufgabe im Namen des Nutzers anlegen"
+    },
+    "task.complete": {
+      "tier": "T2",
+      "description": "Bestehende Aufgabe abschliessen"
+    },
+    "calendar.create": {
+      "tier": "T2",
+      "description": "Persoenlichen Kalendereintrag anlegen"
+    },
     "draft.create": {
       "tier": "T1",
       "description": "Entwurf erstellen"

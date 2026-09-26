@@ -12,6 +12,7 @@ import {
   testAlertRule,
 } from "../../../shared/api/alerts";
 import { useJ } from "../../../screens/jarvis-shared";
+import { fetchSecretKeyStatus, type SecretKeyStatus } from "../../../shared/api/approvals";
 import { OverlayDialog } from "../../../shared/ui/OverlayDialog";
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
@@ -489,6 +490,30 @@ function AlertRulesSection() {
   );
 }
 
+function SecretKeySection() {
+  const J = useJ();
+  const [status, setStatus] = useState<SecretKeyStatus | null>(null);
+
+  useEffect(() => {
+    fetchSecretKeyStatus().then(setStatus).catch(() => undefined);
+  }, []);
+
+  return (
+    <div style={{ background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 6, padding: "16px 18px" }}>
+      <div style={{ fontSize: 11, color: J.textMuted, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 12 }}>Security master key</div>
+      <p style={{ fontSize: 12, color: J.textSec, margin: "0 0 12px" }}>
+        Encrypts stored credentials and the TOTP secret. It is a bootstrap secret read from{" "}
+        <code>JARVIS_SECRET_KEY</code> and is intentionally never edited or returned through the API.
+        Generate a value with <code>scripts/generate_master_key.sh</code> and put it in <code>.env</code>.
+      </p>
+      <div style={{ display: "flex", gap: 12, fontSize: 12 }}>
+        <span style={{ flex: "0 0 100px", color: J.textSec }}>Status</span>
+        <span>{status ? `${status.configured ? "configured" : "not configured"} (${status.source})` : "…"}</span>
+      </div>
+    </div>
+  );
+}
+
 export function SettingsPage() {
   const J = useJ();
   const [settings, setSettings] = useState<AdminSettingsPayload | null>(null);
@@ -628,6 +653,9 @@ export function SettingsPage() {
 
       {/* ── Alert Rules ── */}
       <AlertRulesSection />
+
+      {/* ── Security master key ── */}
+      <SecretKeySection />
 
       {/* ── Backup ── */}
       <div style={{ ...card, padding: "16px 18px" }}>

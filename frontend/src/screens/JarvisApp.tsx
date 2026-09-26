@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { ErrorBoundary } from '../components/ErrorBoundary';
-import { J, useJ, applyTheme, applyAccent, applyCompact, StatusBadge, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconAmbient, IconJarvisMark, IconZap } from './jarvis-shared';
+import { J, useJ, applyTheme, applyAccent, applyCompact, ToastContainer, Badge, IconChat, IconOrb, IconHome, IconGrid, IconSettings, IconServer, IconBook, IconX, IconSun, IconMoon, IconBell, IconSearch, IconCheck, IconAmbient, IconJarvisMark, IconZap } from './jarvis-shared';
 import { GreetingOverlay } from '../components/GreetingOverlay';
 import { OnboardingModal, shouldShowOnboarding } from '../components/OnboardingModal';
 import { LoginScreen } from './LoginScreen';
@@ -17,6 +17,8 @@ import { AppSwitcher } from '../shared/layout/AppSwitcher';
 import { getSessionToken, clearStoredIdentity, getStoredPreferences, setStoredPreferences, getStoredUser, setGuestMode, isGuestMode, clearGuestMode, setPendingChatPrefill, savePreferences, fetchMe, setStoredCapabilities } from '../shared/api/client';
 import { useJarvisAlerts } from '../shared/api/alerts';
 import { useJarvisLiveStatus } from '../shared/api/status';
+import { useOnlineStatus } from '../shared/api/connection';
+import { ConnectionBadge } from '../components/ConnectionBadge';
 import { useIntegrationStatus } from '../shared/api/integrationStatus';
 import { OverlayDialog } from '../shared/ui/OverlayDialog';
 
@@ -275,6 +277,7 @@ const DIGEST_ICON: Record<string, React.ReactNode> = { weekly_digest: <IconBook 
 export function JarvisApp() {
   useJ(); // re-render when theme changes
   const liveStatus = useJarvisLiveStatus();
+  const online = useOnlineStatus();
   const { alerts, dismissAlert, briefings, dismissBriefing, suggestions, dismissSuggestion, digests, dismissDigest } = useJarvisAlerts();
   const integrationStatus = useIntegrationStatus();
   const guest = isGuestMode();
@@ -448,12 +451,9 @@ export function JarvisApp() {
       <ToastContainer />
       <NavRail current={screen} onNav={navigate as (s: Screen) => void} onLogout={handleLogout} nav={nav} isGuest={guest} unreadCount={notificationsEnabled ? unreadCount : 0} />
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex', paddingBottom: mobilePad ? 60 : 0, position: 'relative' }}>
-        {!['chat', 'orb', 'home', 'proxmox', 'services', 'tasks'].includes(screen) && (
-          <div style={{ position: 'absolute', top: 10, right: 14, zIndex: 30, display: 'flex', alignItems: 'center', gap: 7, background: J.bg2, border: `1px solid ${J.border}`, borderRadius: 999, padding: '6px 10px', boxShadow: '0 8px 24px rgba(0,0,0,0.18)' }}>
-            <StatusBadge status={liveStatus.state === 'idle' ? 'local' : liveStatus.state === 'processing' ? 'running' : liveStatus.state === 'recording' ? 'active' : 'online'} size="xs" />
-            <span style={{ fontSize: 11, color: J.textSec, textTransform: 'capitalize' }}>{liveStatus.state}</span>
-          </div>
-        )}
+        <div style={{ position: 'absolute', top: 10, right: 14, zIndex: 30 }}>
+          <ConnectionBadge online={online} connected={liveStatus.connected} listening={liveStatus.state === 'recording' || liveStatus.state === 'processing'} />
+        </div>
         <ErrorBoundary label={screen}>
           {screen === 'chat'     && <ChatScreen onNavigate={navigate} />}
           {screen === 'orb'      && <OrbScreen onNavigate={navigate} liveState={liveStatus.state} wakewordEvent={liveStatus.lastEvent} alerts={notificationsEnabled ? alerts : []} />}

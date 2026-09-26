@@ -264,7 +264,21 @@ class EmailService:
         self._write_audit("email_draft_discarded", actor_user_id=user_id, actor_role=role, payload={"draft_id": draft_id})
         return {"policy": policy, "draft": updated}
 
-    def send_draft(self, draft_id: str, *, user_id: str | None, role: str | None, confirm: bool = False) -> dict:
+    @staticmethod
+    def _approval_snapshot(draft: dict) -> dict:
+        return {key: draft.get(key) for key in (
+            "id", "user_id", "account_id", "to", "subject", "body", "in_reply_to_message_id",
+        )}
+
+    def approval_snapshot(self, draft_id: str, *, user_id: str | None, role: str | None) -> dict:
+        self.require_access(user_id=user_id, role=role, required_permission="email.write")
+        draft = self._owned_draft(draft_id, user_id=user_id, role=role)
+        if draft.get("status") != "pending_approval":
+            raise ValueError("draft is not pending approval")
+        return self._approval_snapshot(draft)
+
+    def send_draft(self, draft_id: str, *, user_id: str | None, role: str | None,
+                   confirm: bool = False, approved_snapshot: dict | None = None) -> dict:
         if _emergency_stop_active():
             raise PermissionError("emergency stop is active — write actions are blocked")
         policy = self.require_access(user_id=user_id, role=role, required_permission="email.write")
@@ -273,6 +287,8 @@ class EmailService:
             raise ValueError("draft is not pending approval")
         if not confirm:
             return {"policy": policy, "draft": draft, "status": "confirmation_required"}
+        if approved_snapshot is not None and self._approval_snapshot(draft) != approved_snapshot:
+            raise PermissionError("draft changed since approval")
         client, _ = self._client_for(draft.get("user_id"), draft.get("account_id"))
         if client is None:
             raise LookupError("email not configured")

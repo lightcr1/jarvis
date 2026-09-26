@@ -6,12 +6,14 @@ import unittest
 from fastapi.testclient import TestClient
 
 import jarvisappv4
+from jarvis.secret_crypto import generate_master_key
 
 
 class AdminBackupRestoreTests(unittest.TestCase):
     def setUp(self):
         self.tmpdir = tempfile.TemporaryDirectory()
         base = self.tmpdir.name
+        os.environ["JARVIS_SECRET_KEY"] = generate_master_key()
         os.environ["JARVIS_AUDIT_LOG_PATH"] = os.path.join(base, "audit.log")
         os.environ["JARVIS_USER_STORE_PATH"] = os.path.join(base, "users.json")
         os.environ["JARVIS_GROUP_STORE_PATH"] = os.path.join(base, "groups.json")
@@ -53,19 +55,29 @@ class AdminBackupRestoreTests(unittest.TestCase):
         self.assertIn("configs", body["state"])
 
     def test_admin_2fa_login_is_enforced(self):
+        from unittest import mock
         from jarvis import totp as _totp
-        res = self.client.post("/admin/2fa/enroll", headers=self.admin_headers)
-        self.assertEqual(200, res.status_code)
-        secret = res.json()["secret"]
-        res = self.client.post("/admin/2fa/activate", json={"code": _totp.totp(secret)}, headers=self.admin_headers)
-        self.assertEqual(200, res.status_code)
-        res = self.client.get("/admin/2fa", headers=self.admin_headers)
-        self.assertTrue(res.json()["enabled"])
-        # Login ohne Code scheitert, mit Code klappt es.
-        res = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"})
-        self.assertEqual(401, res.status_code)
-        res = self.client.post("/admin/login", json={"username": "admin", "password": "admin123", "totp": _totp.totp(secret)})
-        self.assertEqual(200, res.status_code)
+        clock = [1_000_020.0]
+        with mock.patch.object(_totp.time, "time", lambda: clock[0]):
+            res = self.client.post("/admin/2fa/enroll", headers=self.admin_headers)
+            self.assertEqual(200, res.status_code)
+            secret = res.json()["secret"]
+            res = self.client.post("/admin/2fa/activate", json={"code": _totp.totp(secret)}, headers=self.admin_headers)
+            self.assertEqual(200, res.status_code)
+            res = self.client.get("/admin/2fa", headers=self.admin_headers)
+            self.assertTrue(res.json()["enabled"])
+            # A used code is rejected (replay), so advance one time step.
+            clock[0] += 30
+            res = self.client.post("/admin/login", json={"username": "admin", "password": "admin123"})
+            self.assertEqual(401, res.status_code)
+            res = self.client.post("/admin/login", json={"username": "admin", "password": "admin123", "totp": _totp.totp(secret)})
+            self.assertEqual(200, res.status_code)
+
+    def test_secret_key_status_reports_env_source(self):
+        status = self.client.get("/admin/secret-key", headers=self.admin_headers).json()
+        self.assertTrue(status["configured"])
+        self.assertEqual("env", status["source"])
+        self.assertNotIn("secret", status)
 
     def test_backup_restore_version_99_returns_400(self):
         res = self.client.post(

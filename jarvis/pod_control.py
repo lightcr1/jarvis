@@ -29,6 +29,9 @@ def monthly_budget_chf() -> float:
 
 
 def within_budget(estimated_chf: float, spent_chf: float, cap_chf: float | None = None) -> bool:
+    """Einfache Budget-Pruefung. **Nicht** der Freigabe-Pfad fuer `pod.start`:
+    dort wird das Budget serverseitig aus Pod-Sitzungen berechnet
+    (siehe `jarvis.pod_budget`), nicht aus Anfrage-Parametern."""
     """True nur, wenn ein Budget gesetzt ist und geschaetzt+verbraucht es nicht ueberschreitet."""
     cap = monthly_budget_chf() if cap_chf is None else float(cap_chf)
     if cap <= 0:

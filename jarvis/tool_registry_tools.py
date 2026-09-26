@@ -169,15 +169,24 @@ def _create_email_draft_handler(ctx: ToolExecutionContext, args: dict) -> dict:
     return {"reply": f"Draft ready for {to}, held for your approval.", "data": {"route": "email_draft_created", "draft": result["draft"]}}
 
 
+def _email_approval_snapshot(ctx: ToolExecutionContext, args: dict) -> dict:
+    return ctx.deps["email_service"].approval_snapshot(
+        str(args.get("draft_id") or ""), user_id=ctx.user_id, role=ctx.role,
+    )
+
+
 def _send_email_draft_handler(ctx: ToolExecutionContext, args: dict) -> dict:
     email_service = ctx.deps["email_service"]
     draft_id = str(args.get("draft_id") or "").strip()
     if not draft_id:
         return {"reply": "Which draft, sir?", "data": {"route": "tool_error", "error": "missing_draft_id"}}
-    # Our own WRITE-risk confirmation gate already served as the one confirmation
-    # step for this tool call — pass confirm=True straight through rather than
-    # making the user confirm a second time against send_draft's own internal gate.
-    result = email_service.send_draft(draft_id, user_id=ctx.user_id, role=ctx.role, confirm=True)
+    # The registry supplies this snapshot only after atomically consuming a
+    # digest-bound TOTP approval. Compare against the actual message being sent.
+    snapshot = ctx.deps.get("approved_tool_snapshot")
+    if snapshot is None:
+        raise PermissionError("secure email approval required")
+    result = email_service.send_draft(draft_id, user_id=ctx.user_id, role=ctx.role,
+                                      confirm=True, approved_snapshot=snapshot)
     return {"reply": "Done. Message sent.", "data": {"route": "email_sent", **result}}
 
 
@@ -338,8 +347,9 @@ def build_pilot_tool_registry() -> ToolRegistry:
             "required": ["text"],
         },
         required_permission="assistant.chat",
-        risk=RiskLevel.READ,
+        risk=RiskLevel.WRITE,
         handler=_save_memory_note_handler,
+        capability="memory.write",
     ))
     registry.register(Tool(
         name="proxmox_status",
@@ -360,6 +370,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="actions.write.execute",
         risk=RiskLevel.WRITE,
         handler=_restart_service_handler,
+        capability="service.restart",
     ))
     registry.register(Tool(
         name="sandbox_create",
@@ -435,6 +446,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="home_assistant.access",
         risk=RiskLevel.WRITE,
         handler=_control_device_handler,
+        capability="home_assistant.set",
     ))
     registry.register(Tool(
         name="list_tasks",
@@ -461,6 +473,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="tasks.write",
         risk=RiskLevel.WRITE,
         handler=_create_task_handler,
+        capability="task.write",
     ))
     registry.register(Tool(
         name="complete_task",
@@ -473,6 +486,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="tasks.write",
         risk=RiskLevel.WRITE,
         handler=_complete_task_handler,
+        capability="task.complete",
     ))
     registry.register(Tool(
         name="list_calendar_events",
@@ -500,6 +514,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="calendar.write",
         risk=RiskLevel.WRITE,
         handler=_create_calendar_event_handler,
+        capability="calendar.create",
     ))
     registry.register(Tool(
         name="list_emails",
@@ -527,6 +542,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="email.write",
         risk=RiskLevel.WRITE,
         handler=_create_email_draft_handler,
+        capability="draft.create",
     ))
     registry.register(Tool(
         name="send_email_draft",
@@ -539,6 +555,8 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="email.write",
         risk=RiskLevel.WRITE,
         handler=_send_email_draft_handler,
+        capability="email.send",
+        approval_snapshot=_email_approval_snapshot,
     ))
     registry.register(Tool(
         name="proxmox_vm_action",
@@ -556,6 +574,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="proxmox.manage",
         risk=RiskLevel.WRITE,
         handler=_proxmox_vm_action_handler,
+        capability="vm.managed.change",
     ))
     registry.register(Tool(
         name="proxmox_lxc_action",
@@ -573,6 +592,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="proxmox.manage",
         risk=RiskLevel.WRITE,
         handler=_proxmox_lxc_action_handler,
+        capability="vm.managed.change",
     ))
     registry.register(Tool(
         name="get_login_history",

@@ -22,6 +22,7 @@ from .api_models import (
 from .plan_service import assign_plan
 from . import emergency
 from . import totp
+from .secret_crypto import encryption_available
 from .router_dependencies import LiveRef
 
 
@@ -499,7 +500,13 @@ def build_admin_router(deps: dict) -> APIRouter:
         store = current("totp_store")
         if store is None:
             raise HTTPException(503, "2FA not configured")
-        secret = store.start_enrollment(x_jarvis_user_id)
+        from .secret_crypto import SecretEncryptionUnavailable
+        try:
+            secret = store.start_enrollment(x_jarvis_user_id)
+        except SecretEncryptionUnavailable as exc:
+            raise HTTPException(503, "2FA encryption not configured") from exc
+        except ValueError as exc:
+            raise HTTPException(409, "disable existing 2FA before reenrolling") from exc
         user = current("user_store").get_user(x_jarvis_user_id) or {}
         account = user.get("username") or x_jarvis_user_id
         current("audit_log").write("admin_2fa_enrollment_started", {"user_id": x_jarvis_user_id})
@@ -524,6 +531,14 @@ def build_admin_router(deps: dict) -> APIRouter:
             raise HTTPException(400, "invalid code")
         current("audit_log").write("admin_2fa_disabled", {"user_id": x_jarvis_user_id})
         return {"enabled": False}
+
+    @router.get("/admin/secret-key")
+    def secret_key_status(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
+        require_admin_access(x_jarvis_user_id, x_jarvis_role, authorization)
+        import os as _os
+        return {"configured": encryption_available(),
+                "source": "env" if (_os.getenv("JARVIS_SECRET_KEY") or "").strip() else "none",
+                "hint": "Set JARVIS_SECRET_KEY in .env (scripts/generate_master_key.sh); it is a bootstrap secret and is never editable via the API."}
 
     @router.get("/admin/backup")
     def admin_backup(x_jarvis_user_id: str | None = Header(default=None), x_jarvis_role: str | None = Header(default=None), authorization: str | None = Header(default=None)):
