@@ -5,9 +5,11 @@ Freigaben, Executor – umgesetzt). Auftrag für einen Coding-Agenten. Es gelten
 dieselben Arbeitsregeln (ein PR pro Aufgabe gegen `dev`, Tests, 🔒 = nur
 Vorschlags-PR).
 
-Die Plattform ist jetzt sicher und handlungsfähig. Was fehlt, ist der
-**Alltag**: Jarvis muss überall erreichbar sein, den Besitzer kennen, von
-selbst mitdenken und Dinge im Web erledigen können.
+Ziel ist ein eigener, überall erreichbarer Assistent auf dem eigenen Server.
+Der Besitzer nutzt die eigene App für Text und Sprache, unterwegs auch über
+mit dem Handy verbundene Kopfhörer oder einen einzelnen Ohrhörer. Jarvis kennt
+den Besitzer, denkt mit und erledigt Aufgaben. Vor der Erweiterung seiner
+Handlungsrechte müssen die Sicherheitslücken in Abschnitt 0 geschlossen werden.
 
 ---
 
@@ -39,10 +41,22 @@ selbst mitdenken und Dinge im Web erledigen können.
 
 | # | Baustein | Umsetzung |
 |---|---|---|
-| 1.1 | **Messenger-Kanal** (Telegram-Bot, später Signal/Matrix) | Eigener Adapter `jarvis/channels/telegram.py`: Nachrichten ↔ Chat-Session, Freigabe-Buttons (T1/T2), Sprachnachrichten → `/stt`. Nur die Besitzer-Chat-ID ist erlaubt, alles andere wird ignoriert und protokolliert. T3 immer per Link in die App mit TOTP |
-| 1.2 | **PWA mit Push** fertigstellen | Installierbar, Offline-Hinweis, Push für Rückfragen/Ergebnisse (Web-Push existiert) |
+| 1.1 | **Eigene Jarvis-App und weltweiter Serverzugriff** | Textchat, Sprachgespräche, Aufgaben, Ergebnisse und Freigaben in einer App; authentifizierter, verschlüsselter Zugriff auf den eigenen Server über WLAN und Mobilfunk. Telegram und andere Messenger sind nicht Teil dieses Plans |
+| 1.2 | **Mobile App, Audio und Push** | Bestehende Web-App/PWA als Grundlage und Zwischenstufe; Ziel ist eine eigene mobile App mit Mikrofon-/Audioanbindung, Push und Verbindungsstatus. Kopfhörer bzw. einzelner Ohrhörer sind mit dem Handy verbunden und dienen als Mikrofon und Audioausgabe |
 | 1.3 | **Sprachassistent zu Hause** | Wakeword auf Zielhardware validieren (V1-Punkt), ein Gerät pro Raum optional |
-| 1.4 | **Ein Gesprächsfaden über alle Kanäle** | Anliegen, das im Messenger beginnt, ist in der App sichtbar und umgekehrt |
+| 1.4 | **Ein Gesprächsfaden über Sprache, Text und Geräte** | Gesprochenes Anliegen im App-Chat sehen, per Text oder auf einem anderen angemeldeten Gerät fortsetzen. Aufgaben laufen auf dem Server weiter, auch wenn die App geschlossen ist |
+
+**Sprachbedienung:** Aufnahme in der App starten, mit Jarvis sprechen, Antworten
+über den gewählten Audioausgang hören und unterbrechen können. Headset-Taste,
+Wakeword, Hintergrundbetrieb und Bedienung bei gesperrtem Handy sind auf den
+gewählten Mobilplattformen zu prüfen; sie sind Abnahmeziele, keine bereits
+zugesicherten PWA-Fähigkeiten. Verbindungsverlust klar anzeigen und Aktionen
+nach Wiederverbindung nicht doppelt ausführen. T3-Freigaben bleiben an die
+konkrete Aktion und den zweiten Faktor in der App gebunden.
+
+Dies konkretisiert das gemeinsame Interface aus
+`docs/v2/planning/ROADMAP_V2.md` und ersetzt für diesen Plan dessen optionale
+Messenger-Brücken. Bestehenden Chat, Sprachoberfläche und Push wiederverwenden.
 
 ## 2. Jarvis kennt den Besitzer
 
@@ -86,8 +100,17 @@ selbst mitdenken und Dinge im Web erledigen können.
   des Besitzers, Versand nach Stufe (Standardantworten per stehender Freigabe,
   neue Empfänger T3).
 - **4.3 Credential-Tresor für Tools/Plugins:** Zugangsdaten pro Plugin und
-  Website in `integration_credentials`, Zuweisung in der UI. Der Executor bzw.
-  Browser-Agent setzt sie direkt ein, das Modell sieht nur die Referenz.
+  Website in `integration_credentials`, Zuweisung in der App. Vom Besitzer für
+  einen Dienst und Auftrag übergebene Zugangsdaten darf Jarvis tatsächlich
+  verwenden: anmelden, APIs aufrufen und erlaubte Aufgaben erledigen. Übergabe
+  über eine geschützte Tresor-Eingabe statt über den normalen Chatverlauf;
+  Dienst, Zweck und zugewiesene Tools bleiben einsehbar und widerrufbar.
+  Executor, Browser und Integrationen beziehen die Zugangsdaten zur Laufzeit
+  aus dem verschlüsselten Tresor, das Modell arbeitet mit Referenzen.
+  Passwörter und Tokens dürfen nicht in Modellkontext, Logs oder Screenshots
+  erscheinen. Innerhalb des Auftrags braucht nicht jeder Login eine erneute
+  Erlaubnis. Aktionsrechte und T3-Freigaben gelten weiterhin; notwendige
+  MFA-/Captcha-Schritte gehen bei Bedarf an den Besitzer in der App.
 - **4.4 Dokumente:** Rechnungen/Belege aus E-Mails automatisch in den
   Datei-Drive ablegen, benennen und für die Steuer sortieren.
 - **4.5 Einkauf/Haushalt:** Einkaufsliste (existiert) mit Browser-Agent
@@ -106,12 +129,19 @@ selbst mitdenken und Dinge im Web erledigen können.
   Home-Automation, Aufgabe delegieren. Jede Änderung an Prompt, Router oder
   Modell läuft dagegen.
 
-## 6. Business-Unterstützung
+## 6. Selbständiger Business-Betrieb durch Jarvis
 
 Die Bausteine aus `docs/business/AI_BUSINESS_PLAN.md`, Abschnitt 6
 (Business-Zone, Stripe-Lesezugriff, Support-Workflow, Ausgaben-Tracking,
 Business-Deploy, Wochenbericht, Rollen-Evals), sind Teil dieses Plans und kommen
 nach Abschnitt 4.
+
+Jarvis soll Geschäftsmöglichkeiten selbst suchen, bewerten, auswählen,
+validieren, umsetzen und betreiben. Der Besitzer gibt Ziele, Budget und
+Berechtigungen als widerrufbaren Geschäftsauftrag vor. Innerhalb dieses
+Rahmens arbeitet Jarvis selbständig weiter und berichtet über die App;
+manuelle Ideenauswahl und tägliche Arbeitsanweisungen sind kein Regelfall.
+Phasenübergänge, Abbruchkriterien und Besitzerpflichten stehen im Business-Plan.
 
 ---
 
@@ -120,7 +150,7 @@ nach Abschnitt 4.
 | # | Aufgabe | Aufwand |
 |---|---|---|
 | 1 | 0.1–0.4 Review-Befunde | S |
-| 2 | 1.1 Telegram-Kanal mit Freigabe-Buttons | M |
+| 2 | 1.1, 1.2, 1.4 Eigene App, sicherer Fernzugriff, mobiler Sprachdialog, Push und gemeinsamer Verlauf | L |
 | 3 | 2.1 + 2.4 Profil-Gedächtnis + Datenklassen | M |
 | 4 | 3.1 + 3.5 Briefing erweitern + Ruhe-Regeln | S |
 | 5 | 4.2 + 4.3 E-Mail-Assistent + Credential-Tresor | M |
@@ -129,9 +159,11 @@ nach Abschnitt 4.
 | 8 | 4.1 Browser-Agent in der Sandbox | L |
 | 9 | 5.1–5.3 Routing, Feedback, Assistenz-Eval | M |
 | 10 | Business-Bausteine (Abschnitt 6) | L |
-| 11 | 4.4, 4.5, 3.4, 1.3, 1.4 | je S–M |
+| 11 | 4.4, 4.5, 3.4, 1.3 | je S–M |
 
 **Abnahme:** Der Besitzer nutzt Jarvis eine Woche lang als ersten
-Ansprechpartner (Messenger + App). Mindestens 70 % der Anliegen werden ohne
+Ansprechpartner in der eigenen App: Text und Sprache über Handy, Kopfhörer
+oder einzelnen Ohrhörer, über WLAN und Mobilfunk. Gerätewechsel, App-Schließen,
+Audio-Unterbrechung und Verbindungsverlust sind geprüft. Mindestens 70 % der Anliegen werden ohne
 Nacharbeit erledigt oder sauber delegiert. Jede T3-Aktion lief über eine
 Freigabe mit TOTP. Der Wochenbericht zeigt die Zahlen.

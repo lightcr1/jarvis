@@ -3,12 +3,26 @@
 Stand: 2026-09-26 · Zielgruppe: der Besitzer **und** die ausführende KI (Jarvis,
 Claude o. a.). Das Dokument ist gleichzeitig Plan und Betriebsanleitung.
 
+**Ziel des Besitzers:** Jarvis sucht sich selbständig eine tragfähige
+Geschäftsmöglichkeit und übernimmt Validierung, Aufbau und Betrieb möglichst
+vollständig: Produkt, Vermarktung, Vertrieb, Support, Wartung und Auswertung.
+Der Besitzer muss weder eine Idee liefern noch jeden Arbeitsschritt anstoßen.
+
+Dafür erteilt der Besitzer einen widerrufbaren Geschäftsauftrag mit Zielen,
+ausgeschlossenen Branchen, Gesamt- und Monatsbudget, nutzbaren Konten,
+Aktionsrechten und Eskalationsgrenzen. Innerhalb dieses Rahmens wählt Jarvis
+die Idee selbst, arbeitet weiter und wechselt bei erfüllten Abbruchkriterien
+zur nächsten zulässigen Idee. Der Auftrag wird serverseitig geprüft und setzt
+T3-Regeln nicht außer Kraft. Dieser Plan beschreibt das Ziel; er erteilt noch
+keine Freigabe für reale Ausgaben, Konten oder Veröffentlichungen.
+
 > **Ehrliche Vorbemerkung.** Eine KI kann Produkt, Betrieb, Support, Inhalte und
 > Auswertung weitgehend übernehmen. Sie kann aber **nicht** Rechtsträger sein:
-> Firma, Verträge, Steuern, Bankkonto und Haftung liegen beim Besitzer. Ein
-> „Business ohne Aufwand“ gibt es nicht. Realistisch ist ein Geschäft, bei dem der
-> Besitzer nach der Aufbauphase **ca. 1–3 Stunden pro Woche** für Freigaben,
-> Kundengespräche und Pflichten aufwendet. Einnahmen sind nicht garantiert.
+> Firma, Verträge, Steuern, Bankkonto und Haftung liegen beim Besitzer.
+> Ziel ist möglichst wenig operative Arbeit für den Besitzer. Der tatsächliche
+> Zeitaufwand wird gemessen, statt pauschal 1–3 Stunden pro Woche zu versprechen.
+> Jarvis bevorzugt Modelle ohne regelmäßige persönliche Verkaufsgespräche oder
+> manuelle Lieferung durch den Besitzer. Einnahmen sind nicht garantiert.
 > Deshalb ist der Plan in Phasen mit harten Abbruchkriterien aufgebaut.
 
 ---
@@ -33,17 +47,20 @@ Claude o. a.). Das Dokument ist gleichzeitig Plan und Betriebsanleitung.
 - Alles, was im Namen des Besitzers Kunden etwas verspricht, das die KI nicht
   überprüfbar liefern kann.
 
-### Kandidaten (Jarvis bewertet sie in Phase 0)
+### Beispiele als Suchstart (Jarvis entdeckt und bewertet eigene Kandidaten)
 
 | # | Modell | Beispiel | Aufwand Besitzer | Einschätzung |
 |---|---|---|---|---|
-| A | **Nischen-Micro-SaaS** | Kleines Web-Tool für eine enge Zielgruppe in CH/DACH (z. B. Dokumente/QR-Rechnungen verarbeiten, Terminerinnerungen, Berichte aus Home-Assistant-Daten für Vermieter) | niedrig nach dem Aufbau | **Favorit.** Skaliert, und die KI kann es bauen und betreiben |
+| A | **Nischen-Micro-SaaS** | Kleines Web-Tool für eine enge Zielgruppe in CH/DACH (z. B. Dokumente/QR-Rechnungen verarbeiten, Terminerinnerungen, Berichte aus Home-Assistant-Daten für Vermieter) | niedrig nach dem Aufbau | Möglicher Kandidat; Bedarf und Automatisierbarkeit zuerst belegen |
 | B | **Produktisierter Dienst** „Private KI für KMU“ | Festpreis-Paket: datenschutzfreundlicher KI-Assistent auf Basis der eigenen Plattform, gehostet oder vor Ort | mittel (Verkaufsgespräche) | Höchster Preis pro Kunde, nutzt den eigenen Stack direkt. Menschlicher Kontakt nötig |
 | C | **Digitale Vorlagen/Pakete** | Home-Assistant-Blueprints, Self-Hosting-Stacks, Automations-Pakete | sehr niedrig | Wenig Umsatz, gut als Einstieg und Marketing für A/B |
 
-**Empfohlene Strategie:** C als günstiger Markttest und Reichweiten-Aufbau,
-parallel A validieren. B nur, wenn der Besitzer Verkaufsgespräche führen möchte.
-Die endgültige Wahl trifft der Besitzer nach Phase 0.
+**Auswahl durch Jarvis:** A/B/C sind Beispiele, keine vorgeschriebene Auswahl
+oder feste Reihenfolge. Jarvis recherchiert weitere Möglichkeiten und wählt
+nach belegtem Bedarf, Kosten, Automatisierbarkeit und geringem Besitzeraufwand.
+Ein Modell mit menschlichen Verkaufsgesprächen kommt nur infrage, wenn der
+Besitzer diese übernehmen möchte. Jarvis dokumentiert Auswahl und Belege in
+der Ideen-Queue und startet im Geschäftsauftrag selbst die nächste Phase.
 
 ---
 
@@ -51,11 +68,18 @@ Die endgültige Wahl trifft der Besitzer nach Phase 0.
 
 ### Besitzer (Mensch) – nur das, was rechtlich oder menschlich nötig ist
 - Firma gründen/führen (z. B. Einzelfirma), Bank- und Stripe-Konto, Steuern.
-- Freigaben: Budget, Veröffentlichungen, Preise, AGB/Datenschutz, neue Kanäle.
-- Menschliche Interaktion: Kundengespräche, Partner, Eskalationen.
+- Geschäftsauftrag, Budget und Rechte festlegen bzw. widerrufen; verbleibende
+  kritische Freigaben und rechtliche Entscheidungen treffen.
+- Menschliche Interaktion soweit nötig: Identitätsprüfungen, Unterschriften,
+  persönliche Ausnahmen und Eskalationen.
 - Monatlicher Review (30–60 Min.): Zahlen, Entscheidungen, Kurs.
 
 ### KI-Team (Jarvis + bei Bedarf stärkere Cloud-Modelle)
+
+Jarvis übernimmt die Geschäftsleitung: Chancen suchen, Idee auswählen, Rollen
+koordinieren, Phasen fortführen und unwirtschaftliche Ansätze beenden. Jede
+Aktion bleibt an Geschäftsauftrag, Budget und ihre Freigabestufe gebunden.
+
 | Rolle | Aufgaben | Rechte (Stufe) |
 |---|---|---|
 | **Researcher** | Markt, Konkurrenz, Kundenprobleme, Preise | T0 (Web-Recherche über Gateway) |
@@ -77,29 +101,37 @@ Kundendaten zu übertragen (siehe 5.4).
 | Phase | Dauer | Ziel | Budget max. | Weiter nur wenn … |
 |---|---|---|---|---|
 | **0 Recherche** | 2–3 Wochen | 3 Ideen tief bewerten: Problem, Zielgruppe, Zahlungsbereitschaft, Konkurrenz, Aufwand | ~CHF 0–50 | Eine Idee mit belegtem Problem und identifizierbaren Käufern |
-| **1 Validierung** | 3–4 Wochen | Landingpage + Warteliste/Vorverkauf, 10–20 Gespräche (Besitzer) oder Umfragen | ~CHF 50–200 (Domain, kleine Werbung) | ≥ 20 qualifizierte Anmeldungen oder ≥ 3 Vorverkäufe/Absichtserklärungen |
+| **1 Validierung** | 3–4 Wochen | Jarvis erstellt und betreibt Landingpage, Warteliste, Umfragen oder zulässige Vorverkaufstests; persönliche Gespräche nur optional | ~CHF 50–200 (Domain, kleine Werbung) | ≥ 20 qualifizierte Anmeldungen oder ≥ 3 Vorverkäufe/Absichtserklärungen |
 | **2 MVP** | 4–8 Wochen | Kleinstes zahlbares Produkt, Stripe-Abo, Doku, Support-Wissensbasis | ~CHF 100–300 (Hosting, Mail, Tools) | ≥ 5 zahlende Kunden in 4 Wochen nach Launch |
 | **3 Betrieb & Wachstum** | laufend | Retention, Automatisierung, organisches Marketing | Ausgaben ≤ 30 % des Umsatzes | Monatlich positiver Deckungsbeitrag nach 6 Monaten |
 | **Stopp** | – | Idee einstellen, Kunden sauber informieren, Kosten beenden | – | Abbruchkriterium verfehlt → nächste Idee aus Phase 0 |
 
-Gesamtes Startkapital realistisch **CHF 200–600**. Das Budget ist in Jarvis als
-harte Grenze hinterlegt (5.2) und nicht nur als Richtwert.
+Planungsrahmen für das Startkapital: **CHF 200–600**. Das genehmigte Budget muss
+in Jarvis als serverseitig durchgesetzte Grenze hinterlegt werden (5.2).
+
+Die Beträge sind Planungswerte, kein bereits genehmigtes Budget. Jarvis prüft
+die Kriterien anhand gespeicherter Belege und entscheidet im Geschäftsauftrag
+selbst über Fortsetzung, Anpassung oder Abbruch. Ein Ideenwechsel setzt den
+verbrauchten Gesamtetat nicht zurück. Fehlende Rechte und notwendige
+T3-Aktionen erzeugen konkrete Freigaben in der eigenen App.
 
 ---
 
 ## 4. Wie die KI das Geschäft täglich führt
 
 ### 4.1 Betriebsrhythmus
-- **Täglich (automatisch):** Monitoring, Support-Eingang sortieren und
-  beantworten (im Rahmen der Freigaben), Fehler beheben, Kennzahlen aktualisieren.
-- **Wöchentlich:** Bericht an den Besitzer (Push + Chat), maximal eine Seite:
+- **Täglich (automatisch):** Chancen und Nachfrage prüfen, nächste Schritte
+  planen, Produkt und Vertrieb weiterentwickeln, Monitoring, Support im Rahmen
+  der Freigaben, Fehler beheben und Kennzahlen aktualisieren.
+- **Wöchentlich:** Bericht an den Besitzer (Push + Chat in der eigenen App), maximal eine Seite:
   Umsatz, Kosten, Kunden (neu/gekündigt), Top-3-Probleme, 1–3 Entscheidungen, die
   der Besitzer treffen muss.
 - **Monatlich:** Review mit dem Besitzer. Danach werden Plan und Backlog angepasst.
 
 ### 4.2 Entscheidungsregeln
-- Die KI entscheidet selbst: Produkt-Details, Bugfixes, Doku, Support nach
-  Wissensbasis, Experimente im freigegebenen Budget.
+- Die KI entscheidet selbst: Ideenwahl, Prioritäten, Phasenübergänge nach
+  belegten Kriterien, Produkt-Details, Bugfixes, Doku, Support nach Wissensbasis
+  und zulässige Experimente im freigegebenen Gesamtbudget.
 - Die KI fragt: Preisänderungen, neue Kanäle, öffentliche Aussagen,
   Rückerstattungen über Schwellwert, neue Tools mit Kosten, alles Rechtliche.
 - Die KI stoppt und meldet: Sicherheitsvorfall, ungewöhnliche Zahlungen,
@@ -120,6 +152,10 @@ harte Grenze hinterlegt (5.2) und nicht nur als Richtwert.
   Domain und eigenes Hosting. **Kein** Zugriff auf private Konten des Besitzers.
 - Eigene Zone in Jarvis (`business-<name>`) mit eigenen Capabilities und
   eigenem Budget. Der Not-Aus stoppt auch diese Zone.
+- Zugewiesene Business-Zugangsdaten darf Jarvis über den Credential-Tresor
+  für Logins, APIs und autorisierte Abläufe verwenden. Verschlüsselte
+  Speicherung, Zuweisung je Dienst/Tool, widerrufbare Nutzung und Audit ohne
+  Geheimnisse; das Modell sieht Referenzen. Siehe Assistenten-Plan, 4.3.
 
 ### 5.2 Geld
 - Die KI kann **kein Geld bewegen**. Einnahmen laufen über Stripe, Auszahlungen
@@ -169,14 +205,28 @@ harte Grenze hinterlegt (5.2) und nicht nur als Richtwert.
 | 5 | **Web-Deploy für Business-Projekte** (eigene Domain, Health-Check, Rollback) | Builder/Operator |
 | 6 | **Wochenbericht Business** im Briefing | Besitzer-Aufwand minimieren |
 | 7 | **Rollen-Prompts + Evals pro Rolle** (Support-Antwortqualität, Richtlinien) | Qualität, Modellwechsel |
+| 8 | **Geschäftsauftrag und selbständiger Arbeitszyklus** | Ziele, Rechte, Konten, Gesamtbudget und Abbruchregeln speichern; Ideen selbst suchen und wählen, Phasen anhand von Belegen fortführen und Arbeit nach Neustarts fortsetzen |
+| 9 | **Besitzeraufwand messen** | Eingriffe, benötigte Minuten, selbständig erledigte Aufgaben und Eskalationsgründe im Wochenbericht ausweisen |
 
 ---
 
 ## 7. Erster konkreter Schritt
 
-Jarvis startet **Phase 0** als Ideen-Runde (existiert bereits im Autonomy-Loop):
-1. Für die Kandidaten A/B/C und bis zu zwei eigene Vorschläge je eine
-   Bewertung (1 Seite): Problem, Zielgruppe, Zahlungsbereitschaft (mit Quellen),
-   Konkurrenz, Aufwand, Risiken, Kosten, erster Validierungstest.
-2. Ergebnis in die Ideen-Queue (Admin → Autonomie) mit Empfehlung.
-3. Der Besitzer wählt eine Idee und gibt das Budget für Phase 1 frei.
+Nach Erteilung des Geschäftsauftrags startet Jarvis **Phase 0** als Ideen-Runde
+(Grundlage im Autonomy-Loop vorhanden):
+
+1. Selbst Chancen recherchieren und mindestens drei geeignete Ideen bewerten:
+   Problem, Käufer, Zahlungsbereitschaft mit Quellen, Konkurrenz,
+   Automatisierbarkeit, Besitzeraufwand, Risiken, Kosten und Validierungstest.
+2. Selbst eine Idee innerhalb der Vorgaben auswählen, Entscheidung und Belege
+   dokumentieren und den Besitzer in der App informieren.
+3. Validierung planen und im genehmigten Rahmen durchführen. Nur konkret
+   fehlende Rechte oder T3-Aktionen zur Freigabe vorlegen.
+4. Bei belegtem Erfolg MVP und Betrieb selbst weiterführen; andernfalls den
+   Versuch geordnet beenden und im verbleibenden Budget neu auswählen.
+
+**Abnahme:** Ein kompletter Zyklus von selbst gefundener Idee über Auswahl und
+Validierung bis zum begründeten Weiterführen oder Abbruch läuft ohne tägliche
+Arbeitsanweisungen. Fortschritt, Ausgaben, Ergebnisse und Ausnahmen stehen in
+der App; der Bericht misst den verbleibenden Besitzeraufwand. Menschliche
+Pflichten und kritische Einzelfreigaben bleiben sichtbar.
