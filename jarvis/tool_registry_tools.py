@@ -473,7 +473,7 @@ def build_pilot_tool_registry() -> ToolRegistry:
         required_permission="tasks.write",
         risk=RiskLevel.WRITE,
         handler=_create_task_handler,
-        capability="task.create",
+        capability="task.write",
     ))
     registry.register(Tool(
         name="complete_task",

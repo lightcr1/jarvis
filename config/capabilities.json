@@ -26,8 +26,12 @@
       "description": "Aufgabe/Notiz anlegen"
     },
     "memory.write": {
+      "tier": "T1",
+      "description": "Eigene, reversible Gedaechtnisnotiz speichern"
+    },
+    "task.write": {
       "tier": "T2",
-      "description": "Bestaetigte persoenliche Notiz speichern"
+      "description": "Aufgabe im Namen des Nutzers anlegen"
     },
     "task.complete": {
       "tier": "T2",
