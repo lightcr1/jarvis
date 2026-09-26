@@ -118,10 +118,19 @@ def execute_tool(
                     "data": {"route": "tool_denied", "tool": tool.name, "error": "agent_grant_required"}}
 
     # Zentraler Freigabe-Kern (Plan Abschnitt 3): konservativ ergaenzt.
+    capability = capability_for_tool(tool)
+    target = str(args.get("target") or args.get("name") or "")
+    grant = None
+    if agent_grant_store is not None and tool.risk != RiskLevel.READ:
+        try:
+            grant = agent_grant_store.match_standing_grant(capability, target)
+        except Exception:  # noqa: BLE001 - Freigabe darf die Pruefung nicht brechen
+            grant = None
     verdict = authorize_action(
-        capability_for_tool(tool),
-        target=str(args.get("target") or args.get("name") or ""),
+        capability,
+        target=target,
         params=args,
+        standing_grant=grant,
         untrusted_context=bool((ctx.deps or {}).get("untrusted_context")) if isinstance(ctx.deps, dict) else False,
         emergency_stop=emergency_stop_enabled(),
     )
@@ -132,7 +141,9 @@ def execute_tool(
                 "data": {"route": "tool_denied", "tool": tool.name, "error": "denied", "tier": verdict.tier}}
     single_confirm = verdict.tier == "T3"  # T3 immer einzeln, nie per Agent-Grant
     core_allowed = verdict.decision == "allow" and verdict.tier in ("T0", "T1")
-    pre_authorized = (not single_confirm) and (agent_authorized or core_allowed)
+    # T2 per stehender Freigabe gedeckt -> ohne Rueckfrage ausfuehren.
+    grant_allowed = verdict.decision == "allow" and verdict.tier == "T2" and grant is not None
+    pre_authorized = (not single_confirm) and (agent_authorized or core_allowed or grant_allowed)
 
     if (tool.risk != RiskLevel.READ or single_confirm) and not (confirm or pre_authorized):
         if audit_log:
@@ -153,6 +164,11 @@ def execute_tool(
             "reply": f"I couldn't do that: {exc}",
             "data": {"route": "tool_error", "tool": tool.name, "error": str(exc)},
         }
+    if grant_allowed and agent_grant_store is not None:
+        try:
+            agent_grant_store.consume_standing_grant(grant["id"])
+        except Exception:  # noqa: BLE001 - Zaehler darf die Aktion nicht brechen
+            pass
     if audit_log:
         audit_log.write("tool_call_completed", {
             "tool": tool.name, "user_id": ctx.user_id,
